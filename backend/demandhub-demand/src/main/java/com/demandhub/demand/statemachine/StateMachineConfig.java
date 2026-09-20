@@ -9,8 +9,9 @@ import java.util.Set;
 
 /**
  * 状态机配置（架构 4.1：配置化而非 if-else 硬编码）。
- * 一期：三类需求共用 DEFAULT 流转表（SRS 5.2），以规则数据形式注册；
- * 二期：由 M8 状态机配置管理从 DB 加载并热刷新，本类作为默认 fallback。
+ * - 代码内置 DEFAULT 流转表（SRS 5.2）作为兜底；
+ * - M8 状态机配置管理可把 DB 配置热加载进来（{@link #refreshDbTables}），不重启即时生效；
+ * - DB 中同 key 配置覆盖代码默认，未配置的 key 回落 DEFAULT。
  */
 @Component
 public class StateMachineConfig {
@@ -24,14 +25,27 @@ public class StateMachineConfig {
     /** 处理人（经理可代办处理动作的场景由业务层另行放行） */
     public static final Set<String> HANDLER = Set.of("HANDLER");
 
-    private final Map<String, List<TransitionRule>> tables;
+    private final List<TransitionRule> defaultTable;
+
+    /** DB 热加载的流转表（key → 规则列表），整体不可变替换，读写无锁 */
+    private volatile Map<String, List<TransitionRule>> dbTables = Map.of();
 
     public StateMachineConfig() {
-        this.tables = Map.of(DEFAULT_KEY, buildDefault());
+        this.defaultTable = buildDefault();
     }
 
     public List<TransitionRule> rules(String stateMachineKey) {
-        return tables.getOrDefault(stateMachineKey, tables.get(DEFAULT_KEY));
+        List<TransitionRule> rules = dbTables.get(stateMachineKey);
+        if (rules != null) {
+            return rules;
+        }
+        return DEFAULT_KEY.equals(stateMachineKey) ? defaultTable
+                : dbTables.getOrDefault(DEFAULT_KEY, defaultTable);
+    }
+
+    /** 整体替换 DB 配置（由 StateMachineConfigService 定时/变更后触发） */
+    public void refreshDbTables(Map<String, List<TransitionRule>> tables) {
+        this.dbTables = tables == null ? Map.of() : Map.copyOf(tables);
     }
 
     private static List<TransitionRule> buildDefault() {

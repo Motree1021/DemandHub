@@ -108,7 +108,7 @@ public class DemandStateMachine {
         writeLog(demand, event, from.name(), toStatusForLog, operator, ctx);
         eventPublisher.publishEvent(new DemandTransitionEvent(
                 demand.getId(), demand.getDemandNo(), event.name(),
-                from.name(), toStatusForLog, operator.getId(), Map.copyOf(ctx.getExtra())));
+                from.name(), toStatusForLog, operator.getId(), ctx.getComment(), Map.copyOf(ctx.getExtra())));
         return demand;
     }
 

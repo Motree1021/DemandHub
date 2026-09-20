@@ -29,6 +29,18 @@ demandhub:
     access-key: demandhub
     secret-key: demandhub123
     bucket: demandhub
+  sla:
+    # SLA 超时扫描间隔（毫秒），自测 1 分钟 SLA 时保持默认 30s 即可
+    scan-interval-ms: 30000
+  stat:
+    # 看板预聚合刷新（每 5 分钟）
+    refresh-cron: 0 */5 * * * ?
+
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: demandhub-demand-producer
+    send-message-timeout: 5000
 
 mybatis-plus:
   configuration:

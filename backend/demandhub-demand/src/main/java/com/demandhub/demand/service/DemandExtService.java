@@ -66,7 +66,9 @@ public class DemandExtService {
                 e.setExpectedCompleteAt(asDateTime(ext.get("expectedCompleteAt")));
                 trainingMapper.insert(e);
             }
-            default -> throw new BizException(ErrorCode.DEMAND_TYPE_INVALID, "不支持的需求类型: " + typeCode);
+            default -> {
+                // M8 字典化新增的自定义类型没有扩展表，跳过 ext 写入即可提报
+            }
         }
     }
 
@@ -115,7 +117,9 @@ public class DemandExtService {
                 if (ext.containsKey("expectedCompleteAt")) e.setExpectedCompleteAt(asDateTime(ext.get("expectedCompleteAt")));
                 trainingMapper.updateById(e);
             }
-            default -> throw new BizException(ErrorCode.DEMAND_TYPE_INVALID, "不支持的需求类型: " + typeCode);
+            default -> {
+                // 自定义类型无扩展表，忽略
+            }
         }
     }
 

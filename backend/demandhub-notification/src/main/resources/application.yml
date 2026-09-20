@@ -19,6 +19,20 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
 
+demandhub:
+  notification:
+    # 通知跳转链接前缀（需求详情页路由，阶段 5 前端对齐）
+    link-prefix: /demand/detail/
+  wecom:
+    # 一期 Mock 发送结果：OK 成功 / FAIL 模拟企微 500（可经管理接口热切换）
+    mock-mode: OK
+
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: demandhub-notification-producer
+    send-message-timeout: 5000
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

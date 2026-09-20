@@ -38,7 +38,14 @@ public enum ErrorCode {
     DEMAND_ALREADY_CLAIMED(1208, "该需求已被他人领取"),
     ACCEPTANCE_PRECONDITION(1209, "提交验收前置条件未满足"),
     FILE_TOO_LARGE(1210, "文件大小超出限制"),
-    ATTACHMENT_LIMIT(1211, "附件数量超出限制");
+    ATTACHMENT_LIMIT(1211, "附件数量超出限制"),
+
+    NOTIFICATION_NOT_FOUND(1301, "通知不存在"),
+    TEMPLATE_NOT_FOUND(1302, "通知模板不存在"),
+    DICT_ITEM_NOT_FOUND(1303, "字典项不存在"),
+    STATE_MACHINE_CONFIG_INVALID(1304, "状态机配置不合法"),
+    DEMAND_TYPE_NOT_FOUND(1305, "需求类型不存在"),
+    SLA_CONFIG_NOT_FOUND(1306, "SLA 配置不存在");
 
     private final Integer code;
     private final String message;

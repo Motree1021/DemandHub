@@ -23,17 +23,27 @@ public class DemandTransitionEvent {
 
     private final Long operatorId;
 
+    /** 操作意见（退回原因、关闭原因、挂起原因等），供通知模板 ${comment} 变量使用 */
+    private final String comment;
+
     private final Map<String, Object> extra;
 
     public DemandTransitionEvent(Long demandId, String demandNo, String event,
                                  String fromStatus, String toStatus, Long operatorId,
                                  Map<String, Object> extra) {
+        this(demandId, demandNo, event, fromStatus, toStatus, operatorId, null, extra);
+    }
+
+    public DemandTransitionEvent(Long demandId, String demandNo, String event,
+                                 String fromStatus, String toStatus, Long operatorId,
+                                 String comment, Map<String, Object> extra) {
         this.demandId = demandId;
         this.demandNo = demandNo;
         this.event = event;
         this.fromStatus = fromStatus;
         this.toStatus = toStatus;
         this.operatorId = operatorId;
+        this.comment = comment;
         this.extra = extra;
     }
 }

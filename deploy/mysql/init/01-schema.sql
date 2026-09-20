@@ -388,4 +388,58 @@ CREATE TABLE sys_dict (
   UNIQUE KEY uk_type_code (dict_type, item_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通用字典';
 
+-- ---------- M7/M8：通知模板 / 通知偏好 / SLA 配置 / 状态机配置 ----------
+
+CREATE TABLE notification_template (
+  id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  template_code    VARCHAR(64)  NOT NULL COMMENT '模板编码（按事件），如 SUBMIT/ASSIGN/SLA_ALERT',
+  template_name    VARCHAR(128) NOT NULL,
+  title_template   VARCHAR(256) NOT NULL COMMENT '标题模板，支持 ${var} 占位',
+  content_template TEXT         NOT NULL COMMENT '正文模板，支持 ${var} 占位',
+  status           VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE',
+  remark           VARCHAR(512) NULL,
+  created_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_template_code (template_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知模板';
+
+CREATE TABLE notification_preference (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id     BIGINT UNSIGNED NOT NULL COMMENT '用户数值ID（demand_user_snapshot.id）',
+  notify_type VARCHAR(32) NOT NULL COMMENT 'STATUS_CHANGE/MENTION/ASSIGN/REVIEW_REQUEST/ACCEPTANCE_REQUEST/SLA_ALERT',
+  enabled     TINYINT(1) NOT NULL DEFAULT 1,
+  created_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_type (user_id, notify_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户通知偏好（待办提醒 TODO 不可关闭，不落库）';
+
+CREATE TABLE sla_config (
+  id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  demand_type_code VARCHAR(32) NOT NULL,
+  status           VARCHAR(32) NOT NULL COMMENT '停留状态，如 SUBMITTED/TRIAGE/IN_PROGRESS',
+  warn_minutes     INT NOT NULL COMMENT '黄色预警阈值（分钟）',
+  max_minutes      INT NOT NULL COMMENT '红色告警阈值（分钟）',
+  enabled          TINYINT(1) NOT NULL DEFAULT 1,
+  remark           VARCHAR(512) NULL,
+  created_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_type_status (demand_type_code, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='SLA 停留时长配置（类型 × 状态）';
+
+CREATE TABLE state_machine_config (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  config_key  VARCHAR(64)  NOT NULL COMMENT '配置标识，demand_type.state_machine_key 引用',
+  config_name VARCHAR(128) NOT NULL,
+  config_json MEDIUMTEXT   NOT NULL COMMENT '流转规则 JSON：{"rules":[{"from","event","to","roles","remark"}]}',
+  status      VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE',
+  remark      VARCHAR(512) NULL,
+  created_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_config_key (config_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='状态机配置（热加载，无需重启）';
+
 SET FOREIGN_KEY_CHECKS = 1;

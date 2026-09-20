@@ -101,6 +101,8 @@ services:
       - "10912:10912"
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876
+      # 老版本 JDK8 在 cgroup v2 宿主机上读取容器 metrics 会 NPE（StoreUtil 初始化失败导致 PULL 全挂），禁用容器支持绕过
+      JAVA_OPT: "-XX:-UseContainerSupport"
     volumes:
       - ./rocketmq/broker.conf:/home/rocketmq/conf/broker.conf:ro
       - rocketmq-broker-data:/home/rocketmq/store
