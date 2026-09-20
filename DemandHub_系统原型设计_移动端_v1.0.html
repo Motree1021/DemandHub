@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DemandHub 移动端原型 v1.0</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #e8ecf1;
+    padding: 20px;
+    color: #333;
+  }
+  .proto-title {
+    text-align:center; margin-bottom:20px; font-size:18px; color:#1a3a6b;
+  }
+  .phones {
+    display:flex; flex-wrap:wrap; gap:24px; justify-content:center;
+  }
+  .phone {
+    width:390px; background:#f5f6f8; border-radius:28px; overflow:hidden;
+    box-shadow:0 8px 30px rgba(0,0,0,.15); position:relative;
+  }
+  .phone-label {
+    text-align:center; margin-top:8px; font-size:13px; color:#666; font-weight:600;
+  }
+  .statusbar {
+    height:28px; background:#1a3a6b; color:#fff; display:flex;
+    justify-content:space-between; align-items:center; padding:0 16px; font-size:12px;
+  }
+  /* 深蓝头部 */
+  .header {
+    background:linear-gradient(135deg,#1a3a6b 0%,#245086 100%);
+    color:#fff; padding:16px 16px 20px;
+  }
+  .header h1 { text-align:center; font-size:18px; margin-bottom:16px; font-weight:600; }
+  .user-row { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .avatar {
+    width:44px; height:44px; border-radius:50%; background:rgba(255,255,255,.2);
+    display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0;
+  }
+  .user-name { font-size:16px; font-weight:600; }
+  .user-meta { font-size:11px; color:rgba(255,255,255,.75); margin-top:3px; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#4ade80; margin-right:4px; }
+  .section-label { font-size:12px; color:rgba(255,255,255,.7); margin-bottom:10px; }
+  /* 数据卡片 */
+  .stat-cards { display:flex; gap:8px; }
+  .stat-card {
+    flex:1; background:rgba(255,255,255,.12); border-radius:10px; padding:10px;
+  }
+  .stat-card .lbl { font-size:11px; color:rgba(255,255,255,.75); }
+  .stat-card .val { font-size:18px; font-weight:700; margin-top:4px; }
+  .stat-card .val.red { color:#ff6b6b; }
+  /* 功能区白色卡片 */
+  .func-card {
+    background:#fff; border-radius:14px; margin:-14px 12px 0; padding:16px 8px;
+    box-shadow:0 2px 8px rgba(0,0,0,.06); position:relative; z-index:2;
+  }
+  .func-grid { display:flex; justify-content:space-around; }
+  .func-item { text-align:center; cursor:pointer; }
+  .func-icon {
+    width:48px; height:48px; border-radius:12px; background:#eef3fb;
+    display:flex; align-items:center; justify-content:center; margin:0 auto 6px;
+    font-size:22px;
+  }
+  .func-icon.highlight { background:#1a3a6b; color:#fff; }
+  .func-name { font-size:12px; color:#555; }
+  .func-badge {
+    position:absolute; top:-4px; right:18px; background:#ff4757; color:#fff;
+    font-size:10px; border-radius:10px; padding:1px 6px;
+  }
+  /* 列表区 */
+  .list-card {
+    background:#fff; border-radius:14px; margin:12px; padding:14px;
+  }
+  .list-title {
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:12px;
+  }
+  .list-title .t { font-size:15px; font-weight:600; border-left:3px solid #1a3a6b; padding-left:8px; }
+  .chip {
+    background:#fff0f0; color:#ff4757; font-size:11px; padding:2px 8px; border-radius:10px;
+  }
+  .row {
+    display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f0f0f0;
+  }
+  .row:last-child { border-bottom:none; }
+  .rank {
+    width:24px; height:24px; border-radius:6px; font-size:12px;
+    display:flex; align-items:center; justify-content:center; margin-right:10px; flex-shrink:0;
+  }
+  .rank.gold { background:#fef3c7; color:#d97706; }
+  .rank.gray { background:#e5e7eb; color:#6b7280; }
+  .rank.bronze { background:#fde8d8; color:#c2410c; }
+  .rank.normal { background:#f3f4f6; color:#9ca3af; }
+  .row-label { flex:1; font-size:14px; }
+  .row-value { font-size:15px; font-weight:700; color:#ff4757; }
+  /* Tab栏 */
+  .tabs { display:flex; gap:0; margin-bottom:10px; border-bottom:1px solid #eee; }
+  .tab {
+    flex:1; text-align:center; padding:10px 0; font-size:13px; color:#888; cursor:pointer;
+  }
+  .tab.active { color:#1a3a6b; font-weight:600; border-bottom:2px solid #1a3a6b; }
+  /* 需求列表项 */
+  .demand-item {
+    background:#fff; border-radius:12px; margin:10px 12px; padding:12px;
+    box-shadow:0 1px 3px rgba(0,0,0,.04);
+  }
+  .demand-top { display:flex; justify-content:space-between; margin-bottom:6px; }
+  .demand-no { font-size:12px; color:#888; }
+  .demand-status {
+    font-size:11px; padding:2px 8px; border-radius:8px;
+  }
+  .st-submitted { background:#eef3fb; color:#1a3a6b; }
+  .st-analyzing { background:#fef3c7; color:#b45309; }
+  .st-progress { background:#d1fae5; color:#065f46; }
+  .st-done { background:#f3f4f6; color:#6b7280; }
+  .demand-title { font-size:14px; font-weight:600; margin-bottom:6px; }
+  .demand-meta { font-size:12px; color:#999; display:flex; gap:12px; }
+  .demand-type {
+    display:inline-block; font-size:10px; padding:1px 6px; border-radius:4px; margin-right:6px;
+  }
+  .dt-tech { background:#dbeafe; color:#1d4ed8; }
+  .dt-matl { background:#fce7f3; color:#be185d; }
+  .dt-train { background:#d1fae5; color:#047857; }
+  /* 提报表单 */
+  .form-group { padding:14px 16px; background:#fff; margin-bottom:8px; }
+  .form-label { font-size:13px; color:#666; margin-bottom:6px; }
+  .form-label .req { color:#ff4757; }
+  .form-input {
+    width:100%; border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px;
+    font-size:14px; outline:none;
+  }
+  .form-input:focus { border-color:#1a3a6b; }
+  .type-picker { display:flex; gap:8px; flex-wrap:wrap; }
+  .type-btn {
+    padding:8px 16px; border-radius:20px; border:1px solid #ddd; font-size:13px;
+    background:#fff; color:#666; cursor:pointer;
+  }
+  .type-btn.selected { background:#1a3a6b; color:#fff; border-color:#1a3a6b; }
+  .btn-primary {
+    display:block; width:calc(100% - 32px); margin:16px; padding:13px;
+    background:#1a3a6b; color:#fff; text-align:center; border-radius:10px;
+    font-size:15px; font-weight:600; border:none; cursor:pointer;
+  }
+  /* 底部Tab */
+  .tabbar {
+    position:absolute; bottom:0; left:0; right:0; height:54px; background:#fff;
+    border-top:1px solid #eee; display:flex;
+  }
+  .tabbar-item {
+    flex:1; text-align:center; padding-top:6px; font-size:10px; color:#999; cursor:pointer;
+  }
+  .tabbar-item .icon { font-size:20px; display:block; }
+  .tabbar-item.active { color:#1a3a6b; }
+  /* 时间线 */
+  .timeline { padding:14px 16px; }
+  .tl-item { display:flex; gap:12px; position:relative; padding-bottom:16px; }
+  .tl-dot {
+    width:10px; height:10px; border-radius:50%; background:#1a3a6b; margin-top:4px;
+    flex-shrink:0; z-index:1;
+  }
+  .tl-line {
+    position:absolute; left:4px; top:16px; width:2px; height:calc(100% - 10px);
+    background:#e5e7eb;
+  }
+  .tl-item:last-child .tl-line { display:none; }
+  .tl-content { flex:1; }
+  .tl-status { font-size:13px; font-weight:600; }
+  .tl-time { font-size:11px; color:#999; margin-top:2px; }
+  .tl-desc { font-size:12px; color:#666; margin-top:4px; }
+  /* 原型切换说明 */
+  .page-switch {
+    text-align:center; margin:20px 0; font-size:14px; color:#1a3a6b; font-weight:600;
+  }
+  .note {
+    max-width:1200px; margin:20px auto; background:#fffbe6; border:1px solid #ffe58f;
+    border-radius:8px; padding:12px 16px; font-size:13px; color:#666;
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-title">DemandHub 移动端原型 v1.0 — 视觉对齐"创金零售"企微应用</div>
+
+<div class="note">
+  <b>嵌入说明：</b>左侧"创金零售"首页新增"需求提报"功能入口（深蓝高亮图标），点击路由跳转到右侧 DemandHub 提报页。
+  DemandHub 注册为独立企微应用，在企微 webview 内自动 OAuth 静默登录，无需二次登录。手机端主体验为提报 / 待办 / 我的需求 / 详情。
+</div>
+
+<div class="phones">
+
+<!-- 页面1：创金零售首页（嵌入入口示意） -->
+<div>
+  <div class="phone" style="height:720px">
+    <div class="statusbar"><span>9:41</span><span>创金零售</span><span>●●●</span></div>
+    <div class="header">
+      <h1>创金零售</h1>
+      <div class="user-row">
+        <div class="avatar">刘</div>
+        <div>
+          <div class="user-name">刘泉</div>
+          <div class="user-meta"><span class="dot"></span>数据已更新至2026-09-18</div>
+        </div>
+      </div>
+      <div class="section-label">本月概览（非货）</div>
+      <div class="stat-cards">
+        <div class="stat-card"><div class="lbl">申购(万元)</div><div class="val">250,836.60</div></div>
+        <div class="stat-card"><div class="lbl">月累计净增(万元)</div><div class="val red">33,154.15</div></div>
+        <div class="stat-card"><div class="lbl">管理费(万元)</div><div class="val">1,317.21</div></div>
+      </div>
+    </div>
+    <div class="func-card">
+      <div class="func-grid">
+        <div class="func-item"><div class="func-icon">📊</div><div class="func-name">数据</div></div>
+        <div class="func-item"><div class="func-icon">💬</div><div class="func-name">内容</div></div>
+        <div class="func-item"><div class="func-icon">👥</div><div class="func-name">拜访</div></div>
+        <div class="func-item" style="position:relative">
+          <div class="func-icon highlight">📝</div><div class="func-name" style="color:#1a3a6b;font-weight:600">需求提报</div>
+          <span class="func-badge">NEW</span>
+        </div>
+      </div>
+    </div>
+    <div class="list-card">
+      <div class="list-title">
+        <div class="t">月度排行榜</div>
+        <span class="chip">国际业务部 10</span>
+      </div>
+      <div class="tabs">
+        <div class="tab">产品</div>
+        <div class="tab">渠道</div>
+        <div class="tab active">团队</div>
+      </div>
+      <div class="row"><div class="rank gold">1</div><div class="row-label">网银</div><div class="row-value">+18,335.91</div></div>
+      <div class="row"><div class="rank gray">2</div><div class="row-label">银行</div><div class="row-value">+16,416.47</div></div>
+      <div class="row"><div class="rank bronze">3</div><div class="row-label">国际业务部</div><div class="row-value">+0.00</div></div>
+      <div class="row"><div class="rank normal">4</div><div class="row-label">零售总部</div><div class="row-value">+0.00</div></div>
+      <div class="row"><div class="rank normal">5</div><div class="row-label">培训开发部</div><div class="row-value">+0.00</div></div>
+    </div>
+  </div>
+  <div class="phone-label">① 创金零售首页（新增"需求提报"入口）</div>
+</div>
+
+<!-- 页面2：DemandHub 手机端首页/提报 -->
+<div>
+  <div class="phone" style="height:720px">
+    <div class="statusbar"><span>9:41</span><span>DemandHub</span><span>●●●</span></div>
+    <div class="header">
+      <h1>需求提报</h1>
+      <div class="user-row">
+        <div class="avatar">刘</div>
+        <div>
+          <div class="user-name">刘泉</div>
+          <div class="user-meta"><span class="dot"></span>财管科技产品部 · 已登录</div>
+        </div>
+      </div>
+      <div class="section-label">选择需求类型</div>
+    </div>
+    <div style="padding:16px">
+      <div class="type-picker">
+        <div class="type-btn selected">🔧 科技需求</div>
+        <div class="type-btn">📦 物料需求</div>
+        <div class="type-btn">🎓 培训需求</div>
+      </div>
+    </div>
+    <div class="form-group">
+      <div class="form-label">需求标题 <span class="req">*</span></div>
+      <input class="form-input" placeholder="一句话描述你要解决的问题" value="希望在App端增加净值播报推送开关">
+    </div>
+    <div class="form-group">
+      <div class="form-label">需求描述 <span class="req">*</span></div>
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px;font-size:13px;min-height:80px;color:#333">
+        一线同事希望客户能自主选择是否接收每日净值播报，目前默认全量推送，部分客户投诉骚扰。需要在App设置页增加开关...
+      </div>
+    </div>
+    <div class="form-group">
+      <div class="form-label">期望交付时间</div>
+      <input class="form-input" type="text" value="2026-10-31">
+    </div>
+    <div class="form-group">
+      <div class="form-label">附件</div>
+      <div style="display:flex;gap:8px">
+        <div style="width:60px;height:60px;border:1px dashed #ccc;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#999;font-size:24px">+</div>
+        <div style="width:60px;height:60px;background:#eef3fb;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;color:#1a3a6b">📎<br>截图.png</div>
+      </div>
+    </div>
+    <button class="btn-primary">提交需求</button>
+  </div>
+  <div class="phone-label">② DemandHub 提报页（从创金零售跳入）</div>
+</div>
+
+<!-- 页面3：待办列表 -->
+<div>
+  <div class="phone" style="height:720px">
+    <div class="statusbar"><span>9:41</span><span>DemandHub</span><span>●●●</span></div>
+    <div class="header">
+      <h1>我的待办</h1>
+      <div class="user-row">
+        <div class="avatar">刘</div>
+        <div>
+          <div class="user-name">刘泉</div>
+          <div class="user-meta"><span class="dot"></span>财管科技产品部 · 需求经理</div>
+        </div>
+      </div>
+      <div class="stat-cards">
+        <div class="stat-card"><div class="lbl">待受理</div><div class="val red">5</div></div>
+        <div class="stat-card"><div class="lbl">处理中</div><div class="val">12</div></div>
+        <div class="stat-card"><div class="lbl">待验收</div><div class="val">3</div></div>
+      </div>
+    </div>
+    <div style="padding:12px 12px 0">
+      <div class="tabs">
+        <div class="tab active">待受理 5</div>
+        <div class="tab">处理中 12</div>
+        <div class="tab">待验收 3</div>
+      </div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">TECH-20260919-003</span>
+        <span class="demand-status st-submitted">待分派</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-tech">科技</span>App净值播报推送开关</div>
+      <div class="demand-meta"><span>提报：银行渠道部 · 张三</span><span>紧急</span></div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">TECH-20260919-002</span>
+        <span class="demand-status st-submitted">待分派</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-tech">科技</span">代销周报自动生成</div>
+      <div class="demand-meta"><span>提报：网金业务部 · 李四</span><span>普通</span></div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">MATL-20260918-007</span>
+        <span class="demand-status st-analyzing">分析中</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-matl">物料</span">新发基金宣传折页设计</div>
+      <div class="demand-meta"><span>提报：券商渠道部 · 王五</span><span>普通</span></div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">TRAIN-20260918-004</span>
+        <span class="demand-status st-progress">处理中</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-train">培训</span">新员工合规培训课件</div>
+      <div class="demand-meta"><span>提报：银行渠道部 · 赵六</span><span>紧急</span></div>
+    </div>
+    <div class="tabbar">
+      <div class="tabbar-item"><span class="icon">📝</span>提报</div>
+      <div class="tabbar-item active"><span class="icon">📋</span>待办</div>
+      <div class="tabbar-item"><span class="icon">📂</span>我的需求</div>
+      <div class="tabbar-item"><span class="icon">👤</span>我的</div>
+    </div>
+  </div>
+  <div class="phone-label">③ 待办列表（经理/处理人视角）</div>
+</div>
+
+<!-- 页面4：我的需求 -->
+<div>
+  <div class="phone" style="height:720px">
+    <div class="statusbar"><span>9:41</span><span>DemandHub</span><span>●●●</span></div>
+    <div class="header">
+      <h1>我的需求</h1>
+      <div class="user-row">
+        <div class="avatar">刘</div>
+        <div>
+          <div class="user-name">刘泉</div>
+          <div class="user-meta"><span class="dot"></span>共提报 18 条 · 本月新增 4 条</div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 12px 0">
+      <div class="tabs">
+        <div class="tab active">全部</div>
+        <div class="tab">处理中</div>
+        <div class="tab">已完成</div>
+        <div class="tab">已关闭</div>
+      </div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">TECH-20260919-003</span>
+        <span class="demand-status st-analyzing">分析中</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-tech">科技</span>App净值播报推送开关</div>
+      <div class="demand-meta"><span>承接：财管科技产品部</span><span>9-19 提交</span></div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">MATL-20260912-011</span>
+        <span class="demand-status st-progress">制作中</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-matl">物料</span>三季度营销海报</div>
+      <div class="demand-meta"><span>承接：客户陪伴服务部</span><span>9-12 提交</span></div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">TRAIN-20260905-002</span>
+        <span class="demand-status st-done">已完成</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-train">培训</span">基金投顾业务培训</div>
+      <div class="demand-meta"><span>承接：培训开发部</span><span>9-15 交付</span></div>
+    </div>
+    <div class="demand-item">
+      <div class="demand-top">
+        <span class="demand-no">TECH-20260828-009</span>
+        <span class="demand-status st-done">已完成</span>
+      </div>
+      <div class="demand-title"><span class="demand-type dt-tech">科技</span>周报数据导出功能优化</div>
+      <div class="demand-meta"><span>承接：财管科技产品部</span><span>9-05 交付</span></div>
+    </div>
+    <div class="tabbar">
+      <div class="tabbar-item"><span class="icon">📝</span>提报</div>
+      <div class="tabbar-item"><span class="icon">📋</span>待办</div>
+      <div class="tabbar-item active"><span class="icon">📂</span>我的需求</div>
+      <div class="tabbar-item"><span class="icon">👤</span>我的</div>
+    </div>
+  </div>
+  <div class="phone-label">④ 我的需求（提报人视角）</div>
+</div>
+
+<!-- 页面5：需求详情/时间线 -->
+<div>
+  <div class="phone" style="height:720px">
+    <div class="statusbar"><span>9:41</span><span>DemandHub</span><span>●●●</span></div>
+    <div class="header">
+      <h1>需求详情</h1>
+      <div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:8px">TECH-20260919-003</div>
+      <div style="font-size:16px;font-weight:600;margin-top:6px">App净值播报推送开关</div>
+    </div>
+    <div class="list-card" style="margin-top:-10px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="demand-type dt-tech">科技需求</span>
+        <span class="demand-status st-analyzing">分析中</span>
+        <span style="font-size:11px;color:#ff4757;background:#fff0f0;padding:2px 8px;border-radius:8px">紧急</span>
+      </div>
+      <div style="font-size:13px;color:#555;line-height:1.6">
+        一线同事希望客户能自主选择是否接收每日净值播报，目前默认全量推送，部分客户投诉骚扰。需要在App设置页增加开关...
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid #f0f0f0;font-size:12px;color:#888">
+        <div>提报人：银行渠道部 · 张三</div>
+        <div style="margin-top:4px">承接：财管科技产品部 · 当前处理人：刘泉</div>
+      </div>
+    </div>
+    <div class="list-card">
+      <div class="list-title"><div class="t">处理进度</div></div>
+      <div class="timeline">
+        <div class="tl-item">
+          <div class="tl-dot"></div><div class="tl-line"></div>
+          <div class="tl-content">
+            <div class="tl-status">已分派 → 分析中</div>
+            <div class="tl-time">2026-09-19 14:30 · 刘泉</div>
+            <div class="tl-desc">已认领，开始分析需求方案</div>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#d1d5db"></div><div class="tl-line"></div>
+          <div class="tl-content">
+            <div class="tl-status" style="color:#888">待受理 → 已分派</div>
+            <div class="tl-time">2026-09-19 11:20 · 王经理</div>
+            <div class="tl-desc">分派至财管科技产品部</div>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#d1d5db"></div><div class="tl-line"></div>
+          <div class="tl-content">
+            <div class="tl-status" style="color:#888">草稿 → 已提交</div>
+            <div class="tl-time">2026-09-19 10:05 · 张三</div>
+            <div class="tl-desc">通过创金零售入口提报</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:0 16px">
+      <button class="btn-primary" style="margin:0 0 16px">💬 在线沟通</button>
+    </div>
+  </div>
+  <div class="phone-label">⑤ 需求详情（时间线 + 沟通）</div>
+</div>
+
+</div>
+
+</body>
+</html>

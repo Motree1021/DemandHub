@@ -1,0 +1,46 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: demandhub-gateway
+  cloud:
+    gateway:
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+      routes:
+        - id: demandhub-system
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/system/**
+          filters:
+            - StripPrefix=1
+        - id: demandhub-demand
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/demand/**
+          filters:
+            - StripPrefix=1
+        - id: demandhub-notification
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/notification/**
+          filters:
+            - StripPrefix=1
+        - id: demandhub-agent
+          uri: http://localhost:8084
+          predicates:
+            - Path=/api/agent/**
+          filters:
+            - StripPrefix=1
+
+logging:
+  level:
+    org.springframework.cloud.gateway: info

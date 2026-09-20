@@ -1,0 +1,327 @@
+<html style="margin:0;padding:0;">
+<title>DemandHub 概念模型 v1.1</title>
+<div style="width:100%;box-sizing:border-box;padding:18px 20px 26px;background:#f1f5f9;">
+<div style="max-width:1720px;margin:0 auto;">
+<h2 style="margin:0 0 4px;font-size:21px;color:#0f172a;">DemandHub 需求管理系统 · 概念模型 v1.1</h2>
+<div style="margin:0 0 14px;font-size:13.5px;color:#475569;">创金合信基金 · 零售业务线 ｜ v1.1 修订：用户/组织主数据改为零售统一权限中心只读镜像（demand_user_snapshot / demand_org_snapshot），业务角色本地授权（demand_role_grant）；其余业务域不变</div>
+<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:10px;overflow-x:auto;">
+<svg viewBox="0 0 1720 1078" width="100%" style="display:block;max-width:1720px;margin:0 auto;" xmlns="http://www.w3.org/2000/svg" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0891b2"/></marker>
+</defs>
+<rect x="0" y="0" width="1720" height="1078" fill="#ffffff"/>
+
+<!-- 域背景框 -->
+<rect x="20" y="20" width="520" height="650" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+<text x="36" y="48" font-size="16" font-weight="700" fill="#1d4ed8">① 主数据镜像与业务角色域</text>
+
+<rect x="570" y="20" width="620" height="830" rx="12" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5"/>
+<text x="586" y="48" font-size="16" font-weight="700" fill="#b45309">② 需求域</text>
+
+<rect x="1220" y="20" width="480" height="830" rx="12" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.5"/>
+<text x="1236" y="48" font-size="16" font-weight="700" fill="#6d28d9">③ 处理与流转域</text>
+
+<rect x="20" y="690" width="520" height="160" rx="12" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.5"/>
+<text x="36" y="718" font-size="16" font-weight="700" fill="#047857">④ 项目域</text>
+
+<rect x="570" y="880" width="1130" height="130" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="586" y="908" font-size="16" font-weight="700" fill="#334155">⑤ 通知域</text>
+
+<!-- ===== 域①：外部系统标注 ===== -->
+<rect x="40" y="80" width="480" height="76" rx="7" fill="#ffffff" stroke="#0891b2" stroke-width="1.6" stroke-dasharray="8,4"/>
+<rect x="40" y="80" width="480" height="28" rx="7" fill="#cffafe"/>
+<text x="280" y="99" text-anchor="middle" font-size="14.5" font-weight="700" fill="#155e75">零售业务线统一权限中心（外部系统）</text>
+<text x="52" y="128" font-size="13" fill="#334155">用户主数据：工号/姓名/企微userid/部门/岗位</text>
+<text x="52" y="147" font-size="13" fill="#334155">组织主数据：部门/小组树、成员归属、token 校验</text>
+
+<!-- demand_user_snapshot -->
+<rect x="40" y="180" width="230" height="170" rx="7" fill="#ffffff" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="40" y="180" width="230" height="28" rx="7" fill="#dbeafe"/>
+<text x="155" y="199" text-anchor="middle" font-size="14.5" font-weight="700" fill="#1e3a8a">用户镜像 demand_user_snapshot</text>
+<rect x="48" y="212" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="63" y="223" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="84" y="222" font-size="13" fill="#0f172a">id（本地）</text>
+<rect x="48" y="231" width="30" height="14" rx="3" fill="#d1fae5" stroke="#6ee7b7" stroke-width="0.8"/><text x="63" y="242" text-anchor="middle" font-size="10.5" font-weight="700" fill="#047857">UK</text><text x="84" y="241" font-size="13" fill="#0f172a">user_id（权限中心）</text>
+<text x="52" y="260" font-size="13" fill="#334155">姓名 / 企微userid / 工号</text>
+<rect x="48" y="269" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="63" y="280" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="84" y="279" font-size="13" fill="#0f172a">primary_org_id（主组织）</text>
+<text x="52" y="298" font-size="13" fill="#334155">dept_path 部门路径快照</text>
+<text x="52" y="317" font-size="13" fill="#334155">手机号/邮箱/状态/synced_at</text>
+<text x="52" y="336" font-size="12" fill="#64748b">（只读镜像，无CRUD界面）</text>
+
+<!-- demand_org_snapshot -->
+<rect x="290" y="180" width="230" height="170" rx="7" fill="#ffffff" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="290" y="180" width="230" height="28" rx="7" fill="#dbeafe"/>
+<text x="405" y="199" text-anchor="middle" font-size="14.5" font-weight="700" fill="#1e3a8a">组织镜像 demand_org_snapshot</text>
+<rect x="298" y="212" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="313" y="223" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="334" y="222" font-size="13" fill="#0f172a">id（本地）</text>
+<rect x="298" y="231" width="30" height="14" rx="3" fill="#d1fae5" stroke="#6ee7b7" stroke-width="0.8"/><text x="313" y="242" text-anchor="middle" font-size="10.5" font-weight="700" fill="#047857">UK</text><text x="334" y="241" font-size="13" fill="#0f172a">org_id（权限中心）</text>
+<text x="302" y="260" font-size="13" fill="#334155">组织名称 / 层级(线/部门/小组)</text>
+<rect x="298" y="269" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="313" y="280" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="334" y="279" font-size="13" fill="#0f172a">parent_id（自关联树）</text>
+<text x="302" y="298" font-size="13" fill="#334155">path 物化路径 / org_kind</text>
+<text x="302" y="317" font-size="13" fill="#334155">状态 / synced_at</text>
+<text x="302" y="336" font-size="12" fill="#64748b">（只读镜像，无CRUD界面）</text>
+
+<!-- demand_role_grant -->
+<rect x="40" y="380" width="480" height="200" rx="7" fill="#ffffff" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="40" y="380" width="480" height="28" rx="7" fill="#dbeafe"/>
+<text x="280" y="399" text-anchor="middle" font-size="14.5" font-weight="700" fill="#1e3a8a">业务角色授权 demand_role_grant（本地维护）</text>
+<rect x="48" y="412" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="63" y="423" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="84" y="422" font-size="13" fill="#0f172a">id</text>
+<rect x="48" y="431" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="63" y="442" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="84" y="441" font-size="13" fill="#0f172a">user_id → demand_user_snapshot</text>
+<text x="52" y="460" font-size="13" fill="#334155">role_code：ADMIN / EXECUTIVE / DEMAND_MANAGER / HANDLER / REPORTER</text>
+<rect x="48" y="469" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="63" y="480" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="84" y="479" font-size="13" fill="#0f172a">org_id（授权组织范围，空=不限）</text>
+<text x="52" y="498" font-size="13" fill="#334155">demand_type_scope（类型范围覆盖）</text>
+<text x="52" y="517" font-size="13" fill="#334155">effective_from / effective_to / granted_by</text>
+<text x="52" y="536" font-size="12" fill="#64748b">数据范围 = 授权组织子树 × 类型范围；一用户可多角色</text>
+<text x="52" y="555" font-size="12" fill="#64748b">角色编码固定，不另建 sys_role 表</text>
+
+<!-- 外部集成标注 -->
+<rect x="40" y="600" width="480" height="56" rx="7" fill="#ffffff" stroke="#0891b2" stroke-width="1.4" stroke-dasharray="6,4"/>
+<text x="52" y="623" font-size="12.5" fill="#155e75">集成：每日全量 + 每5分钟增量同步；token 实时回调校验</text>
+<text x="52" y="643" font-size="12.5" fill="#155e75">DemandHub 不提供用户/组织增删改界面</text>
+
+<!-- ===== 域②：需求域 ===== -->
+<!-- demand 基表 -->
+<rect x="600" y="70" width="300" height="294" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="600" y="70" width="300" height="28" rx="7" fill="#fef3c7"/>
+<text x="750" y="89" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">需求 Demand（基表）</text>
+<rect x="608" y="102" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="623" y="113" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="644" y="112" font-size="13" fill="#0f172a">demand_id / demand_no</text>
+<text x="612" y="131" font-size="13" fill="#334155">需求标题 / 内容</text>
+<rect x="608" y="140" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="623" y="151" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="644" y="150" font-size="13" fill="#0f172a">demand_type_code</text>
+<text x="612" y="169" font-size="13" fill="#334155">紧急程度 / 状态（12态）/ on_hold</text>
+<rect x="608" y="178" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="623" y="189" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="644" y="188" font-size="13" fill="#0f172a">submitter_id → user_snapshot</text>
+<rect x="608" y="197" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="623" y="208" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="644" y="207" font-size="13" fill="#0f172a">actual_demander_id（代办）</text>
+<text x="612" y="226" font-size="13" fill="#334155">submitter_org_snapshot 部门快照</text>
+<text x="612" y="245" font-size="13" fill="#334155">channel（WEB/H5/BOT/VOICE）</text>
+<rect x="608" y="254" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="623" y="265" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="644" y="264" font-size="13" fill="#0f172a">assignee_org_id / assignee_user_id</text>
+<rect x="608" y="273" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="623" y="284" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="644" y="283" font-size="13" fill="#0f172a">project_id（可空）</text>
+<text x="612" y="302" font-size="13" fill="#334155">期望/实际交付时间 / 提交时间</text>
+<text x="612" y="321" font-size="13" fill="#334155">close_reason / quality_score</text>
+
+<!-- 三类扩展表 -->
+<rect x="590" y="410" width="180" height="123" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="590" y="410" width="180" height="28" rx="7" fill="#fef3c7"/>
+<text x="680" y="429" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">科技需求扩展</text>
+<rect x="598" y="442" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="613" y="453" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="634" y="452" font-size="13" fill="#0f172a">demand_id（同主键）</text>
+<text x="602" y="471" font-size="13" fill="#334155">关联系统/模块</text>
+<text x="602" y="490" font-size="13" fill="#334155">业务场景/验收标准</text>
+<text x="602" y="509" font-size="13" fill="#334155">（→财管科技产品部）</text>
+
+<rect x="790" y="410" width="180" height="123" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="790" y="410" width="180" height="28" rx="7" fill="#fef3c7"/>
+<text x="880" y="429" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">物料需求扩展</text>
+<rect x="798" y="442" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="813" y="453" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="834" y="452" font-size="13" fill="#0f172a">demand_id（同主键）</text>
+<text x="802" y="471" font-size="13" fill="#334155">物料子类/用途/数量</text>
+<text x="802" y="490" font-size="13" fill="#334155">期望到位时间</text>
+<text x="802" y="509" font-size="13" fill="#334155">（→客户陪伴服务部）</text>
+
+<rect x="990" y="410" width="180" height="123" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="990" y="410" width="180" height="28" rx="7" fill="#fef3c7"/>
+<text x="1080" y="429" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">培训需求扩展</text>
+<rect x="998" y="442" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="1013" y="453" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="1034" y="452" font-size="13" fill="#0f172a">demand_id（同主键）</text>
+<text x="1002" y="471" font-size="13" fill="#334155">培训子类/对象/人数</text>
+<text x="1002" y="490" font-size="13" fill="#334155">期望完成时间</text>
+<text x="1002" y="509" font-size="13" fill="#334155">（→培训开发部）</text>
+
+<!-- 类型字典 -->
+<rect x="590" y="552" width="240" height="123" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="590" y="552" width="240" height="28" rx="7" fill="#fef3c7"/>
+<text x="710" y="571" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">需求类型字典 demand_type</text>
+<rect x="598" y="584" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="613" y="595" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="634" y="594" font-size="13" fill="#0f172a">type_code(TECH/MATL/TRAIN)</text>
+<rect x="598" y="603" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="613" y="614" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="634" y="613" font-size="13" fill="#0f172a">default_assignee_org_id</text>
+<text x="602" y="632" font-size="13" fill="#334155">state_machine_key / sla_config</text>
+<text x="602" y="651" font-size="13" fill="#334155">status / sort（新增类型=加配置）</text>
+
+<!-- 需求关联 -->
+<rect x="860" y="552" width="310" height="104" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="860" y="552" width="310" height="28" rx="7" fill="#fef3c7"/>
+<text x="1015" y="571" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">需求关联 demand_relation</text>
+<rect x="868" y="584" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="883" y="595" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="904" y="594" font-size="13" fill="#0f172a">id</text>
+<rect x="868" y="603" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="883" y="614" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="904" y="613" font-size="13" fill="#0f172a">demand_id / related_demand_id</text>
+<text x="872" y="632" font-size="13" fill="#334155">关系：父子/依赖/重复/拆分（自关联N:M）</text>
+
+<!-- 草稿 -->
+<rect x="590" y="690" width="270" height="142" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="590" y="690" width="270" height="28" rx="7" fill="#fef3c7"/>
+<text x="725" y="709" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">需求草稿 demand_draft</text>
+<rect x="598" y="722" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="613" y="733" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="634" y="732" font-size="13" fill="#0f172a">draft_id</text>
+<rect x="598" y="741" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="613" y="752" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="634" y="751" font-size="13" fill="#0f172a">user_id</text>
+<text x="602" y="770" font-size="13" fill="#334155">channel / Agent对话/语音转写</text>
+<rect x="598" y="789" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="613" y="800" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="634" y="799" font-size="13" fill="#0f172a">converted_demand_id（1:1）</text>
+
+<!-- 附件 -->
+<rect x="880" y="690" width="290" height="142" rx="7" fill="#ffffff" stroke="#f59e0b" stroke-width="1.6"/>
+<rect x="880" y="690" width="290" height="28" rx="7" fill="#fef3c7"/>
+<text x="1025" y="709" text-anchor="middle" font-size="14.5" font-weight="700" fill="#78350f">附件 attachment（通用挂接）</text>
+<rect x="888" y="722" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="903" y="733" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="924" y="732" font-size="13" fill="#0f172a">id</text>
+<text x="892" y="751" font-size="13" fill="#334155">biz_type+biz_id（需求/方案/评论/草稿）</text>
+<rect x="888" y="770" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="903" y="781" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="924" y="780" font-size="13" fill="#0f172a">uploaded_by</text>
+<text x="892" y="799" font-size="13" fill="#334155">文件名/路径/大小/语音转写</text>
+
+<!-- ===== 域③：处理与流转域 ===== -->
+<rect x="1240" y="70" width="440" height="161" rx="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="1240" y="70" width="440" height="28" rx="7" fill="#ede9fe"/>
+<text x="1460" y="89" text-anchor="middle" font-size="14.5" font-weight="700" fill="#4c1d95">处理任务 assignment（分派/领取）</text>
+<rect x="1248" y="102" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="1263" y="113" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="1284" y="112" font-size="13" fill="#0f172a">assignment_id</text>
+<rect x="1248" y="121" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="1263" y="132" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="1284" y="131" font-size="13" fill="#0f172a">demand_id / org_id / assignee_id</text>
+<text x="1252" y="150" font-size="13" fill="#334155">dispatcher_id / assign_mode(分发/领取)</text>
+<text x="1252" y="169" font-size="13" fill="#334155">status(OPEN/PROCESSING/DONE)</text>
+<text x="1252" y="188" font-size="13" fill="#334155">分发/领取/完成时间</text>
+
+<rect x="1240" y="237" width="440" height="142" rx="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="1240" y="237" width="440" height="28" rx="7" fill="#ede9fe"/>
+<text x="1460" y="256" text-anchor="middle" font-size="14.5" font-weight="700" fill="#4c1d95">流转日志 demand_transition_log</text>
+<rect x="1248" y="269" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="1263" y="280" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="1284" y="279" font-size="13" fill="#0f172a">id</text>
+<rect x="1248" y="288" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="1263" y="299" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="1284" y="298" font-size="13" fill="#0f172a">demand_id / operator_id</text>
+<text x="1252" y="317" font-size="13" fill="#334155">from_status → to_status / action</text>
+<text x="1252" y="336" font-size="13" fill="#334155">operator_snapshot / comment / extra</text>
+<text x="1252" y="355" font-size="13" fill="#334155">created_at（只增不改）</text>
+
+<rect x="1240" y="385" width="440" height="180" rx="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="1240" y="385" width="440" height="28" rx="7" fill="#ede9fe"/>
+<text x="1460" y="404" text-anchor="middle" font-size="14.5" font-weight="700" fill="#4c1d95">需求方案 solution（多版本）</text>
+<rect x="1248" y="417" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="1263" y="428" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="1284" y="427" font-size="13" fill="#0f172a">solution_id</text>
+<rect x="1248" y="436" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="1263" y="447" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="1284" y="446" font-size="13" fill="#0f172a">demand_id / version / author_id</text>
+<text x="1252" y="465" font-size="13" fill="#334155">spec_content / solution_content</text>
+<text x="1252" y="484" font-size="13" fill="#334155">status(DRAFT/REVIEWING/APPROVED)</text>
+<text x="1252" y="503" font-size="13" fill="#334155">计划/实际交付时间 / remark</text>
+
+<rect x="1240" y="571" width="440" height="123" rx="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="1240" y="571" width="440" height="28" rx="7" fill="#ede9fe"/>
+<text x="1460" y="590" text-anchor="middle" font-size="14.5" font-weight="700" fill="#4c1d95">评审/验收 review</text>
+<rect x="1248" y="603" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="1263" y="614" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="1284" y="613" font-size="13" fill="#0f172a">id</text>
+<rect x="1248" y="622" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="1263" y="633" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="1284" y="632" font-size="13" fill="#0f172a">solution_id / demand_id / reviewer_id</text>
+<text x="1252" y="651" font-size="13" fill="#334155">review_type(SOLUTION/ACCEPTANCE)</text>
+<text x="1252" y="670" font-size="13" fill="#334155">conclusion(PASS/REJECT) / quality_score</text>
+
+<rect x="1240" y="702" width="210" height="123" rx="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="1240" y="702" width="210" height="28" rx="7" fill="#ede9fe"/>
+<text x="1345" y="721" text-anchor="middle" font-size="14.5" font-weight="700" fill="#4c1d95">工时 effort_log</text>
+<rect x="1248" y="734" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="1263" y="745" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="1284" y="744" font-size="13" fill="#0f172a">id</text>
+<rect x="1248" y="753" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="1263" y="764" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="1284" y="763" font-size="13" fill="#0f172a">demand_id / user_id</text>
+<text x="1252" y="782" font-size="13" fill="#334155">hours / work_date</text>
+
+<rect x="1470" y="702" width="210" height="123" rx="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="1470" y="702" width="210" height="28" rx="7" fill="#ede9fe"/>
+<text x="1575" y="721" text-anchor="middle" font-size="14.5" font-weight="700" fill="#4c1d95">评论 comment</text>
+<rect x="1478" y="734" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="1493" y="745" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="1514" y="744" font-size="13" fill="#0f172a">id</text>
+<rect x="1478" y="753" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="1493" y="764" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="1514" y="763" font-size="13" fill="#0f172a">demand_id / author_id</text>
+<text x="1482" y="782" font-size="13" fill="#334155">content / @提醒 / time</text>
+
+<!-- ===== 域④：项目域 ===== -->
+<rect x="40" y="720" width="220" height="123" rx="7" fill="#ffffff" stroke="#34d399" stroke-width="1.6"/>
+<rect x="40" y="720" width="220" height="28" rx="7" fill="#d1fae5"/>
+<text x="150" y="739" text-anchor="middle" font-size="14.5" font-weight="700" fill="#064e3b">项目 project</text>
+<rect x="48" y="752" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="63" y="763" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="84" y="762" font-size="13" fill="#0f172a">project_id</text>
+<rect x="48" y="771" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="63" y="782" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="84" y="781" font-size="13" fill="#0f172a">owner_id</text>
+<text x="52" y="800" font-size="13" fill="#334155">name / status</text>
+<text x="52" y="819" font-size="13" fill="#334155">started_at / ended_at</text>
+
+<rect x="290" y="720" width="230" height="123" rx="7" fill="#ffffff" stroke="#34d399" stroke-width="1.6"/>
+<rect x="290" y="720" width="230" height="28" rx="7" fill="#d1fae5"/>
+<text x="405" y="739" text-anchor="middle" font-size="14.5" font-weight="700" fill="#064e3b">里程碑 project_milestone</text>
+<rect x="298" y="752" width="30" height="14" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="313" y="763" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="334" y="762" font-size="13" fill="#0f172a">id</text>
+<rect x="298" y="771" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="313" y="782" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="334" y="781" font-size="13" fill="#0f172a">project_id</text>
+<text x="302" y="800" font-size="13" fill="#334155">name / plan_at / actual_at</text>
+<text x="302" y="819" font-size="13" fill="#334155">status</text>
+
+<!-- ===== 域⑤：通知 ===== -->
+<rect x="590" y="918" width="1090" height="68" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+<rect x="590" y="918" width="1090" height="28" rx="7" fill="#e2e8f0"/>
+<text x="1135" y="937" text-anchor="middle" font-size="14.5" font-weight="700" fill="#1e293b">通知消息 notification</text>
+<text x="602" y="961" font-size="13" fill="#334155">id ｜ demand_id ｜ receiver_id ｜ channel(IN_APP/WECOM) ｜ template_code ｜ title·content·link ｜ is_read·read_at ｜ send_status·retry_count</text>
+
+<!-- 设计约定 -->
+<rect x="20" y="880" width="520" height="130" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6,4"/>
+<text x="36" y="906" font-size="15" font-weight="700" fill="#0f172a">设计约定（v1.1）</text>
+<text x="36" y="930" font-size="12.5" fill="#334155">· 需求编号：类型前缀+日期+流水，如 TECH-20260919-001</text>
+<text x="36" y="946" font-size="12.5" fill="#334155">· 用户/组织主数据来自零售统一权限中心，本地只读镜像</text>
+<text x="36" y="962" font-size="12.5" fill="#334155">· 业务角色(经理/处理人)在 demand_role_grant 本地授权</text>
+<text x="36" y="978" font-size="12.5" fill="#334155">· 提报时点快照（部门/姓名）留痕，主数据以镜像为准</text>
+<text x="36" y="994" font-size="12.5" fill="#334155">· 新增需求类型=字典配置+扩展表；状态机按类型配置</text>
+
+<!-- ===== 关系连线 ===== -->
+<!-- 权限中心 → 两张镜像 -->
+<path d="M155,156 L155,180" fill="none" stroke="#0891b2" stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#sync)"/>
+<text x="160" y="172" font-size="12" fill="#0891b2" font-weight="600" style="paint-order:stroke" stroke="#ffffff" stroke-width="3.5">增量同步</text>
+<path d="M405,156 L405,180" fill="none" stroke="#0891b2" stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#sync)"/>
+<text x="410" y="172" font-size="12" fill="#0891b2" font-weight="600" style="paint-order:stroke" stroke="#ffffff" stroke-width="3.5">增量同步</text>
+
+<!-- user_snapshot N:M org_snapshot（经 role_grant） -->
+<path d="M270,265 L290,265" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="272" y="258" font-size="11.5" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">经授权表</text>
+
+<!-- role_grant → user_snapshot -->
+<path d="M155,380 L155,350" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="160" y="368" font-size="11.5" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">N:1 用户</text>
+
+<!-- role_grant → org_snapshot -->
+<path d="M405,380 L405,350" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="410" y="368" font-size="11.5" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">N:1 组织范围</text>
+
+<!-- user_snapshot → demand（提报人） -->
+<path d="M270,265 L560,265 L560,250 L600,250" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="340" y="258" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">提报人/处理人 N:1</text>
+
+<!-- demand → 扩展表 1:1 -->
+<path d="M680,364 L680,410" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M880,364 L880,410" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M900,364 L900,354 L1080,354 L1080,410" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="780" y="390" text-anchor="middle" font-size="12" fill="#78350f" font-weight="700" style="paint-order:stroke" stroke="#fff" stroke-width="3">1:1 类型扩展</text>
+
+<!-- demand → 类型字典 N:1 -->
+<path d="M600,340 L575,340 L575,613 L590,613" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="568" y="480" transform="rotate(-90 568 480)" text-anchor="middle" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">类型字典 N:1</text>
+
+<!-- demand ↔ demand_relation 自关联 N:M -->
+<path d="M900,160 L1210,160 L1210,604 L1170,604" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="1040" y="154" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">1:N（demand_id → 需求基表）</text>
+<path d="M860,604 L835,604 L835,540 L780,540 L780,364" fill="none" stroke="#475569" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<text x="790" y="534" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">1:N（related_demand_id → 需求基表底部）</text>
+
+<!-- demand → assignment 1:N -->
+<path d="M900,150 L1240,150" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="1020" y="144" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">1:N 分派</text>
+
+<!-- demand → transition_log 1:N -->
+<path d="M900,305 L1240,305" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="985" y="299" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">1:N 状态流水</text>
+
+<!-- demand → solution 1:N -->
+<path d="M1170,470 L1240,470" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="1206" y="466" font-size="11.5" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">1:N 方案</text>
+
+<!-- solution → review 1:N -->
+<path d="M1460,565 L1460,571" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- demand → effort_log / comment 1:N -->
+<path d="M1170,600 L1205,600 L1205,702 L1345,702" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="1210" y="650" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">工时 1:N</text>
+<path d="M1100,832 L1100,846 L1575,846 L1575,825" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="1330" y="840" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">评论 1:N</text>
+
+<!-- draft → demand 1:1 -->
+<path d="M590,761 L578,761 L578,350 L600,350" fill="none" stroke="#475569" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+<text x="572" y="490" transform="rotate(-90 572 490)" text-anchor="middle" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">草稿转化 1:1</text>
+
+<!-- demand → project N:1 -->
+<path d="M600,330 L560,330 L560,704 L150,704 L150,720" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="552" y="620" transform="rotate(-90 552 620)" text-anchor="middle" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">所属项目 N:1（可空）</text>
+
+<!-- project → milestone 1:N -->
+<path d="M260,780 L290,780" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="266" y="774" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">1:N</text>
+
+<!-- 通知 -->
+<path d="M1020,832 L1020,918" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="1030" y="872" font-size="12" fill="#1e293b" style="paint-order:stroke" stroke="#fff" stroke-width="3">状态变更触发通知</text>
+
+<!-- 图例 -->
+<text x="20" y="1045" font-size="14" font-weight="700" fill="#0f172a">图例</text>
+<line x1="80" y1="1040" x2="130" y2="1040" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="138" y="1045" font-size="13" fill="#334155">关联关系</text>
+<line x1="240" y1="1040" x2="290" y2="1040" stroke="#0891b2" stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#sync)"/>
+<text x="298" y="1045" font-size="13" fill="#334155">权限中心同步（只读）</text>
+<rect x="470" y="1031" width="30" height="15" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/><text x="485" y="1043" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">PK</text><text x="508" y="1045" font-size="13" fill="#334155">主键</text>
+<rect x="560" y="1031" width="30" height="15" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="575" y="1043" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="588" y="1045" font-size="13" fill="#334155">外键</text>
+<rect x="650" y="1031" width="30" height="15" rx="3" fill="#d1fae5" stroke="#6ee7b7" stroke-width="0.8"/><text x="665" y="1043" text-anchor="middle" font-size="10.5" font-weight="700" fill="#047857">UK</text><text x="678" y="1045" font-size="13" fill="#334155">业务唯一键</text>
+</svg>
+</div></div></div>
+</html>
