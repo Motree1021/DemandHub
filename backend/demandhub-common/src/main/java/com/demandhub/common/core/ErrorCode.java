@@ -26,7 +26,19 @@ public enum ErrorCode {
     REFRESH_TOKEN_INVALID(1103, "刷新令牌无效或已过期"),
     USER_NOT_FOUND(1104, "用户不存在"),
     ROLE_GRANT_DUPLICATED(1105, "相同授权已存在"),
-    ROLE_GRANT_NOT_FOUND(1106, "授权记录不存在");
+    ROLE_GRANT_NOT_FOUND(1106, "授权记录不存在"),
+
+    DRAFT_NOT_FOUND(1201, "草稿不存在"),
+    SOLUTION_NOT_FOUND(1202, "方案不存在"),
+    ATTACHMENT_NOT_FOUND(1203, "附件不存在"),
+    COMMENT_NOT_FOUND(1204, "评论不存在"),
+    RELATION_NOT_FOUND(1205, "关联不存在"),
+    EFFORT_NOT_FOUND(1206, "工时记录不存在"),
+    DEMAND_TYPE_INVALID(1207, "需求类型无效"),
+    DEMAND_ALREADY_CLAIMED(1208, "该需求已被他人领取"),
+    ACCEPTANCE_PRECONDITION(1209, "提交验收前置条件未满足"),
+    FILE_TOO_LARGE(1210, "文件大小超出限制"),
+    ATTACHMENT_LIMIT(1211, "附件数量超出限制");
 
     private final Integer code;
     private final String message;

@@ -7,10 +7,10 @@
 
 USE demandhub;
 
--- ---------- 需求类型默认承接组织（平台/双中心） ----------
-UPDATE demand_type SET default_org_id = 110 WHERE type_code = 'TECH';
-UPDATE demand_type SET default_org_id = 120 WHERE type_code = 'MATL';
-UPDATE demand_type SET default_org_id = 130 WHERE type_code = 'TRAIN';
+-- ---------- 需求类型默认承接组织（路由到叶子承接组，与处理人授权层级一致） ----------
+UPDATE demand_type SET default_org_id = 111 WHERE type_code = 'TECH';
+UPDATE demand_type SET default_org_id = 121 WHERE type_code = 'MATL';
+UPDATE demand_type SET default_org_id = 131 WHERE type_code = 'TRAIN';
 
 -- ---------- 业务角色授权（FR-M1-03，覆盖 5 类角色） ----------
 -- 组织：100 零售线 / 110 财管科技产品部(平台) / 120 客户陪伴服务部(双中心) / 130 培训开发部(双中心) / 140 一线营业部

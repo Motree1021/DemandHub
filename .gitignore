@@ -43,3 +43,6 @@ desktop.ini
 # ===== 日志 =====
 logs/
 *.log
+
+# ===== 自测临时文件（含 token，禁止入库） =====
+.tmp-selftest/
