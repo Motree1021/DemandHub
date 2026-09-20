@@ -19,7 +19,14 @@ public enum ErrorCode {
     BIZ_ERROR(1000, "业务处理失败"),
     ILLEGAL_STATE_TRANSITION(1001, "非法的状态流转"),
     DEMAND_NOT_FOUND(1002, "需求不存在"),
-    CONCURRENT_CONFLICT(1003, "并发操作冲突，请刷新后重试");
+    CONCURRENT_CONFLICT(1003, "并发操作冲突，请刷新后重试"),
+
+    AUTH_CODE_INVALID(1101, "授权码无效或已过期"),
+    AUTH_SERVICE_UNAVAILABLE(1102, "身份服务暂不可用，请稍后重试"),
+    REFRESH_TOKEN_INVALID(1103, "刷新令牌无效或已过期"),
+    USER_NOT_FOUND(1104, "用户不存在"),
+    ROLE_GRANT_DUPLICATED(1105, "相同授权已存在"),
+    ROLE_GRANT_NOT_FOUND(1106, "授权记录不存在");
 
     private final Integer code;
     private final String message;

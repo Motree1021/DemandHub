@@ -29,9 +29,9 @@
           <el-icon><Bell /></el-icon>
           <template #title>通知中心</template>
         </el-menu-item>
-        <el-menu-item index="/system">
+        <el-menu-item v-if="userStore.isAdmin" index="/system/grant">
           <el-icon><Setting /></el-icon>
-          <template #title>系统管理</template>
+          <template #title>角色授权管理</template>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -85,8 +85,8 @@ const unreadCount = ref(0) // 阶段 4 接入通知未读数接口
 
 const activeMenu = computed(() => route.path)
 
-function onLogout() {
-  userStore.logout()
+async function onLogout() {
+  await userStore.logout()
   router.push('/login')
 }
 </script>

@@ -29,6 +29,7 @@
         <spring-cloud.version>2023.0.3</spring-cloud.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <knife4j.version>4.5.0</knife4j.version>
+        <jjwt.version>0.12.6</jjwt.version>
     </properties>
 
     <dependencyManagement>
@@ -58,6 +59,23 @@
                 <version>${knife4j.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+                <scope>runtime</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+                <scope>runtime</scope>
+            </dependency>
+            <dependency>
                 <groupId>com.demandhub</groupId>
                 <artifactId>demandhub-common</artifactId>
                 <version>1.0.0</version>
@@ -75,5 +93,16 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <!-- 未继承 spring-boot-starter-parent，需显式开启 -parameters，
+                 否则 @RequestParam/@PathVariable 等未显式命名时无法反射获取参数名 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
 </project>
