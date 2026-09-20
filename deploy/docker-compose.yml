@@ -14,7 +14,7 @@ services:
       MYSQL_DATABASE: demandhub
       TZ: Asia/Shanghai
     ports:
-      - "3306:3306"
+      - "3307:3306"   # 宿主机 MySQL84 已占用 3306，本机开发用 3307 映射
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_0900_ai_ci
@@ -45,7 +45,7 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2024-08-17T01-24-54Z
     container_name: demandhub-minio
     restart: unless-stopped
     environment:

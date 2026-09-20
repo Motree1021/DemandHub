@@ -45,7 +45,7 @@ docker compose -f deploy/docker-compose.yml up -d
 首次启动 MySQL 会自动执行 `deploy/mysql/init/` 下的 DDL 和初始化数据。
 
 验证：
-- MySQL：`localhost:3306`，root / demandhub123，库名 `demandhub`
+- MySQL：`localhost:3307`（宿主机 MySQL84 已占用 3306，故映射 3307），root / demandhub123，库名 `demandhub`
 - MinIO 控制台：http://localhost:9001 （demandhub / demandhub123）
 - Nacos 控制台：http://localhost:8848/nacos
 - RocketMQ NameServer：`localhost:9876`
@@ -57,7 +57,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 ```powershell
 cd backend
-mvn -DskipTests package
+mvn -DskipTests install
 ```
 
 按需启动服务（每个服务一个终端，或用 IDE 运行对应 Application）：

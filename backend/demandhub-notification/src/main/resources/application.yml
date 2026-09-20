@@ -6,7 +6,7 @@ spring:
     name: demandhub-notification
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/demandhub?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3307/demandhub?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: demandhub123
   data:
@@ -15,9 +15,6 @@ spring:
       port: 6379
   mvc:
     throw-exception-if-no-handler-found: true
-  web:
-    resources:
-      add-mappings: false
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
