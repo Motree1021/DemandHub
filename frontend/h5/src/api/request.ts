@@ -2,6 +2,13 @@ import axios from 'axios'
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import { showToast } from 'vant'
 
+/** 自定义配置：silent=true 时业务错误不弹 toast（用于探测接口后本地兜底的场景） */
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    silent?: boolean
+  }
+}
+
 /**
  * 后端统一返回体结构
  */
@@ -60,6 +67,10 @@ function clearSession() {
 
 service.interceptors.response.use(
   async (response: AxiosResponse<Result>) => {
+    // blob 响应（附件下载/预览）直接透传，不走统一返回体解析
+    if (response.config.responseType === 'blob') {
+      return response as never
+    }
     const res = response.data
     if (res.code === 0) {
       return res.data as never
@@ -76,21 +87,33 @@ service.interceptors.response.use(
       window.location.reload()
       return Promise.reject(new Error(res.message))
     }
-    showToast(res.message || '请求失败')
+    if (!response.config.silent) {
+      showToast(res.message || '请求失败')
+    }
     return Promise.reject(new Error(res.message))
   },
   (error) => {
-    showToast(error.response?.data?.message || error.message || '网络异常')
+    if (!error.config?.silent) {
+      showToast(error.response?.data?.message || error.message || '网络异常')
+    }
     return Promise.reject(error)
   }
 )
 
-export function get<T = unknown>(url: string, params?: Record<string, unknown>): Promise<T> {
-  return service.get(url, { params }) as unknown as Promise<T>
+export function get<T = unknown>(url: string, params?: object, config?: AxiosRequestConfig): Promise<T> {
+  return service.get(url, { ...config, params }) as unknown as Promise<T>
 }
 
 export function post<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
   return service.post(url, data, config) as unknown as Promise<T>
+}
+
+export function put<T = unknown>(url: string, data?: unknown): Promise<T> {
+  return service.put(url, data) as unknown as Promise<T>
+}
+
+export function del<T = unknown>(url: string): Promise<T> {
+  return service.delete(url) as unknown as Promise<T>
 }
 
 export default service

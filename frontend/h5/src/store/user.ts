@@ -32,6 +32,9 @@ export const useUserStore = defineStore('user', {
       localStorage.setItem(TOKEN_KEY, resp.accessToken)
       localStorage.setItem(REFRESH_KEY, resp.refreshToken)
     },
+    setUserInfo(user: UserInfo) {
+      this.userInfo = user
+    },
     setFrom(from: string) {
       this.from = from
       sessionStorage.setItem(FROM_KEY, from)

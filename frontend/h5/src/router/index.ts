@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/store/user'
-import { silentLogin } from '@/api/auth'
+import { silentLogin, me } from '@/api/auth'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -31,6 +31,24 @@ const routes: RouteRecordRaw[] = [
     name: 'Notification',
     component: () => import('@/views/notification/index.vue'),
     meta: { title: '通知' }
+  },
+  {
+    path: '/demand/:id',
+    name: 'DemandDetail',
+    component: () => import('@/views/demand/detail.vue'),
+    meta: { title: '需求详情' }
+  },
+  {
+    path: '/demand/:id/acceptance',
+    name: 'Acceptance',
+    component: () => import('@/views/demand/acceptance.vue'),
+    meta: { title: '验收评价' }
+  },
+  {
+    path: '/triage',
+    name: 'Triage',
+    component: () => import('@/views/triage/index.vue'),
+    meta: { title: '待受理队列' }
   }
 ]
 
@@ -75,6 +93,15 @@ router.beforeEach(async (to, _from, next) => {
 
   if (!userStore.isLoggedIn) {
     return next({ path: '/auth', query: { redirect: to.fullPath } })
+  }
+
+  // token 有效但用户信息丢失（浏览器刷新场景）：恢复用户信息
+  if (!userStore.userInfo) {
+    try {
+      userStore.setUserInfo(await me())
+    } catch {
+      // 401 由响应拦截器统一处理（刷新 token 或重登）
+    }
   }
 
   next()
