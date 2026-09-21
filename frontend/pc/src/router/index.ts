@@ -23,19 +23,37 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'demand/report',
         name: 'DemandReport',
-        component: () => import('@/views/placeholder/index.vue'),
+        component: () => import('@/views/demand/report.vue'),
         meta: { title: '需求提报' }
       },
       {
         path: 'demand/list',
         name: 'DemandList',
-        component: () => import('@/views/placeholder/index.vue'),
+        component: () => import('@/views/demand/list.vue'),
         meta: { title: '需求列表' }
+      },
+      {
+        path: 'demand/detail/:id',
+        name: 'DemandDetail',
+        component: () => import('@/views/demand/detail.vue'),
+        meta: { title: '需求详情' }
+      },
+      {
+        path: 'workbench/manager',
+        name: 'ManagerWorkbench',
+        component: () => import('@/views/workbench/manager.vue'),
+        meta: { title: '经理工作台', roles: ['DEMAND_MANAGER', 'EXECUTIVE', 'ADMIN'] }
+      },
+      {
+        path: 'workbench/handler',
+        name: 'HandlerWorkbench',
+        component: () => import('@/views/workbench/handler.vue'),
+        meta: { title: '处理人工作台', roles: ['HANDLER'] }
       },
       {
         path: 'notification',
         name: 'Notification',
-        component: () => import('@/views/placeholder/index.vue'),
+        component: () => import('@/views/notification/index.vue'),
         meta: { title: '通知中心' }
       },
       {
@@ -43,6 +61,36 @@ const routes: RouteRecordRaw[] = [
         name: 'RoleGrant',
         component: () => import('@/views/system/grant.vue'),
         meta: { title: '角色授权管理', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/types',
+        name: 'DemandTypes',
+        component: () => import('@/views/system/types.vue'),
+        meta: { title: '需求类型字典', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/state-machines',
+        name: 'StateMachines',
+        component: () => import('@/views/system/state-machines.vue'),
+        meta: { title: '状态机配置', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/templates',
+        name: 'NotifyTemplates',
+        component: () => import('@/views/system/templates.vue'),
+        meta: { title: '通知模板', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/dicts',
+        name: 'SysDicts',
+        component: () => import('@/views/system/dicts.vue'),
+        meta: { title: '通用字典', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/sla',
+        name: 'SlaConfigs',
+        component: () => import('@/views/system/sla.vue'),
+        meta: { title: 'SLA 配置', roles: ['ADMIN'] }
       }
     ]
   }

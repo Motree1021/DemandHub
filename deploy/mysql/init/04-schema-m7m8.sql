@@ -4,6 +4,8 @@
 -- 执行：docker exec -i demandhub-mysql mysql -uroot -pdemandhub123 demandhub < deploy/mysql/init/04-schema-m7m8.sql
 -- =========================================================
 
+SET NAMES utf8mb4;
+
 USE demandhub;
 
 -- ---------- 通知模板 ----------

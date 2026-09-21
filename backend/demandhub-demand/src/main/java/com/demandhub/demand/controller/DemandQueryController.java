@@ -78,7 +78,8 @@ public class DemandQueryController {
                                                @RequestParam(required = false) String urgency,
                                                @RequestParam(required = false) String keyword,
                                                @RequestParam(required = false) Integer onHold,
-                                               @RequestParam(defaultValue = "false") boolean mine) {
+                                               @RequestParam(defaultValue = "false") boolean mine,
+                                               @RequestParam(defaultValue = "desc") String submittedOrder) {
         LambdaQueryWrapper<DemandEntity> wrapper = new LambdaQueryWrapper<DemandEntity>()
                 .eq(StringUtils.hasText(status), DemandEntity::getStatus, status)
                 .eq(StringUtils.hasText(demandTypeCode), DemandEntity::getDemandTypeCode, demandTypeCode)
@@ -87,8 +88,11 @@ public class DemandQueryController {
                 .and(StringUtils.hasText(keyword), w -> w.like(DemandEntity::getTitle, keyword)
                         .or().like(DemandEntity::getDemandNo, keyword))
                 .and(mine, w -> w.eq(DemandEntity::getSubmitterId, UserContext.currentUserId())
-                        .or().eq(DemandEntity::getActualDemanderId, UserContext.currentUserId()))
-                .orderByDesc(DemandEntity::getId);
+                        .or().eq(DemandEntity::getActualDemanderId, UserContext.currentUserId()));
+        // 提交时间排序（默认倒序）；同刻记录按 id 次序兜底，保证跨页顺序稳定
+        boolean asc = "asc".equalsIgnoreCase(submittedOrder);
+        wrapper.orderBy(true, asc, DemandEntity::getSubmittedAt)
+                .orderBy(true, asc, DemandEntity::getId);
         Page<DemandEntity> page = demandMapper.selectPage(new Page<>(current, size), wrapper);
 
         // 批量拼装姓名/组织/类型名

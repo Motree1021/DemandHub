@@ -33,7 +33,7 @@ export interface PageResult<T> {
 
 /** 授权分页查询（仅 ADMIN） */
 export function pageGrants(params: { current: number; size: number; userId?: string; roleCode?: string }): Promise<PageResult<RoleGrant>> {
-  return get('/system/grant/page', params as Record<string, unknown>)
+  return get('/system/grant/page', params)
 }
 
 /** 新增授权 */
@@ -62,7 +62,7 @@ export interface UserSnapshotVO {
 }
 
 export function pageUsers(params: { current: number; size: number; keyword?: string }): Promise<PageResult<UserSnapshotVO>> {
-  return get('/system/user/page', params as Record<string, unknown>)
+  return get('/system/user/page', params)
 }
 
 /** 组织树 */

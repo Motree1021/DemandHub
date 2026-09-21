@@ -67,6 +67,10 @@ function toLogin() {
 // 响应拦截器：拆包统一返回体；401 先刷新令牌重发，失败再跳登录
 service.interceptors.response.use(
   async (response: AxiosResponse<Result>) => {
+    // 二进制下载/预览（responseType=blob）不是统一返回体，直接透传
+    if (response.config.responseType === 'blob') {
+      return response as never
+    }
     const res = response.data
     if (res.code === 0) {
       return res.data as never
@@ -92,7 +96,7 @@ service.interceptors.response.use(
   }
 )
 
-export function get<T = unknown>(url: string, params?: Record<string, unknown>): Promise<T> {
+export function get<T = unknown>(url: string, params?: object): Promise<T> {
   return service.get(url, { params }) as unknown as Promise<T>
 }
 
@@ -104,7 +108,7 @@ export function put<T = unknown>(url: string, data?: unknown): Promise<T> {
   return service.put(url, data) as unknown as Promise<T>
 }
 
-export function del<T = unknown>(url: string, params?: Record<string, unknown>): Promise<T> {
+export function del<T = unknown>(url: string, params?: object): Promise<T> {
   return service.delete(url, { params }) as unknown as Promise<T>
 }
 
