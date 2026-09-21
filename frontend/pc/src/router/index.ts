@@ -39,6 +39,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '需求详情' }
       },
       {
+        path: 'board',
+        name: 'Board',
+        component: () => import('@/views/board/index.vue'),
+        meta: { title: '经营看板', roles: ['EXECUTIVE', 'DEMAND_MANAGER'] }
+      },
+      {
         path: 'workbench/manager',
         name: 'ManagerWorkbench',
         component: () => import('@/views/workbench/manager.vue'),

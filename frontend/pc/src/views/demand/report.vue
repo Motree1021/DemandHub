@@ -174,7 +174,8 @@
       </el-col>
 
       <el-col :span="7">
-        <el-card shadow="never">
+        <AgentGuidePanel :form-context="agentFormContext" @fill="onAgentFill" />
+        <el-card shadow="never" style="margin-top: 16px">
           <template #header>填写指引</template>
           <div class="guide">
             <p><b>科技需求</b>：系统功能、数据报表、接口集成类，请写清关联系统与业务场景。</p>
@@ -210,6 +211,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules, type UploadRequestOptions } from 'element-plus'
 import UserSelect from '@/components/UserSelect.vue'
+import AgentGuidePanel from '@/components/AgentGuidePanel.vue'
+import type { GuideStructured } from '@/api/agent'
 import {
   listDictItems,
   saveDraft,
@@ -275,6 +278,41 @@ const previewUrl = ref('')
 const previewName = ref('')
 
 const isBuiltinType = computed(() => BUILTIN.includes(form.demandTypeCode))
+
+/** Agent 表单上下文快照（后端合并时用户手填优先，AI 不覆盖非空字段） */
+const agentFormContext = computed<Record<string, unknown>>(() => ({
+  title: form.title || undefined,
+  demandTypeCode: form.demandTypeCode || undefined,
+  content: form.content || undefined,
+  urgency: form.urgency || undefined,
+  expectDeliveryAt: form.expectDeliveryAt || undefined,
+  ext: Object.keys(currentExt()).length ? currentExt() : undefined
+}))
+
+/** AI 结构化回填：类型先切换（清扩展字段），再逐项应用；用户可继续编辑 */
+function onAgentFill(fields: GuideStructured) {
+  if (fields.demandTypeCode && typeList.value.some((t) => t.typeCode === fields.demandTypeCode)) {
+    if (form.demandTypeCode !== fields.demandTypeCode) {
+      form.demandTypeCode = fields.demandTypeCode
+      onTypeChange()
+    }
+  }
+  if (fields.title) {
+    form.title = fields.title
+  }
+  if (fields.content) {
+    form.content = fields.content
+  }
+  if (fields.urgency) {
+    form.urgency = fields.urgency
+  }
+  if (fields.expectDeliveryAt) {
+    form.expectDeliveryAt = fields.expectDeliveryAt
+  }
+  if (fields.ext) {
+    Object.assign(ext, fields.ext)
+  }
+}
 
 const rules: FormRules = {
   title: [{ required: true, message: '请输入需求标题', trigger: 'blur' }],

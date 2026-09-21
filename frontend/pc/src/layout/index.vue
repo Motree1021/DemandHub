@@ -25,6 +25,10 @@
           <el-icon><List /></el-icon>
           <template #title>需求列表</template>
         </el-menu-item>
+        <el-menu-item v-if="isBoardUser" index="/board">
+          <el-icon><DataAnalysis /></el-icon>
+          <template #title>经营看板</template>
+        </el-menu-item>
         <el-menu-item v-if="isManagerLike" index="/workbench/manager">
           <el-icon><Files /></el-icon>
           <template #title>经理工作台</template>
@@ -111,6 +115,11 @@ const activeMenu = computed(() => {
 
 const isManagerLike = computed(
   () => userStore.roles.includes('DEMAND_MANAGER') || userStore.roles.includes('EXECUTIVE') || userStore.isAdmin
+)
+
+// 经营看板：管理者 / 经理（后端接口同样限制这两类角色）
+const isBoardUser = computed(
+  () => userStore.roles.includes('EXECUTIVE') || userStore.roles.includes('DEMAND_MANAGER')
 )
 
 const ROLE_LABELS: Record<string, string> = {

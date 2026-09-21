@@ -45,7 +45,13 @@ public enum ErrorCode {
     DICT_ITEM_NOT_FOUND(1303, "字典项不存在"),
     STATE_MACHINE_CONFIG_INVALID(1304, "状态机配置不合法"),
     DEMAND_TYPE_NOT_FOUND(1305, "需求类型不存在"),
-    SLA_CONFIG_NOT_FOUND(1306, "SLA 配置不存在");
+    SLA_CONFIG_NOT_FOUND(1306, "SLA 配置不存在"),
+
+    AI_SERVICE_UNAVAILABLE(1401, "AI 服务暂不可用"),
+    AGENT_SESSION_NOT_FOUND(1402, "会话不存在"),
+    AGENT_DRAFT_NOT_FOUND(1403, "草稿不存在"),
+    AGENT_DRAFT_CONFIRMED(1404, "草稿已处理，请勿重复操作"),
+    PROMPT_TEMPLATE_NOT_FOUND(1405, "Prompt 模板不存在");
 
     private final Integer code;
     private final String message;

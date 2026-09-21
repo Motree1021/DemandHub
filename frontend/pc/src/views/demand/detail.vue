@@ -257,6 +257,17 @@
               <span class="muted" style="margin-left: 6px">{{ relationTitle(r) }}</span>
             </div>
           </el-card>
+
+          <!-- RAG 相似历史需求（处理人/经理/管理者可见） -->
+          <SimilarDemandsCard v-if="canViewSimilar" :demand-id="demandId" />
+
+          <!-- AI 处理助手（处理人/经理可用；产出草稿需人工确认才入方案表） -->
+          <AgentAssistPanel
+            v-if="canUseAgentAssist"
+            :demand-id="demandId"
+            :demand-status="detail.demand.status"
+            @confirmed="loadAll"
+          />
         </el-col>
       </el-row>
     </template>
@@ -512,6 +523,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import UserSelect from '@/components/UserSelect.vue'
+import AgentAssistPanel from '@/components/AgentAssistPanel.vue'
+import SimilarDemandsCard from '@/components/SimilarDemandsCard.vue'
 import {
   getDemand,
   getTransitions,
@@ -645,6 +658,14 @@ const opForm = reactive({
 })
 
 const userMap = computed(() => new Map(allUsers.value.map((u) => [u.id, u.name])))
+
+/** AI 处理辅助：处理人/经理/管理员可用（与后端 /agent/assist 角色一致） */
+const canUseAgentAssist = computed(
+  () => userStore.roles.includes('HANDLER') || userStore.roles.includes('DEMAND_MANAGER') || userStore.isAdmin
+)
+
+/** RAG 相似推荐：处理人/经理/管理员/管理者可见（与后端 /agent/rag 角色一致） */
+const canViewSimilar = computed(() => canUseAgentAssist.value || userStore.roles.includes('EXECUTIVE'))
 
 function hasAction(action: string): boolean {
   return detail.value?.availableActions?.includes(action) ?? false

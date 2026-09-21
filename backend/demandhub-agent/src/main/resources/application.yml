@@ -15,6 +15,21 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
 
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: demandhub-agent-producer
+    send-message-timeout: 5000
+
+demandhub:
+  agent:
+    llm:
+      # 大模型平台 Mock（一期）：运行期可通过 /agent/admin/llm-switch 切换，模拟故障验证降级
+      mock-enabled: true
+      # SSE 流式分片大小与"思考"延迟，模拟真实流式体验
+      chunk-size: 6
+      think-delay-ms: 150
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

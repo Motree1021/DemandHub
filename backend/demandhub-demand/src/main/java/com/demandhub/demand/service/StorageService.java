@@ -52,6 +52,31 @@ public class StorageService {
         }
     }
 
+    /**
+     * 字节流上传（报表导出等后台生成文件）：路径 {bizType}/{yyyyMM}/{uuid}.{ext}
+     */
+    public String uploadBytes(byte[] data, String fileName, String contentType, String bizType) {
+        String ext = "";
+        int dot = fileName == null ? -1 : fileName.lastIndexOf('.');
+        if (dot >= 0 && dot < fileName.length() - 1) {
+            ext = "." + fileName.substring(dot + 1).toLowerCase();
+        }
+        String path = bizType.toLowerCase() + "/"
+                + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMM")) + "/"
+                + UUID.randomUUID().toString().replace("-", "") + ext;
+        try (InputStream in = new java.io.ByteArrayInputStream(data)) {
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(minioConfig.getBucket())
+                    .object(path)
+                    .stream(in, data.length, -1)
+                    .contentType(contentType == null ? "application/octet-stream" : contentType)
+                    .build());
+            return path;
+        } catch (Exception e) {
+            throw new BizException(ErrorCode.SYSTEM_ERROR, "文件上传失败: " + e.getMessage());
+        }
+    }
+
     public InputStream download(String path) {
         try {
             return minioClient.getObject(GetObjectArgs.builder()
