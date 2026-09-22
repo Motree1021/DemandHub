@@ -1,0 +1,245 @@
+name: demandhub-prod
+
+# DemandHub 生产编排（阶段 8）：中间件 + 后端 5 模块 + 前端 Nginx 一键拉起
+# 首次构建启动：docker compose -f deploy/docker-compose.prod.yml up -d --build
+# 停止：docker compose -f deploy/docker-compose.prod.yml down
+# PC 端: http://host/   H5 端: http://host:81/   API 入口: http://host:8080/api
+# （网关不聚合接口文档；如需 doc.html 调试可临时为各模块映射端口）
+#
+# 外部接口开关（默认 Mock，拿到真实凭证后改为 false 并提供真实实现镜像）：
+#   demandhub.integration.wecom.mock / pcenter.mock / wecom-message.mock / llm.mock
+
+x-backend-env: &backend-env
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_DB: demandhub
+  MYSQL_USER: root
+  MYSQL_PASSWORD: demandhub123
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  ROCKETMQ_NAMESRV: rocketmq-namesrv:9876
+  JWT_SECRET: demandhub-prod-secret-please-change-me
+  TZ: Asia/Shanghai
+
+services:
+  # ---------- 中间件 ----------
+  mysql:
+    image: mysql:8.0
+    container_name: demandhub-prod-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: demandhub123
+      MYSQL_DATABASE: demandhub
+      TZ: Asia/Shanghai
+    ports:
+      - "3307:3306"   # 宿主工具调试用；应用走容器网络 mysql:3306
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+      --default-time-zone=+08:00
+      --lower_case_table_names=1
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro   # 首次启动按序执行 01~05（幂等）
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pdemandhub123"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7
+    container_name: demandhub-prod-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-08-17T01-24-54Z
+    container_name: demandhub-prod-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: demandhub
+      MINIO_ROOT_PASSWORD: demandhub123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: demandhub-prod-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      TZ: Asia/Shanghai
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    volumes:
+      - nacos-data:/home/nacos/data
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.2.0
+    container_name: demandhub-prod-rocketmq-namesrv
+    restart: unless-stopped
+    command: sh mqnamesrv
+    volumes:
+      - rocketmq-namesrv-data:/home/rocketmq/logs
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.2.0
+    container_name: demandhub-prod-rocketmq-broker
+    restart: unless-stopped
+    depends_on:
+      - rocketmq-namesrv
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      # 老版本 JDK8 在 cgroup v2 宿主机读取容器 metrics 会 NPE，禁用容器支持绕过
+      JAVA_OPT: "-XX:-UseContainerSupport"
+    # 镜像中 /home/rocketmq/store 不存在，命名卷首挂由 Docker 以 root 创建，
+    # rocketmq 用户无写权限（报 store/lock Permission denied），故以 root 运行
+    user: root
+    volumes:
+      - ./rocketmq/broker-prod.conf:/home/rocketmq/conf/broker.conf:ro
+      - rocketmq-broker-data:/home/rocketmq/store
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker.conf
+
+  # ---------- 后端 5 模块 ----------
+  system:
+    image: demandhub/system:1.0.0
+    container_name: demandhub-prod-system
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-system
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment: *backend-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  demand:
+    image: demandhub/demand:1.0.0
+    container_name: demandhub-prod-demand
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-demand
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment:
+      <<: *backend-env
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: demandhub
+      MINIO_SECRET_KEY: demandhub123
+      MINIO_BUCKET: demandhub
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_started
+
+  notification:
+    image: demandhub/notification:1.0.0
+    container_name: demandhub-prod-notification
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-notification
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment: *backend-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_started
+
+  agent:
+    image: demandhub/agent:1.0.0
+    container_name: demandhub-prod-agent
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-agent
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment: *backend-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_started
+
+  gateway:
+    image: demandhub/gateway:1.0.0
+    container_name: demandhub-prod-gateway
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-gateway
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment:
+      <<: *backend-env
+      SYSTEM_URI: http://system:8081
+      DEMAND_URI: http://demand:8082
+      NOTIFICATION_URI: http://notification:8083
+      AGENT_URI: http://agent:8084
+    ports:
+      - "8080:8080"
+    depends_on:
+      - system
+      - demand
+      - notification
+      - agent
+
+  # ---------- 前端 ----------
+  frontend:
+    image: demandhub/frontend:1.0.0
+    container_name: demandhub-prod-frontend
+    restart: unless-stopped
+    build:
+      context: ../frontend
+      args:
+        REGISTRY: ${REGISTRY:-docker.io/library}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    ports:
+      - "80:80"    # PC 端
+      - "81:81"    # H5 端
+    depends_on:
+      - gateway
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+  nacos-data:
+  rocketmq-namesrv-data:
+  rocketmq-broker-data:
