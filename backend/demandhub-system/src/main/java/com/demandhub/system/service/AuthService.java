@@ -83,8 +83,9 @@ public class AuthService {
      *
      * @param channel 渠道码（入口 URL from=chuangjinls → CHUANGJIN_LS，大小写不敏感）
      * @param ticket  一次性登录票据
+     * @param state   入口方带入的随机串（链路追踪用，可空）
      */
-    public LoginResponse channelSso(String channel, String ticket) {
+    public LoginResponse channelSso(String channel, String ticket, String state) {
         String channelCode = normalizeChannelCode(channel);
         Channel ch = channelMapper.selectOne(new LambdaQueryWrapper<Channel>()
                 .eq(Channel::getChannelCode, channelCode));
@@ -102,6 +103,7 @@ public class AuthService {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
         ensureLoginAllowed(user);
+        log.info("渠道 SSO 登录成功: channel={}, userId={}, state={}", channelCode, user.getId(), state);
         user.setDeptPath(userService.buildDeptPath(user.getPrimaryOrgId()));
         return buildLoginResponse(user, ch.getChannelCode());
     }

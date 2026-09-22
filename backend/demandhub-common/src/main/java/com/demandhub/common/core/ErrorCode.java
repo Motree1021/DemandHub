@@ -33,6 +33,7 @@ public enum ErrorCode {
     LOGIN_LOCKED(1110, "登录失败次数过多，账号已锁定，请稍后再试"),
     PASSWORD_RULE_VIOLATION(1111, "密码需至少 8 位且包含字母和数字"),
     MERGE_TARGET_INVALID(1112, "合并目标用户无效"),
+    CHANNEL_ACCOUNT_UNAVAILABLE(1113, "账号不可用，请联系管理员"),
 
     DRAFT_NOT_FOUND(1201, "草稿不存在"),
     SOLUTION_NOT_FOUND(1202, "方案不存在"),

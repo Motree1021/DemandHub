@@ -39,8 +39,10 @@ public class AuthController {
     @Operation(summary = "渠道 SSO 票据登录（一次性票据回源校验后发 JWT）")
     @GetMapping("/channel-sso")
     public Result<LoginResponse> channelSso(@RequestParam String channel,
-                                            @RequestParam String ticket) {
-        return Result.ok(authService.channelSso(channel, ticket));
+                                            @RequestParam String ticket,
+                                            @RequestParam(required = false) String state) {
+        // state：入口跳转方带入的随机串，原样记录用于链路追踪（对接标准 §3.1；防重放由票据一次性+verify nonce 保证）
+        return Result.ok(authService.channelSso(channel, ticket, state));
     }
 
     @Operation(summary = "PC 账密登录（BCrypt；连续失败 5 次锁 15 分钟；首登强制改密）")

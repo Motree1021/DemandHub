@@ -24,10 +24,13 @@ public class ChannelUserMatcher {
 
     private final UserService userService;
     private final ChannelUserMappingMapper mappingMapper;
+    private final ChannelDeptCalibrateService deptCalibrateService;
 
-    public ChannelUserMatcher(UserService userService, ChannelUserMappingMapper mappingMapper) {
+    public ChannelUserMatcher(UserService userService, ChannelUserMappingMapper mappingMapper,
+                              ChannelDeptCalibrateService deptCalibrateService) {
         this.userService = userService;
         this.mappingMapper = mappingMapper;
+        this.deptCalibrateService = deptCalibrateService;
     }
 
     /**
@@ -38,6 +41,12 @@ public class ChannelUserMatcher {
      */
     public MatchResult match(String channelCode, SsoProfile profile) {
         MatchResult result = new MatchResult();
+
+        // 任务 3.5：verify 回传部门未映射时回流校准清单（挂 900 不阻塞登录，供 P4 管理端校准）
+        if (StringUtils.hasText(profile.getDeptId())
+                && userService.findOrgByExternalDeptId(profile.getDeptId()) == null) {
+            deptCalibrateService.record(channelCode, profile);
+        }
 
         // 1. 既有渠道映射直接命中（该渠道身份已绑定过 OneID）
         ChannelUserMapping mapping = findMapping(channelCode, profile.getUserId());

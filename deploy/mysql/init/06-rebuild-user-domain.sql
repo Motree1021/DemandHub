@@ -158,12 +158,15 @@ INSERT IGNORE INTO demand_user(id, name, login_name, password_hash, password_upd
 (1007, '钱一线', NULL, NULL, NULL, '13800001007', 'wq_u_reporter_2',  'E1007', 'u_reporter_2@demandhub.local',  1, 141, 'ACTIVE');
 
 -- ---------- 5) 种子：渠道注册（一期启用 WEB + CHUANGJIN_LS，其余预留 DISABLED） ----------
--- CHUANGJIN_LS 的 config_json 为开发占位：dev 走内置 Mock SSO（channel-sso.mock=true），
--- test/prod 的 base_url/app_key/app_secret 经环境变量 CHANNEL_LS_* 注入，密钥不入库明文回显。
+-- CHUANGJIN_LS 的 config_json 为 dev 占位（指向内置 Mock verify；07-channel-sso-p3.sql 会幂等刷成同值），
+-- test/prod 的 base_url/app_key/app_secret 经环境/管理端注入真实创金零售配置，密钥不入库明文回显。
 INSERT IGNORE INTO demand_channel(id, channel_code, channel_name, app_id, callback_enabled, status, config_json) VALUES
 (1, 'WEB',          'PC管理端',     NULL, 0, 'ACTIVE',   NULL),
 (2, 'CHUANGJIN_LS', '创金零售',     NULL, 0, 'ACTIVE',
- JSON_OBJECT('sso_verify_base_url', '', 'app_key', '', 'app_secret', '', 'ticket_ttl_seconds', 60)),
+ JSON_OBJECT('sso_verify_base_url', 'http://localhost:8081/system/mock-sso',
+             'app_key', 'demandhub-dev',
+             'app_secret', 'ENC:dUWOVqCbFi5tz4GO0QbR7epWMj7VaEtDnL9lM9Jw87Jo33zlOVQlP6oWQz+3gZLJ8ZwnmZoox2wu3+zxVnsvCqy6fw==',
+             'ticket_ttl_seconds', 60, 'timeout_ms', 3000)),
 (3, 'WECOM_APP',    '企微应用(预留)', NULL, 0, 'DISABLED', NULL),
 (4, 'WECOM_BOT',    '企微机器人(预留)', NULL, 1, 'DISABLED', NULL),
 (5, 'FEISHU_BOT',   '飞书机器人(预留)', NULL, 1, 'DISABLED', NULL),
