@@ -1,6 +1,6 @@
 -- =========================================================
--- DemandHub DDL v1.1  MySQL 8.0  InnoDB  utf8mb4_0900_ai_ci
--- 来源：DemandHub_系统数据库设计_v1.1 第 4 节
+-- DemandHub DDL v1.3  MySQL 8.0  InnoDB  utf8mb4_0900_ai_ci
+-- 来源：DemandHub_系统数据库设计_v1.3 第 4 节（渠道接入版：自有 OneID + 渠道注册/映射 + 角色族授权）
 -- =========================================================
 
 CREATE DATABASE IF NOT EXISTS demandhub DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
@@ -9,69 +9,106 @@ USE demandhub;
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
--- ---------- 主数据镜像与业务角色（零售统一权限中心同步） ----------
+-- ---------- 渠道接入、自有用户（OneID）与业务角色（v1.3 渠道接入版） ----------
 
-CREATE TABLE demand_user_snapshot (
+CREATE TABLE IF NOT EXISTS demand_channel (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id         VARCHAR(64)  NOT NULL COMMENT '权限中心用户唯一ID',
-  name            VARCHAR(64)  NOT NULL,
-  wecom_id        VARCHAR(64)  NULL,
-  employee_no     VARCHAR(32)  NULL,
-  primary_org_id  BIGINT UNSIGNED NULL,
-  dept_path       VARCHAR(512) NULL,
-  phone           VARCHAR(32)  NULL,
-  email           VARCHAR(128) NULL,
+  channel_code    VARCHAR(32)  NOT NULL COMMENT 'WEB/CHUANGJIN_LS/WECOM_BOT/FEISHU_BOT/DOUBAO_WORK/WORKBUDDY/VOICE（WECOM_APP预留，一期DISABLED）',
+  channel_name    VARCHAR(64)  NOT NULL,
+  app_id          VARCHAR(128) NULL COMMENT '渠道侧应用ID（创金零售SSO渠道留空）',
+  callback_enabled TINYINT(1)  NOT NULL DEFAULT 1,
   status          VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE',
-  synced_at       DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  config_json     JSON         NULL COMMENT 'SSO校验接口base_url/app_key/加密app_secret/票据TTL（密钥加密存储、接口脱敏）',
   created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uk_user_id (user_id),
-  UNIQUE KEY uk_wecom_id (wecom_id),
-  KEY idx_primary_org (primary_org_id),
-  KEY idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户只读镜像（权限中心同步）';
+  UNIQUE KEY uk_channel_code (channel_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提报渠道注册表';
 
-CREATE TABLE demand_org_snapshot (
+CREATE TABLE IF NOT EXISTS demand_user (
+  id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'DemandHub OneID',
+  name                VARCHAR(64)  NOT NULL,
+  login_name          VARCHAR(64)  NULL COMMENT 'PC登录账号',
+  password_hash       VARCHAR(100) NULL COMMENT 'BCrypt密码哈希（仅PC账号密码登录）',
+  password_updated_at DATETIME(3)  NULL COMMENT 'NULL=需强制改密',
+  phone               VARCHAR(32)  NULL,
+  wecom_userid        VARCHAR(64)  NULL COMMENT '创金零售verify回传的企微userid',
+  employee_no         VARCHAR(32)  NULL,
+  email               VARCHAR(128) NULL,
+  is_employee         TINYINT(1)   NOT NULL DEFAULT 0,
+  primary_org_id      BIGINT UNSIGNED NULL,
+  status              VARCHAR(16)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/ACTIVE/DISABLED/MERGED',
+  merged_to_user_id   BIGINT UNSIGNED NULL,
+  last_login_channel  VARCHAR(32)  NULL,
+  last_login_at       DATETIME(3)  NULL,
+  created_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_login_name (login_name),
+  UNIQUE KEY uk_phone (phone),
+  UNIQUE KEY uk_wecom_userid (wecom_userid),
+  KEY idx_primary_org (primary_org_id),
+  KEY idx_status (status),
+  KEY idx_is_employee (is_employee)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='DemandHub自有用户OneID';
+
+CREATE TABLE IF NOT EXISTS demand_org (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  org_id          BIGINT UNSIGNED NOT NULL,
   name            VARCHAR(128) NOT NULL,
   level           VARCHAR(16)  NOT NULL COMMENT 'LINE/DEPT/GROUP',
   parent_id       BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  path            VARCHAR(512) NOT NULL,
+  path            VARCHAR(512) NOT NULL COMMENT '物化路径，如 /100/110/（尾斜杠，子树startsWith匹配）',
   org_kind        VARCHAR(16)  NULL COMMENT 'REPORTER/ASSIGNER/BOTH',
+  external_flag   TINYINT(1)   NOT NULL DEFAULT 0,
+  external_dept_id VARCHAR(32) NULL COMMENT '渠道侧部门ID（创金零售/企微部门ID），票据登录部门映射用',
   status          VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE',
-  synced_at       DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uk_org_id (org_id),
   KEY idx_parent (parent_id),
   KEY idx_path (path),
   KEY idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组织节点只读镜像（权限中心同步）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组织树（管理员可CRUD）';
 
-CREATE TABLE demand_role_grant (
+CREATE TABLE IF NOT EXISTS channel_user_mapping (
+  id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  channel_code    VARCHAR(32)  NOT NULL,
+  channel_user_id VARCHAR(128) NOT NULL COMMENT '渠道侧用户唯一ID（CHUANGJIN_LS存企微userid）',
+  demand_user_id  BIGINT UNSIGNED NOT NULL,
+  channel_name    VARCHAR(64)  NULL,
+  channel_phone   VARCHAR(32)  NULL,
+  channel_dept    VARCHAR(256) NULL,
+  match_type      VARCHAR(16)  NOT NULL COMMENT 'PHONE/WECOMID/MANUAL',
+  bound_at        DATETIME(3)  NULL,
+  created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_channel_user (channel_code, channel_user_id),
+  KEY idx_demand_user (demand_user_id),
+  KEY idx_match_type (match_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='渠道用户到OneID映射';
+
+CREATE TABLE IF NOT EXISTS demand_role_grant (
   id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id             VARCHAR(64)  NOT NULL,
-  role_code           VARCHAR(32)  NOT NULL COMMENT 'ADMIN/EXECUTIVE/DEMAND_MANAGER/HANDLER/REPORTER',
+  demand_user_id      BIGINT UNSIGNED NOT NULL COMMENT '引用 demand_user.id',
+  role_code           VARCHAR(32)  NOT NULL COMMENT '角色族: ADMIN/EXECUTIVE/MANAGER/HANDLER；管哪类由demand_type_scope表达，管哪片由org_id子树表达',
   org_id              BIGINT UNSIGNED NULL,
-  demand_type_scope   VARCHAR(256) NULL,
+  demand_type_scope   VARCHAR(256) NULL COMMENT '需求类型集合（逗号多选），NULL=跟随角色默认',
   effective_from      DATETIME(3) NULL,
   effective_to        DATETIME(3) NULL,
-  granted_by          VARCHAR(64) NULL,
-  is_deleted          TINYINT(1)  NOT NULL DEFAULT 0,
+  granted_by          BIGINT UNSIGNED NULL COMMENT '授予人 demand_user.id',
+  is_deleted          INT           NOT NULL DEFAULT 0 COMMENT '0=生效；回收时置为行id（uk_grant 含本列，避免已删行互撞）',
   created_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uk_grant (user_id, role_code, org_id, demand_type_scope, is_deleted),
+  UNIQUE KEY uk_grant (demand_user_id, role_code, org_id, demand_type_scope, is_deleted),
   KEY idx_org (org_id),
   KEY idx_role (role_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务角色本地授权';
 
 -- ---------- 需求域 ----------
 
-CREATE TABLE demand_type (
+CREATE TABLE IF NOT EXISTS demand_type (
   id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   type_code        VARCHAR(32) NOT NULL,
   type_name        VARCHAR(64) NOT NULL,
@@ -87,7 +124,7 @@ CREATE TABLE demand_type (
   UNIQUE KEY uk_type_code (type_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求类型字典';
 
-CREATE TABLE demand (
+CREATE TABLE IF NOT EXISTS demand (
   id                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_no            VARCHAR(40)  NOT NULL,
   title                VARCHAR(256) NOT NULL,
@@ -131,7 +168,7 @@ CREATE TABLE demand (
   KEY idx_submitted_at (submitted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求基表';
 
-CREATE TABLE demand_ext_tech (
+CREATE TABLE IF NOT EXISTS demand_ext_tech (
   id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id          BIGINT UNSIGNED NOT NULL,
   related_system     VARCHAR(128) NULL,
@@ -144,7 +181,7 @@ CREATE TABLE demand_ext_tech (
   UNIQUE KEY uk_demand (demand_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='科技需求扩展';
 
-CREATE TABLE demand_ext_material (
+CREATE TABLE IF NOT EXISTS demand_ext_material (
   id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id          BIGINT UNSIGNED NOT NULL,
   material_subtype   VARCHAR(64) NULL,
@@ -155,7 +192,7 @@ CREATE TABLE demand_ext_material (
   UNIQUE KEY uk_demand (demand_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='物料需求扩展';
 
-CREATE TABLE demand_ext_training (
+CREATE TABLE IF NOT EXISTS demand_ext_training (
   id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id          BIGINT UNSIGNED NOT NULL,
   training_subtype   VARCHAR(64) NULL,
@@ -166,7 +203,7 @@ CREATE TABLE demand_ext_training (
   UNIQUE KEY uk_demand (demand_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='培训需求扩展';
 
-CREATE TABLE demand_relation (
+CREATE TABLE IF NOT EXISTS demand_relation (
   id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id          BIGINT UNSIGNED NOT NULL,
   related_demand_id  BIGINT UNSIGNED NOT NULL,
@@ -176,7 +213,7 @@ CREATE TABLE demand_relation (
   KEY idx_related (related_demand_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求关联';
 
-CREATE TABLE demand_draft (
+CREATE TABLE IF NOT EXISTS demand_draft (
   id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id             BIGINT UNSIGNED NOT NULL,
   channel             VARCHAR(32) NULL,
@@ -191,7 +228,7 @@ CREATE TABLE demand_draft (
   KEY idx_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求草稿';
 
-CREATE TABLE attachment (
+CREATE TABLE IF NOT EXISTS attachment (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   biz_type      VARCHAR(32) NOT NULL,
   biz_id        BIGINT UNSIGNED NOT NULL,
@@ -209,7 +246,7 @@ CREATE TABLE attachment (
 
 -- ---------- 处理与流转域 ----------
 
-CREATE TABLE assignment (
+CREATE TABLE IF NOT EXISTS assignment (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id     BIGINT UNSIGNED NOT NULL,
   org_id        BIGINT UNSIGNED NOT NULL,
@@ -228,7 +265,7 @@ CREATE TABLE assignment (
   KEY idx_assignee (assignee_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='处理任务分派';
 
-CREATE TABLE demand_transition_log (
+CREATE TABLE IF NOT EXISTS demand_transition_log (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id     BIGINT UNSIGNED NOT NULL,
   from_status   VARCHAR(32) NULL,
@@ -243,7 +280,7 @@ CREATE TABLE demand_transition_log (
   KEY idx_demand_time (demand_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求流转日志';
 
-CREATE TABLE solution (
+CREATE TABLE IF NOT EXISTS solution (
   id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id         BIGINT UNSIGNED NOT NULL,
   version           INT NOT NULL,
@@ -260,7 +297,7 @@ CREATE TABLE solution (
   UNIQUE KEY uk_demand_version (demand_id, version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求方案';
 
-CREATE TABLE review (
+CREATE TABLE IF NOT EXISTS review (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id     BIGINT UNSIGNED NOT NULL,
   solution_id   BIGINT UNSIGNED NULL,
@@ -274,7 +311,7 @@ CREATE TABLE review (
   KEY idx_demand_type (demand_id, review_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评审/验收';
 
-CREATE TABLE effort_log (
+CREATE TABLE IF NOT EXISTS effort_log (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id     BIGINT UNSIGNED NOT NULL,
   user_id       BIGINT UNSIGNED NOT NULL,
@@ -288,7 +325,7 @@ CREATE TABLE effort_log (
   KEY idx_user_date (user_id, work_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工时记录';
 
-CREATE TABLE comment (
+CREATE TABLE IF NOT EXISTS comment (
   id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id         BIGINT UNSIGNED NOT NULL,
   author_id         BIGINT UNSIGNED NOT NULL,
@@ -301,7 +338,7 @@ CREATE TABLE comment (
 
 -- ---------- 项目域 ----------
 
-CREATE TABLE project (
+CREATE TABLE IF NOT EXISTS project (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   name          VARCHAR(256) NOT NULL,
   owner_id      BIGINT UNSIGNED NULL,
@@ -315,7 +352,7 @@ CREATE TABLE project (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='项目';
 
-CREATE TABLE project_milestone (
+CREATE TABLE IF NOT EXISTS project_milestone (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   project_id    BIGINT UNSIGNED NOT NULL,
   name          VARCHAR(128) NOT NULL,
@@ -328,7 +365,7 @@ CREATE TABLE project_milestone (
 
 -- ---------- 通知域 ----------
 
-CREATE TABLE notification (
+CREATE TABLE IF NOT EXISTS notification (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_id     BIGINT UNSIGNED NULL,
   receiver_id   BIGINT UNSIGNED NOT NULL,
@@ -350,7 +387,7 @@ CREATE TABLE notification (
 
 -- ---------- 支撑表 ----------
 
-CREATE TABLE agent_session (
+CREATE TABLE IF NOT EXISTS agent_session (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id       BIGINT UNSIGNED NOT NULL,
   scene         VARCHAR(32) NOT NULL,
@@ -363,7 +400,7 @@ CREATE TABLE agent_session (
   KEY idx_user_scene (user_id, scene)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 会话';
 
-CREATE TABLE demand_stat_daily (
+CREATE TABLE IF NOT EXISTS demand_stat_daily (
   id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   stat_date          DATE NOT NULL,
   demand_type_code   VARCHAR(32) NOT NULL,
@@ -377,7 +414,7 @@ CREATE TABLE demand_stat_daily (
   UNIQUE KEY uk_dim (stat_date, demand_type_code, assignee_org_id, reporter_org_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求日统计预聚合';
 
-CREATE TABLE sys_dict (
+CREATE TABLE IF NOT EXISTS sys_dict (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   dict_type    VARCHAR(64) NOT NULL,
   item_code    VARCHAR(64) NOT NULL,
@@ -390,7 +427,7 @@ CREATE TABLE sys_dict (
 
 -- ---------- M7/M8：通知模板 / 通知偏好 / SLA 配置 / 状态机配置 ----------
 
-CREATE TABLE notification_template (
+CREATE TABLE IF NOT EXISTS notification_template (
   id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   template_code    VARCHAR(64)  NOT NULL COMMENT '模板编码（按事件），如 SUBMIT/ASSIGN/SLA_ALERT',
   template_name    VARCHAR(128) NOT NULL,
@@ -404,7 +441,7 @@ CREATE TABLE notification_template (
   UNIQUE KEY uk_template_code (template_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知模板';
 
-CREATE TABLE notification_preference (
+CREATE TABLE IF NOT EXISTS notification_preference (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id     BIGINT UNSIGNED NOT NULL COMMENT '用户数值ID（demand_user_snapshot.id）',
   notify_type VARCHAR(32) NOT NULL COMMENT 'STATUS_CHANGE/MENTION/ASSIGN/REVIEW_REQUEST/ACCEPTANCE_REQUEST/SLA_ALERT',
@@ -415,7 +452,7 @@ CREATE TABLE notification_preference (
   UNIQUE KEY uk_user_type (user_id, notify_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户通知偏好（待办提醒 TODO 不可关闭，不落库）';
 
-CREATE TABLE sla_config (
+CREATE TABLE IF NOT EXISTS sla_config (
   id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   demand_type_code VARCHAR(32) NOT NULL,
   status           VARCHAR(32) NOT NULL COMMENT '停留状态，如 SUBMITTED/TRIAGE/IN_PROGRESS',
@@ -429,7 +466,7 @@ CREATE TABLE sla_config (
   UNIQUE KEY uk_type_status (demand_type_code, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='SLA 停留时长配置（类型 × 状态）';
 
-CREATE TABLE state_machine_config (
+CREATE TABLE IF NOT EXISTS state_machine_config (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   config_key  VARCHAR(64)  NOT NULL COMMENT '配置标识，demand_type.state_machine_key 引用',
   config_name VARCHAR(128) NOT NULL,
@@ -441,5 +478,14 @@ CREATE TABLE state_machine_config (
   PRIMARY KEY (id),
   UNIQUE KEY uk_config_key (config_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='状态机配置（热加载，无需重启）';
+
+-- 需求编号计数器（FR-M2-06 无跳号）：计数器更新与需求插入同一事务，回滚即返还序号；
+-- 行锁串行化同类型同日提报，保证并发无重号无跳号
+CREATE TABLE IF NOT EXISTS demand_no_seq (
+  seq_key    VARCHAR(40) NOT NULL COMMENT 'TYPE:YYYYMMDD，如 TECH:20260921',
+  seq_value  INT UNSIGNED NOT NULL DEFAULT 0,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (seq_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='需求编号按类型按日计数器';
 
 SET FOREIGN_KEY_CHECKS = 1;

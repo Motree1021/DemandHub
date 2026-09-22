@@ -3,11 +3,11 @@
 | 项目   | 内容                                    |
 | ---- | ------------------------------------- |
 | 文档名称 | DemandHub 系统数据库设计                     |
-| 版本   | v1.1                                  |
+| 版本   | v1.3                                  |
 | DBMS | MySQL 8.0（InnoDB，utf8mb4）             |
 | 编制部门 | 财管科技产品部                               |
 | 编制日期 | 2026-09-19                            |
-| 上游文档 | 概念模型 v0.2、BRD v1.1、SRS v1.1、架构设计 v1.1 |
+| 上游文档 | 概念模型 v1.2、BRD v1.3、SRS v1.4、架构设计 v1.3、H5 嵌入对接标准 v2.0 |
 
 
 
@@ -27,7 +27,7 @@
 
 5. **金额 / 数量**：本系统无金额；数量类用 `INT`，工时用 `DECIMAL(5,1)`。
 
-6. **组织树**：`demand_org_snapshot` 用 `parent_id` 自关联 + `path` 物化路径（如 `/1/15/128/`）便于子树查询；该表为零售统一权限中心的只读镜像，本地不提供增删改界面。
+6. **组织树**：`demand_org` 用 `parent_id` 自关联 + `path` 物化路径（如 `/1/15/128/`）便于子树查询；DemandHub 管理员可在后台维护组织树（增删改），创金零售渠道回流的部门信息作为初始数据与日常校准。
 
 7. **状态 / 类型**：用 `VARCHAR(32)` 存枚举码，字典表维护中文名，不使用 MySQL ENUM（便于扩展）。
 
@@ -46,20 +46,24 @@
 
 
 ```
-【主数据：零售统一权限中心 → DemandHub 只读镜像】
-demand_user_snapshot ──> demand_org_snapshot（经 primary_org_id 关联）
+【渠道接入】
+demand_channel（渠道注册表：创金零售SSO/企微机器人/飞书机器人/豆包工作/WorkBuddy；一期仅启用创金零售）
+channel_user_mapping（渠道用户ID → DemandHub OneID，存渠道回调原始信息快照）
+
+【DemandHub 自有主数据】
+demand_user ──> demand_org（经 primary_org_id 关联，员工挂组织，外部用户挂外部虚拟组织）
 
 【业务角色：DemandHub 本地维护】
 demand_role_grant（user_id × role_code × org_id × type_scope）
 
-demand_user_snapshot ─┬─< demand (提报人/代办人/处理人/操作人)
-                       ├─< assignment
-                       ├─< demand_transition_log
-                       ├─< solution
-                       │         └─< review
-                       ├─< effort_log
-                       ├─< comment
-                       └─< notification
+demand_user ─┬─< demand (提报人/代办人/处理人/操作人)
+              ├─< assignment
+              ├─< demand_transition_log
+              ├─< solution
+              │         └─< review
+              ├─< effort_log
+              ├─< comment
+              └─< notification
 
 demand ─┬─ N:1 ─ demand_type
         ├─ 1:1 ─ demand_ext_tech / demand_ext_material / demand_ext_training
@@ -80,7 +84,7 @@ agent_session (Agent 对话，独立)
 demand_stat_daily (预聚合统计，独立)
 ```
 
-> 设计边界：用户/组织主数据不在 DemandHub 本地建表维护，由零售统一权限中心每日全量 + 每 5 分钟增量同步到只读镜像；本地仅维护业务角色授权 `demand_role_grant`。
+> 设计边界：DemandHub 拥有自有用户体系（OneID）与组织树，管理员可在后台维护；各提报渠道自行鉴权，DemandHub 经渠道服务端接口回源核验（一期为创金零售 SSO 票据 verify），经 `channel_user_mapping` 自动匹配（手机号 > 企微 userid）或人工绑定到 DemandHub OneID；DemandHub 不直接对接企微接口。
 
 
 
@@ -88,66 +92,108 @@ demand_stat_daily (预聚合统计，独立)
 
 ## 3. 表结构详细设计
 
-### 3.1 主数据与业务角色域
+### 3.1 渠道接入、自有用户与业务角色域
 
-> **设计原则**：身份与组织主数据来自零售业务线统一权限中心（与"创金零售"同源），DemandHub 本地仅存**只读镜像**；业务角色授权（需求经理/处理人等）属业务域，在 DemandHub 本地表维护。本域不提供用户/组织的增删改管理界面。
+> **设计原则**：DemandHub 拥有自有用户体系（OneID）与组织树；一期创金零售渠道以一次性 SSO 票据回源核验身份，PC 管理端用账号密码登录；核验后经 `channel_user_mapping` 自动匹配（手机号 > 企微 userid）或人工绑定到 OneID；DemandHub 不直接对接企微接口。
 
-#### 3.1.1 `demand_user_snapshot` 用户只读镜像表
+#### 3.1.1 `demand_channel` 渠道注册表
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| id | BIGINT UNSIGNED | PK, AUTO_INC | 本地主键 |
-| user_id | VARCHAR(64) | UNIQUE | 权限中心用户唯一 ID |
-| name | VARCHAR(64) | NOT NULL | 姓名 |
-| wecom_id | VARCHAR(64) | UNIQUE | 企微 userid |
-| employee_no | VARCHAR(32) | | 工号 |
-| primary_org_id | BIGINT UNSIGNED | | 主组织，关联 demand_org_snapshot.org_id |
-| dept_path | VARCHAR(512) | | 部门路径快照，如 `/零售线/财管科技产品部/产品组` |
-| phone | VARCHAR(32) | | 手机号（脱敏存储） |
-| email | VARCHAR(128) | | 邮箱 |
+| id | BIGINT UNSIGNED | PK, AUTO_INC | |
+| channel_code | VARCHAR(32) | UNIQUE | WEB / CHUANGJIN_LS / WECOM_BOT / FEISHU_BOT / DOUBAO_WORK / WORKBUDDY / VOICE（WECOM_APP 预留，一期 DISABLED） |
+| channel_name | VARCHAR(64) | NOT NULL | 渠道中文名 |
+| app_id | VARCHAR(128) | | 渠道侧应用 ID（机器人/外部应用标识；创金零售 SSO 渠道留空） |
+| callback_enabled | TINYINT(1) | NOT NULL DEFAULT 1 | 是否启用回调接收需求 |
 | status | VARCHAR(16) | NOT NULL DEFAULT 'ACTIVE' | ACTIVE / DISABLED |
-| synced_at | DATETIME(3) | | 最近一次同步时间 |
+| config_json | JSON | | 渠道配置（SSO 校验接口 base_url、app_key、加密 app_secret、票据 TTL；密钥加密存储、接口脱敏） |
 | created_at / updated_at | | | |
 
-索引：`uk_user_id(user_id)`、`uk_wecom_id(wecom_id)`、`idx_primary_org(primary_org_id)`、`idx_status(status)`。
+> 新渠道接入 = 加一行配置 + 写一个渠道适配器（票据校验/回调），不改表结构。一期仅启用 CHUANGJIN_LS（H5）与内置 WEB（PC 账密），WECOM_APP/机器人等预留 DISABLED。
 
-> 本表由同步任务每日全量 + 每 5 分钟增量写入，业务代码只读；不做软删除，权限中心停用即置 status=DISABLED。
-
-#### 3.1.2 `demand_org_snapshot` 组织节点只读镜像表
+#### 3.1.2 `demand_user` DemandHub 自有用户表（OneID）
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| id | BIGINT UNSIGNED | PK, AUTO_INC | 本地主键 |
-| org_id | BIGINT UNSIGNED | UNIQUE | 权限中心组织节点 ID |
+| id | BIGINT UNSIGNED | PK, AUTO_INC | DemandHub OneID |
+| name | VARCHAR(64) | NOT NULL | 姓名 |
+| phone | VARCHAR(32) | UNIQUE | 手机号（脱敏存储，自动匹配键） |
+| wecom_userid | VARCHAR(64) | UNIQUE | 企微 userid（由创金零售 verify 回传，自动匹配键） |
+| employee_no | VARCHAR(32) | | 工号（员工才有） |
+| email | VARCHAR(128) | | 邮箱 |
+| is_employee | TINYINT(1) | NOT NULL DEFAULT 0 | 1=员工，0=外部用户 |
+| primary_org_id | BIGINT UNSIGNED | FK→demand_org.id | 主组织（员工挂组织树，外部用户挂"外部/待确认"虚拟组织） |
+| status | VARCHAR(16) | NOT NULL DEFAULT 'PENDING' | PENDING（待管理员完善）/ ACTIVE / DISABLED / MERGED |
+| merged_to_user_id | BIGINT UNSIGNED | NULL | 合并指向的 OneID（status=MERGED 时有效） |
+| last_login_channel | VARCHAR(32) | | 最近登录渠道 |
+| last_login_at | DATETIME(3) | | 最近登录时间 |
+| created_at / updated_at | | | |
+
+索引：`uk_phone(phone)`、`uk_wecom_userid(wecom_userid)`、`idx_primary_org(primary_org_id)`、`idx_status(status)`、`idx_is_employee(is_employee)`。
+
+> 新渠道用户首次核验时：手机号/企微 userid 命中已有 OneID 则直接建映射；未命中时，创金零售票据有效且带回企微 userid 的自动建 ACTIVE 员工账号（按 dept_id 经 external_dept_id 映射组织，未映射挂"未分配组织"虚拟节点，不阻塞提报）；仅票据字段缺失（无 userid 且无手机号）或外部渠道用户才建 PENDING 记录进管理员"待完善"队列。重复 OneID 执行合并，原记录置 MERGED 并迁移数据。
+
+#### 3.1.3 `demand_org` 组织节点表（管理员可 CRUD）
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | BIGINT UNSIGNED | PK, AUTO_INC | |
 | name | VARCHAR(128) | NOT NULL | 组织名称 |
 | level | VARCHAR(16) | NOT NULL | LINE / DEPT / GROUP |
-| parent_id | BIGINT UNSIGNED | NOT NULL DEFAULT 0 | 父节点（引用本表 org_id 口径），根 = 0 |
+| parent_id | BIGINT UNSIGNED | NOT NULL DEFAULT 0 | 父节点（引用本表 id），根 = 0 |
 | path | VARCHAR(512) | NOT NULL | 物化路径，如 `/1/15/128/` |
 | org_kind | VARCHAR(16) | | REPORTER / ASSIGNER / BOTH |
+| external_flag | TINYINT(1) | NOT NULL DEFAULT 0 | 是否外部虚拟组织（如"外部合作方""待确认"） |
+| external_dept_id | VARCHAR(32) | | 渠道侧部门 ID（创金零售/企微部门 ID），票据登录部门映射用 |
 | status | VARCHAR(16) | NOT NULL DEFAULT 'ACTIVE' | ACTIVE / DISABLED |
-| synced_at | DATETIME(3) | | 最近一次同步时间 |
+| created_at / updated_at | | | |
 
-索引：`uk_org_id(org_id)`、`idx_parent(parent_id)`、`idx_path(path)`、`idx_status(status)`。
+索引：`idx_parent(parent_id)`、`idx_path(path)`、`idx_status(status)`。
 
-> 本表为权限中心组织树镜像；DemandHub 不提供组织节点增删改界面。组织拆分/合并由权限中心负责，镜像自动跟随。
+> 管理员在后台维护组织树；创金零售渠道回流的部门名用于初始化与日常校准匹配。部门拆分/合并直接调整节点层级与成员归属，不改流程规则。
 
-#### 3.1.3 `demand_role_grant` 业务角色授权表
+#### 3.1.4 `channel_user_mapping` 渠道用户映射表
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | BIGINT UNSIGNED | PK, AUTO_INC | |
+| channel_code | VARCHAR(32) | NOT NULL, FK→demand_channel | 渠道 |
+| channel_user_id | VARCHAR(128) | NOT NULL | 渠道侧用户唯一 ID |
+| demand_user_id | BIGINT UNSIGNED | NOT NULL, FK→demand_user.id | 映射到的 DemandHub OneID |
+| channel_name | VARCHAR(64) | | 渠道回调的姓名快照 |
+| channel_phone | VARCHAR(32) | | 渠道回调的手机号快照 |
+| channel_dept | VARCHAR(256) | | 渠道回调的部门快照（可空，个人用户无部门） |
+| match_type | VARCHAR(16) | NOT NULL | PHONE（手机号自动匹配）/ WECOMID（企微userid自动匹配）/ MANUAL（人工绑定） |
+| bound_at | DATETIME(3) | | 绑定时间 |
+| created_at / updated_at | | | |
+
+索引：`uk_channel_user(channel_code, channel_user_id)`、`idx_demand_user(demand_user_id)`、`idx_match_type(match_type)`。
+
+> 一个 DemandHub OneID 可绑定多个渠道（同一员工从企微、飞书、豆包工作多端登录）；一个渠道用户ID只绑定一个 OneID。
+
+#### 3.1.5 `demand_role_grant` 业务角色授权表
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | BIGINT UNSIGNED PK | |
-| user_id | VARCHAR(64) NOT NULL | 引用 demand_user_snapshot.user_id |
-| role_code | VARCHAR(32) NOT NULL | ADMIN / EXECUTIVE / DEMAND_MANAGER / HANDLER / REPORTER |
-| org_id | BIGINT UNSIGNED NULL | 授权组织范围（引用 demand_org_snapshot.org_id，空 = 不限） |
+| demand_user_id | BIGINT UNSIGNED NOT NULL | 引用 demand_user.id |
+| role_code | VARCHAR(32) NOT NULL | 见下方角色枚举 |
+| org_id | BIGINT UNSIGNED NULL | 授权组织范围（引用 demand_org.id，空 = 不限） |
 | demand_type_scope | VARCHAR(256) | 覆盖类型范围，逗号分隔；空 = 跟随角色默认 |
 | effective_from | DATETIME(3) | 生效起 |
 | effective_to | DATETIME(3) NULL | 生效止 |
-| granted_by | VARCHAR(64) | 授予人（user_id） |
+| granted_by | BIGINT UNSIGNED | 授予人（demand_user.id） |
 | created_at / updated_at | | |
 
-索引：`uk_grant(user_id, role_code, org_id, demand_type_scope, is_deleted)`、`idx_org(org_id)`、`idx_role(role_code)`。
+索引：`uk_grant(demand_user_id, role_code, org_id, demand_type_scope, is_deleted)`、`idx_org(org_id)`、`idx_role(role_code)`。
 
-> 业务角色编码固定为：ADMIN（系统管理员）、EXECUTIVE（需求管理者）、DEMAND_MANAGER（需求经理）、HANDLER（需求处理人员）、REPORTER（需求提报人）。一个用户可拥有多条授权。
+> 业务角色编码固定为：
+> - ADMIN（系统管理员）
+> - EXECUTIVE（需求管理者，零售线领导）
+> - TECH_MANAGER / MATL_MANAGER / TRAIN_MANAGER（科技/物料/培训需求经理）
+> - TECH_HANDLER / MATL_HANDLER / TRAIN_HANDLER（科技/物料/培训需求处理人）
+>
+> 不设"需求提报人"角色——任何登录用户默认可提报需求。一个用户可拥有多条授权（如既是科技处理人又是物料经理）。
 
 
 
@@ -192,7 +238,7 @@ demand_stat_daily (预聚合统计，独立)
 | actual\_demander\_id                                                          | BIGINT UNSIGNED, FK→sys\_user          | 实际需求人                                                                                                      |
 | submitter\_org\_id                                                            | BIGINT UNSIGNED                        | 提报人部门快照                                                                                                    |
 | submitter\_org\_snapshot                                                      | VARCHAR(256)                           | 提报人部门名称快照                                                                                                  |
-| channel                                                                       | VARCHAR(32)                            | WEB / WECOM\_H5 / WECOM\_BOT / VOICE                                                                       |
+| channel                                                                       | VARCHAR(32)                            | WEB / CHUANGJIN\_LS / WECOM\_BOT / VOICE                                                                       |
 | assignee\_org\_id                                                             | BIGINT UNSIGNED                        | 承接组织                                                                                                       |
 | assignee\_user\_id                                                            | BIGINT UNSIGNED                        | 当前处理人                                                                                                      |
 | project\_id                                                                   | BIGINT UNSIGNED NULL, FK→project       | 关联项目                                                                                                       |
@@ -571,119 +617,104 @@ SET FOREIGN\_KEY\_CHECKS = 0;
 
 \-- version         INT            NOT NULL DEFAULT 0
 
-\-- ---------- 主数据镜像与业务角色（零售统一权限中心同步） ----------
+\-- ---------- 渠道接入、自有用户与业务角色 ----------
 
-CREATE TABLE demand_user_snapshot (
-
+CREATE TABLE demand_channel (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-
-  user_id         VARCHAR(64)  NOT NULL COMMENT '权限中心用户唯一ID',
-
-  name            VARCHAR(64)  NOT NULL,
-
-  wecom_id        VARCHAR(64)  NULL,
-
-  employee_no     VARCHAR(32)  NULL,
-
-  primary_org_id  BIGINT UNSIGNED NULL,
-
-  dept_path       VARCHAR(512) NULL,
-
-  phone           VARCHAR(32)  NULL,
-
-  email           VARCHAR(128) NULL,
-
+  channel_code    VARCHAR(32)  NOT NULL,
+  channel_name    VARCHAR(64)  NOT NULL,
+  app_id          VARCHAR(128) NULL,
+  callback_enabled TINYINT(1)  NOT NULL DEFAULT 1,
   status          VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE',
-
-  synced_at       DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
+  config_json     JSON         NULL,
   created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
   updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-
   PRIMARY KEY (id),
+  UNIQUE KEY uk_channel_code (channel_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提报渠道注册表';
 
-  UNIQUE KEY uk_user_id (user_id),
-
-  UNIQUE KEY uk_wecom_id (wecom_id),
-
+CREATE TABLE demand_user (
+  id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name                VARCHAR(64)  NOT NULL,
+  login_name          VARCHAR(64)  NULL COMMENT 'PC登录账号',
+  password_hash       VARCHAR(100) NULL COMMENT 'BCrypt密码哈希（仅PC账号密码登录）',
+  password_updated_at DATETIME(3)  NULL,
+  phone               VARCHAR(32)  NULL,
+  wecom_userid        VARCHAR(64)  NULL COMMENT '创金零售verify回传的企微userid',
+  employee_no         VARCHAR(32)  NULL,
+  email               VARCHAR(128) NULL,
+  is_employee         TINYINT(1)   NOT NULL DEFAULT 0,
+  primary_org_id      BIGINT UNSIGNED NULL,
+  status              VARCHAR(16)  NOT NULL DEFAULT 'PENDING',
+  merged_to_user_id   BIGINT UNSIGNED NULL,
+  last_login_channel  VARCHAR(32)  NULL,
+  last_login_at       DATETIME(3)  NULL,
+  created_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_login_name (login_name),
+  UNIQUE KEY uk_phone (phone),
+  UNIQUE KEY uk_wecom_userid (wecom_userid),
   KEY idx_primary_org (primary_org_id),
+  KEY idx_status (status),
+  KEY idx_is_employee (is_employee)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='DemandHub自有用户OneID';
 
-  KEY idx_status (status)
-
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户只读镜像（权限中心同步）';
-
-CREATE TABLE demand_org_snapshot (
-
+CREATE TABLE demand_org (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-
-  org_id          BIGINT UNSIGNED NOT NULL,
-
   name            VARCHAR(128) NOT NULL,
-
   level           VARCHAR(16)  NOT NULL COMMENT 'LINE/DEPT/GROUP',
-
   parent_id       BIGINT UNSIGNED NOT NULL DEFAULT 0,
-
   path            VARCHAR(512) NOT NULL,
-
   org_kind        VARCHAR(16)  NULL COMMENT 'REPORTER/ASSIGNER/BOTH',
-
+  external_dept_id VARCHAR(32) NULL COMMENT '渠道侧部门ID（创金零售/企微部门ID）',
+  external_flag   TINYINT(1)   NOT NULL DEFAULT 0,
   status          VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE',
-
-  synced_at       DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
   created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
   updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-
   PRIMARY KEY (id),
-
-  UNIQUE KEY uk_org_id (org_id),
-
   KEY idx_parent (parent_id),
-
   KEY idx_path (path),
-
   KEY idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组织树（管理员可CRUD）';
 
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组织节点只读镜像（权限中心同步）';
+CREATE TABLE channel_user_mapping (
+  id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  channel_code    VARCHAR(32)  NOT NULL,
+  channel_user_id VARCHAR(128) NOT NULL,
+  demand_user_id  BIGINT UNSIGNED NOT NULL,
+  channel_name    VARCHAR(64)  NULL,
+  channel_phone   VARCHAR(32)  NULL,
+  channel_dept    VARCHAR(256) NULL,
+  match_type      VARCHAR(16)  NOT NULL COMMENT 'PHONE/WECOMID/MANUAL',
+  bound_at        DATETIME(3)  NULL,
+  created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_channel_user (channel_code, channel_user_id),
+  KEY idx_demand_user (demand_user_id),
+  KEY idx_match_type (match_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='渠道用户到OneID映射';
 
 CREATE TABLE demand_role_grant (
-
   id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-
-  user_id             VARCHAR(64)  NOT NULL,
-
-  role_code           VARCHAR(32)  NOT NULL COMMENT 'ADMIN/EXECUTIVE/DEMAND_MANAGER/HANDLER/REPORTER',
-
+  demand_user_id      BIGINT UNSIGNED NOT NULL,
+  role_code           VARCHAR(32)  NOT NULL COMMENT '角色族: ADMIN/EXECUTIVE/MANAGER/HANDLER；管哪类由 demand_type_scope 表达，管哪片由 org_id 子树表达',
   org_id              BIGINT UNSIGNED NULL,
-
   demand_type_scope   VARCHAR(256) NULL,
-
   effective_from      DATETIME(3) NULL,
-
   effective_to        DATETIME(3) NULL,
-
-  granted_by          VARCHAR(64) NULL,
-
+  granted_by          BIGINT UNSIGNED NULL,
   is_deleted          TINYINT(1)  NOT NULL DEFAULT 0,
-
   created_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
   updated_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-
   PRIMARY KEY (id),
-
-  UNIQUE KEY uk_grant (user_id, role_code, org_id, demand_type_scope, is_deleted),
-
+  UNIQUE KEY uk_grant (demand_user_id, role_code, org_id, demand_type_scope, is_deleted),
   KEY idx_org (org_id),
-
   KEY idx_role (role_code)
-
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务角色本地授权';
 
-\-- ---------- 需求域 ----------
+-- ---------- 需求域 ----------
 
 CREATE TABLE demand\_type (
 
@@ -1282,9 +1313,9 @@ SET FOREIGN\_KEY\_CHECKS = 1;
 
 ### 5.1 业务角色授权说明
 
-> 业务角色编码已在 demand_role_grant.role_code 中固定（ADMIN / EXECUTIVE / DEMAND_MANAGER / HANDLER / REPORTER），无需独立角色表。授权由系统管理员在 DemandHub 后台操作，非初始化数据。示例：
+> 业务角色编码已在 demand_role_grant.role_code 中固定（ADMIN / EXECUTIVE / TECH_MANAGER / MATL_MANAGER / TRAIN_MANAGER / TECH_HANDLER / MATL_HANDLER / TRAIN_HANDLER），无需独立角色表。授权由系统管理员在 DemandHub 后台操作，非初始化数据。示例：
 
-\-- INSERT INTO demand_role_grant(user_id, role_code, org_id, granted_by) VALUES
+\-- INSERT INTO demand_role_grant(demand_user_id, role_code, org_id, granted_by) VALUES
 --   ('u_admin_001', 'ADMIN',        NULL, 'u_admin_001'),
 --   ('u_exec_001',   'EXECUTIVE',     NULL, 'u_admin_001'),
 --   ('u_mgr_tech',   'DEMAND_MANAGER', 128, 'u_admin_001'),
@@ -1360,7 +1391,7 @@ INSERT INTO sys\_dict(dict\_type, item\_code, item\_name, sort) VALUES
 
 * 新增需求类型：在 `demand_type` 插记录 + 建对应扩展表 + 配置状态机，不改核心表。
 
-* 组织调整：`demand_org_snapshot` 跟随权限中心自动同步，不影响 `demand.submitter_org_snapshot` 历史快照。
+* 组织调整：管理员在 DemandHub 后台调整 `demand_org` 树（拆分/合并），不影响 `demand.submitter_org_snapshot` 历史快照。
 
 * 归档：超过 3 年的已完成 / 已关闭需求可归档到历史库，主库仅保留热数据。
 
@@ -1375,4 +1406,6 @@ INSERT INTO sys\_dict(dict\_type, item\_code, item\_name, sort) VALUES
 | 版本   | 日期         | 变更 | 作者      |
 | ---- | ---------- | -- | ------- |
 | v1.0 | 2026-09-19 | 初稿 | 财管科技产品部 |
-| v1.1 | 2026-09-19 | 按评审意见修订：删除自建 sys_user/sys_org_unit/sys_user_org_rel/sys_role/sys_permission/sys_role_permission/sys_user_role_grant 七张主表，改为 demand_user_snapshot / demand_org_snapshot 两张只读镜像表 + demand_role_grant 业务角色本地授权表；ER 图、DDL、初始化数据、演进章节同步 | 财管科技产品部 |
+| v1.1 | 2026-09-19 | 按评审意见修订：删除自建 sys_user/sys_org_unit/sys_user_org_rel/sys_role/sys_permission/sys_role_permission/sys_user_role_grant 七张主表，改为 demand_user_snapshot / demand_org_snapshot 两张只读镜像表 + demand_role_grant 业务角色本地授权表；ER 图、DDL、初始化数据、演进章节同步 | 财管科技产品部 
+| v1.2 | 2026-09-22 | 用户/权限模块重构：DemandHub 改为自有 OneID 用户体系与可维护组织树；新增 demand_channel 渠道注册表与 channel_user_mapping 渠道用户映射表；业务角色按需求类型细分（TECH/MATL/TRAIN × MANAGER/HANDLER），去掉 REPORTER；新用户待完善与用户合并流程 | 财管科技产品部 ||
+| v1.3 | 2026-09-22 | 嵌入方案定稿为创金零售 SSO 票据：渠道枚举去 WECOM_APP（预留 DISABLED）、一期启用 CHUANGJIN_LS；demand_user 增 login_name/password_hash/password_updated_at（PC 账密）；demand_org 增 external_dept_id；config_json 改存 SSO 校验配置；角色码注释改为角色族；票据有效用户自动 ACTIVE 建号 | 财管科技产品部 ||

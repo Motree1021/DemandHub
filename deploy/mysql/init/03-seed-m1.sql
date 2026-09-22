@@ -1,8 +1,8 @@
 -- =========================================================
 -- DemandHub 阶段 2（M1）开发自测种子数据
--- 前提：demandhub-system 已完成首次主数据全量同步（用户/组织镜像来自 Mock 权限中心）
+-- 前提：06-rebuild-user-domain.sql 已完成用户域重建与种子（组织/用户/渠道映射/角色授权）
 -- 执行：docker exec -i demandhub-mysql mysql -uroot -pdemandhub123 demandhub < deploy/mysql/init/03-seed-m1.sql
--- 说明：用户/组织镜像由同步 Job 自动建档，本文件只维护业务角色授权与示例需求
+-- 说明：用户/组织/授权种子由 06 脚本维护，本文件只维护需求类型路由与示例需求
 -- =========================================================
 
 SET NAMES utf8mb4;
@@ -14,18 +14,7 @@ UPDATE demand_type SET default_org_id = 111 WHERE type_code = 'TECH';
 UPDATE demand_type SET default_org_id = 121 WHERE type_code = 'MATL';
 UPDATE demand_type SET default_org_id = 131 WHERE type_code = 'TRAIN';
 
--- ---------- 业务角色授权（FR-M1-03，覆盖 5 类角色） ----------
--- 组织：100 零售线 / 110 财管科技产品部(平台) / 120 客户陪伴服务部(双中心) / 130 培训开发部(双中心) / 140 一线营业部
-INSERT IGNORE INTO demand_role_grant(user_id, role_code, org_id, demand_type_scope, granted_by) VALUES
-('u_admin_001',  'ADMIN',          NULL, NULL, 'seed'),
-('u_exec_001',   'EXECUTIVE',      NULL, NULL, 'seed'),
-('u_mgr_tech',   'DEMAND_MANAGER', 110,  NULL, 'seed'),
-('u_handler_a1', 'HANDLER',        121,  NULL, 'seed'),
-('u_handler_b1', 'HANDLER',        131,  NULL, 'seed'),
-('u_reporter_1', 'REPORTER',       NULL, NULL, 'seed'),
-('u_reporter_2', 'REPORTER',       NULL, NULL, 'seed');
-
--- ---------- 示例需求（越权用例自测） ----------
+-- ---------- 示例需求（越权用例自测；角色授权见 06-rebuild-user-domain.sql） ----------
 -- D1: 赵一线提报 → 科技一组(111)   | 期望可见：reporter_1 / mgr_tech / exec
 -- D2: 赵一线提报 → 客户陪伴一组(121)| 期望可见：reporter_1 / handler_a1 / exec
 -- D3: 钱一线提报 → 培训开发一组(131)| 期望可见：reporter_2 / handler_b1 / exec

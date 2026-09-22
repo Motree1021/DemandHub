@@ -39,15 +39,15 @@ public class RoleGrantController {
     @GetMapping("/page")
     public Result<Page<RoleGrant>> page(@RequestParam(defaultValue = "1") long current,
                                         @RequestParam(defaultValue = "10") long size,
-                                        @RequestParam(required = false) String userId,
+                                        @RequestParam(required = false) Long demandUserId,
                                         @RequestParam(required = false) String roleCode) {
-        return Result.ok(roleGrantService.page(current, size, userId, roleCode));
+        return Result.ok(roleGrantService.page(current, size, demandUserId, roleCode));
     }
 
     @Operation(summary = "新增授权")
     @PostMapping
     public Result<Long> create(@Valid @RequestBody RoleGrantSaveRequest request) {
-        String grantedBy = UserContext.get() != null ? UserContext.get().getUserId() : null;
+        Long grantedBy = UserContext.get() != null ? UserContext.get().getId() : null;
         return Result.ok(roleGrantService.create(request, grantedBy));
     }
 

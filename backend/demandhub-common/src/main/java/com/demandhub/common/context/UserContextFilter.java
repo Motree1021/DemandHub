@@ -14,7 +14,7 @@ import java.io.IOException;
 import java.util.Arrays;
 
 /**
- * 解析网关注入的用户头（X-User-Id / X-User-Uid / X-User-Roles）构建 UserContext。
+ * 解析网关注入的用户头（X-User-Id / X-User-Uid / X-User-Roles / X-Channel）构建 UserContext。
  * 网关在转发前已剥离客户端伪造头，业务服务只信任本网关内网调用。
  */
 @Component
@@ -24,6 +24,7 @@ public class UserContextFilter extends OncePerRequestFilter {
     public static final String HEADER_USER_ID = "X-User-Id";
     public static final String HEADER_USER_UID = "X-User-Uid";
     public static final String HEADER_USER_ROLES = "X-User-Roles";
+    public static final String HEADER_CHANNEL = "X-Channel";
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -38,6 +39,7 @@ public class UserContextFilter extends OncePerRequestFilter {
                 if (StringUtils.hasText(roles)) {
                     user.setRoles(Arrays.asList(roles.split(",")));
                 }
+                user.setChannel(request.getHeader(HEADER_CHANNEL));
                 UserContext.set(user);
             }
             chain.doFilter(request, response);

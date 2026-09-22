@@ -1,6 +1,7 @@
 package com.demandhub.demand.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -8,23 +9,36 @@ import lombok.Data;
 import java.io.Serializable;
 
 /**
- * 用户镜像只读视图（demand_user_snapshot，同库只读，由 system 服务同步建档）
+ * 用户只读视图（demand_user，同库只读；写入在 demandhub-system）
  */
 @Data
-@TableName("demand_user_snapshot")
+@TableName("demand_user")
 public class UserSnapshotView implements Serializable {
 
+    /** DemandHub OneID */
     @TableId(type = IdType.INPUT)
     private Long id;
 
-    /** 权限中心用户唯一 ID，如 u_reporter_1 */
+    /** 已废弃的字符串用户标识：派生为 String.valueOf(id)，不落表 */
+    @TableField(exist = false)
     private String userId;
 
     private String name;
 
     private Long primaryOrgId;
 
+    /** 部门名称路径：由 UserLookupService 按组织树派生填充，不落表 */
+    @TableField(exist = false)
     private String deptPath;
 
     private String status;
+
+    public String getUserId() {
+        return id == null ? null : String.valueOf(id);
+    }
+
+    /** 兼容旧代码调用，值不再落表 */
+    public void setUserId(String userId) {
+        // no-op
+    }
 }

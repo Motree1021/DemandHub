@@ -106,9 +106,16 @@ public class DemandStateMachine {
 
         persistWithVersionGuard(demand);
         writeLog(demand, event, from.name(), toStatusForLog, operator, ctx);
+        // Map.copyOf 不允许 null value（如 close 未传 duplicateOfId），过滤 null 后拷贝
+        Map<String, Object> extraSafe = new java.util.LinkedHashMap<>();
+        ctx.getExtra().forEach((k, v) -> {
+            if (v != null) {
+                extraSafe.put(k, v);
+            }
+        });
         eventPublisher.publishEvent(new DemandTransitionEvent(
                 demand.getId(), demand.getDemandNo(), event.name(),
-                from.name(), toStatusForLog, operator.getId(), ctx.getComment(), Map.copyOf(ctx.getExtra())));
+                from.name(), toStatusForLog, operator.getId(), ctx.getComment(), Map.copyOf(extraSafe)));
         return demand;
     }
 

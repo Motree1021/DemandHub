@@ -19,8 +19,10 @@ public class RoleGrantView implements Serializable {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private String userId;
+    /** 被授权用户（demand_user.id，OneID） */
+    private Long demandUserId;
 
+    /** 角色族：ADMIN/EXECUTIVE/MANAGER/HANDLER */
     private String roleCode;
 
     private Long orgId;

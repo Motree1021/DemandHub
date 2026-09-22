@@ -1,14 +1,15 @@
 package com.demandhub.system.controller;
 
 import com.demandhub.common.core.Result;
+import com.demandhub.system.dto.ChangePasswordRequest;
+import com.demandhub.system.dto.LoginRequest;
 import com.demandhub.system.dto.LoginResponse;
-import com.demandhub.system.dto.MockUserVO;
 import com.demandhub.system.dto.RefreshRequest;
 import com.demandhub.system.dto.UserInfoVO;
-import com.demandhub.system.integration.wecom.WecomClient;
 import com.demandhub.system.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,11 +20,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-import java.util.Map;
-
 /**
- * 认证接口（FR-M1-01）：企微 OAuth 登录、H5 静默授权、刷新、登出、当前用户
+ * 认证接口（FR-M1-01，渠道接入版 P2）：
+ * 渠道 SSO 票据登录、PC 账密登录、改密、刷新、登出、当前用户。
  */
 @Tag(name = "认证")
 @Validated
@@ -32,34 +31,34 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
-    private final WecomClient wecomClient;
 
-    public AuthController(AuthService authService, WecomClient wecomClient) {
+    public AuthController(AuthService authService) {
         this.authService = authService;
-        this.wecomClient = wecomClient;
     }
 
-    @Operation(summary = "获取企微 OAuth 授权链接（PC 扫码/H5 静默）")
-    @GetMapping("/oauth-url")
-    public Result<Map<String, String>> oauthUrl(@RequestParam(required = false) String redirectUri,
-                                                @RequestParam(required = false) String state) {
-        return Result.ok(Map.of("url", wecomClient.buildOAuthUrl(redirectUri, state)));
+    @Operation(summary = "渠道 SSO 票据登录（一次性票据回源校验后发 JWT）")
+    @GetMapping("/channel-sso")
+    public Result<LoginResponse> channelSso(@RequestParam String channel,
+                                            @RequestParam String ticket) {
+        return Result.ok(authService.channelSso(channel, ticket));
     }
 
-    @Operation(summary = "企微回调登录（PC 扫码）")
-    @GetMapping("/callback")
-    public Result<LoginResponse> callback(@RequestParam String code) {
-        return Result.ok(authService.loginByCode(code));
+    @Operation(summary = "PC 账密登录（BCrypt；连续失败 5 次锁 15 分钟；首登强制改密）")
+    @PostMapping("/login")
+    public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                       HttpServletRequest httpRequest) {
+        return Result.ok(authService.login(request.getLoginName(), request.getPassword(),
+                clientIp(httpRequest)));
     }
 
-    @Operation(summary = "H5 静默授权登录（企微 webview 内，支持 from=chuangjinls）")
-    @GetMapping("/silent")
-    public Result<LoginResponse> silent(@RequestParam String code,
-                                        @RequestParam(required = false) String from) {
-        return Result.ok(authService.loginByCode(code));
+    @Operation(summary = "修改密码（强制改密/自助改密；改密后全清会话）")
+    @PostMapping("/change-password")
+    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+        authService.changePassword(request.getOldPassword(), request.getNewPassword());
+        return Result.ok();
     }
 
-    @Operation(summary = "刷新访问令牌")
+    @Operation(summary = "刷新访问令牌（旋转：旧 refresh 即作废）")
     @PostMapping("/refresh")
     public Result<LoginResponse> refresh(@Valid @RequestBody RefreshRequest request) {
         return Result.ok(authService.refresh(request.getRefreshToken()));
@@ -81,9 +80,11 @@ public class AuthController {
         return Result.ok(authService.me());
     }
 
-    @Operation(summary = "Mock 登录用户列表（一期开发用）")
-    @GetMapping("/mock-users")
-    public Result<List<MockUserVO>> mockUsers() {
-        return Result.ok(authService.listMockUsers());
+    private String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 }

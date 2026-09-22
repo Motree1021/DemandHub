@@ -1,6 +1,7 @@
 package com.demandhub.demand.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -8,23 +9,35 @@ import lombok.Data;
 import java.io.Serializable;
 
 /**
- * 组织镜像只读视图（demand_org_snapshot，同库只读）
+ * 组织只读视图（demand_org，同库只读）
  */
 @Data
-@TableName("demand_org_snapshot")
+@TableName("demand_org")
 public class OrgSnapshotView implements Serializable {
 
+    /** 组织 ID（100~141 保留） */
     @TableId(type = IdType.INPUT)
     private Long id;
 
+    /** 与 id 同义，兼容旧代码 */
+    @TableField(exist = false)
     private Long orgId;
 
     private String name;
 
     private Long parentId;
 
-    /** 物化路径，如 /100/110/111，子树按前缀匹配 */
+    /** 物化路径，如 /100/110/（尾斜杠），子树按前缀匹配 */
     private String path;
 
     private String status;
+
+    public Long getOrgId() {
+        return id;
+    }
+
+    /** 兼容旧代码调用，值不再单独落表 */
+    public void setOrgId(Long orgId) {
+        // no-op
+    }
 }

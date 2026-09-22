@@ -23,13 +23,22 @@ public class UserInfoVO implements Serializable {
 
     private String deptPath;
 
-    /** 生效中的业务角色编码 */
+    /** 登录渠道（WEB/CHUANGJIN_LS） */
+    private String channel;
+
+    /** 生效中的业务角色编码（角色族：ADMIN/EXECUTIVE/MANAGER/HANDLER） */
     private List<String> roles;
+
+    /** 生效授权的需求类型集合（逗号多选展开去重；空 = 跟随角色默认不限类型） */
+    private List<String> typeScopes;
 
     /** 生效中的授权明细 */
     private List<GrantVO> grants;
 
-    /** 降级只读会话标识（权限中心不可用时为 true） */
+    /** 是否需要强制改密（有 PC 账号且 password_updated_at 为 NULL） */
+    private Boolean mustChangePassword;
+
+    /** 降级只读会话标识（预留） */
     private Boolean readOnly;
 
     @Data

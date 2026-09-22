@@ -2,6 +2,7 @@ package com.demandhub.notification.integration.wecom;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -10,9 +11,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * Mock 企微消息发送（一期）：
  * - 模式 OK 正常返回；FAIL 模拟企微接口 500（验证失败重试链路）；
  * - 模式可热切换（管理端接口 /notification/admin/wecom/mock-mode），无需重启。
+ * 可替换设计：拿到真实凭证后新增 WecomMessageClient 真实实现并设 demandhub.integration.wecom-message.mock=false 即可切换。
  */
 @Slf4j
 @Component
+@ConditionalOnProperty(name = "demandhub.integration.wecom-message.mock", havingValue = "true", matchIfMissing = true)
 public class MockWecomMessageClient implements WecomMessageClient {
 
     private final WecomTokenManager tokenManager;

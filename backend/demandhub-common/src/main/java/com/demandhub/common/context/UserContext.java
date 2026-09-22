@@ -29,6 +29,12 @@ public final class UserContext {
         return u != null && u.hasRole(role);
     }
 
+    /** 当前登录渠道（WEB/CHUANGJIN_LS）；未登录返回 null。需求/草稿渠道落库以此为准，缺省 WEB（任务 4.5/5.5） */
+    public static String currentChannel() {
+        CurrentUser u = HOLDER.get();
+        return u == null ? null : u.getChannel();
+    }
+
     public static void clear() {
         HOLDER.remove();
     }

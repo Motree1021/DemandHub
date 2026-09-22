@@ -6,13 +6,13 @@ spring:
     name: demandhub-system
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3307/demandhub?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: root
-    password: demandhub123
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3307}/${MYSQL_DB:demandhub}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:demandhub123}
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   mvc:
     throw-exception-if-no-handler-found: true
   jackson:
@@ -33,6 +33,21 @@ mybatis-plus:
       logic-delete-field: isDeleted
       logic-delete-value: 1
       logic-not-delete-value: 0
+
+demandhub:
+  auth:
+    # 与 demandhub-gateway 保持一致；生产环境经环境变量 JWT_SECRET 注入
+    jwt-secret: ${JWT_SECRET:demandhub-dev-secret-key-0123456789abcdef}
+    # access 2h / refresh 8h（任务 2.5）
+    access-ttl-hours: ${JWT_ACCESS_TTL_HOURS:2}
+    refresh-ttl-hours: ${JWT_REFRESH_TTL_HOURS:8}
+    # 账密登录锁定策略（连续失败次数/锁定时长，审计留痕见应用日志）
+    login-max-failures: ${LOGIN_MAX_FAILURES:5}
+    login-lock-minutes: ${LOGIN_LOCK_MINUTES:15}
+  channel-sso:
+    # dev=true：内置 Mock 创金零售 SSO（MockChannelSsoController + MockTicketVerifier）；
+    # test/prod=false：P3 接创金零售真实 verify（CHANNEL_LS_BASE_URL/APP_KEY/APP_SECRET 环境变量注入）
+    mock: ${CHANNEL_SSO_MOCK:true}
 
 springdoc:
   api-docs:

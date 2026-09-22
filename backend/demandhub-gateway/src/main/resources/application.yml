@@ -6,8 +6,8 @@ spring:
     name: demandhub-gateway
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   cloud:
     gateway:
       default-filters:
@@ -21,25 +21,25 @@ spring:
             allowCredentials: true
       routes:
         - id: demandhub-system
-          uri: http://localhost:8081
+          uri: ${SYSTEM_URI:http://localhost:8081}
           predicates:
             - Path=/api/system/**
           filters:
             - StripPrefix=1
         - id: demandhub-demand
-          uri: http://localhost:8082
+          uri: ${DEMAND_URI:http://localhost:8082}
           predicates:
             - Path=/api/demand/**
           filters:
             - StripPrefix=1
         - id: demandhub-notification
-          uri: http://localhost:8083
+          uri: ${NOTIFICATION_URI:http://localhost:8083}
           predicates:
             - Path=/api/notification/**
           filters:
             - StripPrefix=1
         - id: demandhub-agent
-          uri: http://localhost:8084
+          uri: ${AGENT_URI:http://localhost:8084}
           predicates:
             - Path=/api/agent/**
           filters:
@@ -47,8 +47,8 @@ spring:
 
 demandhub:
   auth:
-    # 与 demandhub-system 保持一致；生产环境走配置中心/KMS
-    jwt-secret: demandhub-dev-secret-key-0123456789abcdef
+    # 与 demandhub-system 保持一致；生产环境经环境变量 JWT_SECRET 注入
+    jwt-secret: ${JWT_SECRET:demandhub-dev-secret-key-0123456789abcdef}
 
 logging:
   level:

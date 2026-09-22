@@ -59,7 +59,7 @@ public class DataScopeService {
     private DataScope compute(CurrentUser user) {
         LocalDateTime now = LocalDateTime.now();
         List<RoleGrantView> grants = grantMapper.selectList(new LambdaQueryWrapper<RoleGrantView>()
-                .eq(RoleGrantView::getUserId, user.getUserId())
+                .eq(RoleGrantView::getDemandUserId, user.getId())
                 .and(w -> w.isNull(RoleGrantView::getEffectiveFrom).or().le(RoleGrantView::getEffectiveFrom, now))
                 .and(w -> w.isNull(RoleGrantView::getEffectiveTo).or().ge(RoleGrantView::getEffectiveTo, now)));
 
@@ -68,19 +68,21 @@ public class DataScopeService {
         if (roles.contains("EXECUTIVE")) {
             return DataScope.bypass();
         }
-        // 仅系统管理员/无角色：不参与业务流
-        roles.remove("ADMIN");
-        if (roles.isEmpty()) {
-            return DataScope.noAccess();
-        }
 
         DataScope scope = new DataScope();
         scope.setUserId(user.getId());
-        scope.setReporter(roles.contains("REPORTER"));
+        // 角色族版（D1）：不设提报人角色，任何登录用户均可看自己提报的需求
+        scope.setReporter(true);
 
-        // HANDLER / DEMAND_MANAGER：授权组织子树并集
+        // 仅系统管理员/无业务角色：不参与业务流，仅提报人范围
+        roles.remove("ADMIN");
+        if (roles.isEmpty()) {
+            return scope;
+        }
+
+        // HANDLER / MANAGER：授权组织子树并集
         Set<Long> grantedOrgIds = grants.stream()
-                .filter(g -> "HANDLER".equals(g.getRoleCode()) || "DEMAND_MANAGER".equals(g.getRoleCode()))
+                .filter(g -> "HANDLER".equals(g.getRoleCode()) || "MANAGER".equals(g.getRoleCode()))
                 .map(RoleGrantView::getOrgId)
                 .filter(java.util.Objects::nonNull)
                 .collect(Collectors.toSet());

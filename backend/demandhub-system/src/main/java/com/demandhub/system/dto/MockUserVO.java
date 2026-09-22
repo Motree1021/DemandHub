@@ -5,17 +5,15 @@ import lombok.Data;
 import java.io.Serializable;
 
 /**
- * 一期 Mock 登录页可选用户（仅开发期使用）
+ * Mock 创金零售入口的可选用户（仅 dev：模拟"创金零售"侧已有企微登录态的员工）
  */
 @Data
 public class MockUserVO implements Serializable {
 
-    private String userId;
+    /** 渠道侧用户 ID（Mock 企微 userid，如 wq_u_mgr_tech） */
+    private String channelUserId;
 
     private String name;
 
     private String orgName;
-
-    /** Mock 授权码，前端直接携带回调 */
-    private String mockCode;
 }

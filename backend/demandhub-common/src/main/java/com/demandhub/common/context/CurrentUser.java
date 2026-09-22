@@ -12,14 +12,17 @@ import java.util.List;
 @Data
 public class CurrentUser implements Serializable {
 
-    /** 用户数值 ID（对应 demand_user_snapshot.id / 权限中心数值主键） */
+    /** 用户数值 ID（demand_user.id，OneID） */
     private Long id;
 
-    /** 权限中心用户唯一 ID，如 u_admin_001 */
+    /** 用户唯一 ID（String.valueOf(OneID)） */
     private String userId;
 
-    /** 业务角色编码列表：ADMIN/EXECUTIVE/DEMAND_MANAGER/HANDLER/REPORTER */
+    /** 业务角色编码列表（角色族：ADMIN/EXECUTIVE/MANAGER/HANDLER） */
     private List<String> roles = new ArrayList<>();
+
+    /** 登录渠道（WEB/CHUANGJIN_LS），由会话 claims 经网关注入，不信任前端传值 */
+    private String channel;
 
     public boolean hasRole(String role) {
         return roles != null && roles.contains(role);

@@ -11,10 +11,11 @@ import org.springframework.stereotype.Service;
 import java.io.Serializable;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Redis 会话存储：access 会话按 JWT jti 存取（网关鉴权时校验存在性，支持登出即失效）；
- * refresh 会话记录最近一次刷新的 jti 链。
+ * refresh 会话同样按 jti 存取并维护 user→jti 索引，refresh 旋转/登出/按用户全清一并失效。
  */
 @Slf4j
 @Service
@@ -23,6 +24,7 @@ public class SessionService {
     private static final String SESSION_KEY = "auth:session:";
     private static final String REFRESH_KEY = "auth:refresh:";
     private static final String USER_SESSIONS_KEY = "auth:user-sessions:";
+    private static final String USER_REFRESH_KEY = "auth:user-refresh:";
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -57,19 +59,38 @@ public class SessionService {
     }
 
     /**
-     * 使指定用户全部会话失效（授权变更时调用；用户下次请求将 401，前端自动走刷新令牌续期）
+     * 使指定用户 access 会话失效（保留 refresh）。
+     * 用于授权变更（FR-M1-03）：access 立即失效，用户凭 refresh 自动续期获取新角色，实现无感生效。
      */
     public void deleteSessionsByUser(String userId) {
         String indexKey = USER_SESSIONS_KEY + userId;
-        var jtis = redis.opsForSet().members(indexKey);
+        Set<String> jtis = redis.opsForSet().members(indexKey);
         if (jtis != null) {
             jtis.forEach(jti -> redis.delete(SESSION_KEY + jti));
         }
         redis.delete(indexKey);
     }
 
+    /**
+     * 使指定用户全部会话失效（access + refresh 一并清除）。
+     * 用于改密/停用/合并等必须强制重新登录的场景。
+     */
+    public void deleteAllSessionsByUser(String userId) {
+        deleteSessionsByUser(userId);
+
+        String refreshIndexKey = USER_REFRESH_KEY + userId;
+        Set<String> refreshJtis = redis.opsForSet().members(refreshIndexKey);
+        if (refreshJtis != null) {
+            refreshJtis.forEach(jti -> redis.delete(REFRESH_KEY + jti));
+        }
+        redis.delete(refreshIndexKey);
+    }
+
     public void saveRefresh(String jti, String userId, long ttlSeconds) {
         redis.opsForValue().set(REFRESH_KEY + jti, userId, Duration.ofSeconds(ttlSeconds));
+        String indexKey = USER_REFRESH_KEY + userId;
+        redis.opsForSet().add(indexKey, jti);
+        redis.expire(indexKey, Duration.ofDays(7));
     }
 
     public boolean refreshExists(String jti) {
@@ -98,14 +119,17 @@ public class SessionService {
         private String name;
         private Long primaryOrgId;
         private List<String> roles;
+        /** 登录渠道（WEB/CHUANGJIN_LS），网关注入 X-Channel */
+        private String channel;
 
-        public static SessionUser of(UserSnapshot u, List<String> roles) {
+        public static SessionUser of(UserSnapshot u, List<String> roles, String channel) {
             SessionUser su = new SessionUser();
             su.setId(u.getId());
             su.setUserId(u.getUserId());
             su.setName(u.getName());
             su.setPrimaryOrgId(u.getPrimaryOrgId());
             su.setRoles(roles);
+            su.setChannel(channel);
             return su;
         }
     }

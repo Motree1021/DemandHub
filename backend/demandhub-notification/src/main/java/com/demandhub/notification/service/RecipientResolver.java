@@ -3,10 +3,8 @@ package com.demandhub.notification.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demandhub.notification.entity.OrgSnapshotView;
 import com.demandhub.notification.entity.RoleGrantView;
-import com.demandhub.notification.entity.UserSnapshotView;
 import com.demandhub.notification.mapper.OrgSnapshotViewMapper;
 import com.demandhub.notification.mapper.RoleGrantViewMapper;
-import com.demandhub.notification.mapper.UserSnapshotViewMapper;
 import com.demandhub.notification.mq.DemandEventMessage;
 import org.springframework.stereotype.Service;
 
@@ -30,13 +28,10 @@ public class RecipientResolver {
 
     private final RoleGrantViewMapper roleGrantMapper;
     private final OrgSnapshotViewMapper orgSnapshotMapper;
-    private final UserSnapshotViewMapper userSnapshotMapper;
 
-    public RecipientResolver(RoleGrantViewMapper roleGrantMapper, OrgSnapshotViewMapper orgSnapshotMapper,
-                             UserSnapshotViewMapper userSnapshotMapper) {
+    public RecipientResolver(RoleGrantViewMapper roleGrantMapper, OrgSnapshotViewMapper orgSnapshotMapper) {
         this.roleGrantMapper = roleGrantMapper;
         this.orgSnapshotMapper = orgSnapshotMapper;
-        this.userSnapshotMapper = userSnapshotMapper;
     }
 
     /** 事件接收人（数值用户 ID，去重，不含操作人本人） */
@@ -84,37 +79,35 @@ public class RecipientResolver {
         return managers.isEmpty() ? executives() : managers;
     }
 
-    /** 承接组织的需求经理：DEMAND_MANAGER 有效授权且授权组织物化路径是承接组织路径前缀 */
+    /** 承接组织的需求经理：MANAGER 有效授权且授权组织物化路径是承接组织路径前缀 */
     public Set<Long> managersOfOrg(Long assigneeOrgId) {
         if (assigneeOrgId == null) {
             return Set.of();
         }
         OrgSnapshotView target = orgSnapshotMapper.selectOne(new LambdaQueryWrapper<OrgSnapshotView>()
-                .eq(OrgSnapshotView::getOrgId, assigneeOrgId));
+                .eq(OrgSnapshotView::getId, assigneeOrgId));
         if (target == null || target.getPath() == null) {
             return Set.of();
         }
-        List<RoleGrantView> grants = effectiveGrants("DEMAND_MANAGER");
+        List<RoleGrantView> grants = effectiveGrants("MANAGER");
         Set<Long> grantOrgIds = grants.stream().map(RoleGrantView::getOrgId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
         if (grantOrgIds.isEmpty()) {
             return Set.of();
         }
         Set<Long> coveredOrgIds = orgSnapshotMapper.selectList(new LambdaQueryWrapper<OrgSnapshotView>()
-                        .in(OrgSnapshotView::getOrgId, grantOrgIds)).stream()
+                        .in(OrgSnapshotView::getId, grantOrgIds)).stream()
                 .filter(o -> o.getPath() != null && target.getPath().startsWith(o.getPath()))
-                .map(OrgSnapshotView::getOrgId).collect(Collectors.toSet());
-        Set<String> userIds = grants.stream()
+                .map(OrgSnapshotView::getId).collect(Collectors.toSet());
+        return grants.stream()
                 .filter(g -> g.getOrgId() != null && coveredOrgIds.contains(g.getOrgId()))
-                .map(RoleGrantView::getUserId).collect(Collectors.toSet());
-        return toNumericIds(userIds);
+                .map(RoleGrantView::getDemandUserId).collect(Collectors.toSet());
     }
 
     /** 需求管理者（EXECUTIVE 全线） */
     public Set<Long> executives() {
-        Set<String> userIds = effectiveGrants("EXECUTIVE").stream()
-                .map(RoleGrantView::getUserId).collect(Collectors.toSet());
-        return toNumericIds(userIds);
+        return effectiveGrants("EXECUTIVE").stream()
+                .map(RoleGrantView::getDemandUserId).collect(Collectors.toSet());
     }
 
     private List<RoleGrantView> effectiveGrants(String roleCode) {
@@ -123,16 +116,6 @@ public class RecipientResolver {
                 .eq(RoleGrantView::getRoleCode, roleCode)
                 .and(w -> w.isNull(RoleGrantView::getEffectiveFrom).or().le(RoleGrantView::getEffectiveFrom, now))
                 .and(w -> w.isNull(RoleGrantView::getEffectiveTo).or().ge(RoleGrantView::getEffectiveTo, now)));
-    }
-
-    /** 权限中心字符串用户 ID → 数值快照 ID */
-    private Set<Long> toNumericIds(Set<String> userIds) {
-        if (userIds.isEmpty()) {
-            return Set.of();
-        }
-        return userSnapshotMapper.selectList(new LambdaQueryWrapper<UserSnapshotView>()
-                        .in(UserSnapshotView::getUserId, userIds)).stream()
-                .map(UserSnapshotView::getId).collect(Collectors.toSet());
     }
 
     private void addIfNotNull(Set<Long> receivers, Long userId) {

@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * JWT 签发与解析：HS256；access token 携带用户数值 ID、权限中心 userId、角色列表。
+ * JWT 签发与解析：HS256；access/refresh 均携带 OneID、角色列表与登录渠道（channel 供网关注入 X-Channel）。
  */
 @Service
 public class JwtService {
@@ -24,6 +24,7 @@ public class JwtService {
     public static final String CLAIM_UID = "uid";
     public static final String CLAIM_USER_ID = "userId";
     public static final String CLAIM_ROLES = "roles";
+    public static final String CLAIM_CHANNEL = "channel";
     public static final String CLAIM_TYPE = "typ";
     public static final String TYPE_ACCESS = "access";
     public static final String TYPE_REFRESH = "refresh";
@@ -36,7 +37,7 @@ public class JwtService {
         this.key = Keys.hmacShaKeyFor(properties.getJwtSecret().getBytes(StandardCharsets.UTF_8));
     }
 
-    public String createAccessToken(Long uid, String userId, List<String> roles) {
+    public String createAccessToken(Long uid, String userId, List<String> roles, String channel) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .id(UUID.randomUUID().toString())
@@ -44,6 +45,7 @@ public class JwtService {
                 .claim(CLAIM_UID, uid)
                 .claim(CLAIM_USER_ID, userId)
                 .claim(CLAIM_ROLES, roles)
+                .claim(CLAIM_CHANNEL, channel)
                 .claim(CLAIM_TYPE, TYPE_ACCESS)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(Duration.ofHours(properties.getAccessTtlHours()))))
@@ -51,16 +53,17 @@ public class JwtService {
                 .compact();
     }
 
-    public String createRefreshToken(Long uid, String userId) {
+    public String createRefreshToken(Long uid, String userId, String channel) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .id(UUID.randomUUID().toString())
                 .subject(userId)
                 .claim(CLAIM_UID, uid)
                 .claim(CLAIM_USER_ID, userId)
+                .claim(CLAIM_CHANNEL, channel)
                 .claim(CLAIM_TYPE, TYPE_REFRESH)
                 .issuedAt(Date.from(now))
-                .expiration(Date.from(now.plus(Duration.ofDays(properties.getRefreshTtlDays()))))
+                .expiration(Date.from(now.plus(Duration.ofHours(properties.getRefreshTtlHours()))))
                 .signWith(key)
                 .compact();
     }
@@ -81,6 +84,6 @@ public class JwtService {
     }
 
     public long getRefreshTtlSeconds() {
-        return Duration.ofDays(properties.getRefreshTtlDays()).getSeconds();
+        return Duration.ofHours(properties.getRefreshTtlHours()).getSeconds();
     }
 }

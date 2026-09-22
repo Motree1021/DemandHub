@@ -31,7 +31,7 @@ import java.util.Set;
  * 网关统一鉴权（NFR-07/08）：
  * 1. 白名单（登录类/文档/健康检查）放行；
  * 2. 校验 JWT 签名与有效期，并校验 Redis 会话存在（登出/授权变更后即失效）；
- * 3. 注入 X-User-Id / X-User-Uid / X-User-Roles 用户头转发下游；先剥离客户端伪造头。
+ * 3. 注入 X-User-Id / X-User-Uid / X-User-Roles / X-Channel 用户头转发下游；先剥离客户端伪造头。
  */
 @Slf4j
 @Component
@@ -41,15 +41,16 @@ public class AuthFilter implements GlobalFilter, Ordered {
     private static final String HEADER_USER_ID = "X-User-Id";
     private static final String HEADER_USER_UID = "X-User-Uid";
     private static final String HEADER_USER_ROLES = "X-User-Roles";
+    private static final String HEADER_CHANNEL = "X-Channel";
+    private static final String DEFAULT_CHANNEL = "WEB";
 
-    /** 登录类与文档白名单（前缀匹配） */
+    /** 登录类白名单（前缀匹配）：渠道SSO/账密登录/刷新/登出/Mock入口（仅dev） */
     private static final List<String> WHITELIST_PREFIX = List.of(
-            "/api/system/auth/oauth-url",
-            "/api/system/auth/callback",
-            "/api/system/auth/silent",
+            "/api/system/auth/channel-sso",
+            "/api/system/auth/login",
             "/api/system/auth/refresh",
             "/api/system/auth/logout",
-            "/api/system/auth/mock-users"
+            "/api/system/mock-sso"
     );
     /** 文档与健康检查（包含匹配） */
     private static final List<String> WHITELIST_CONTAINS = List.of(
@@ -77,6 +78,7 @@ public class AuthFilter implements GlobalFilter, Ordered {
                     h.remove(HEADER_USER_ID);
                     h.remove(HEADER_USER_UID);
                     h.remove(HEADER_USER_ROLES);
+                    h.remove(HEADER_CHANNEL);
                 })
                 .build();
 
@@ -99,10 +101,12 @@ public class AuthFilter implements GlobalFilter, Ordered {
                 return unauthorized(exchange, "会话已失效，请重新登录");
             }
             List<?> roles = claims.get("roles", List.class);
+            Object channel = claims.get("channel");
             ServerHttpRequest authed = sanitized.mutate()
                     .header(HEADER_USER_ID, String.valueOf(claims.get("uid")))
                     .header(HEADER_USER_UID, String.valueOf(claims.get("userId")))
                     .header(HEADER_USER_ROLES, roles == null ? "" : String.join(",", roles.stream().map(String::valueOf).toList()))
+                    .header(HEADER_CHANNEL, channel == null ? DEFAULT_CHANNEL : String.valueOf(channel))
                     .build();
             return chain.filter(exchange.mutate().request(authed).build());
         });

@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 
 /**
  * 组织维度业务权限校验（写入侧补充：数据权限拦截器只拦 SELECT，写操作自行校验归属）。
- * - 经理管事：DEMAND_MANAGER 授权组织子树包含需求承接组织，或 EXECUTIVE 全线
+ * - 经理管事：MANAGER 授权组织子树包含需求承接组织，或 EXECUTIVE 全线
  * - 处理人领活：HANDLER 授权组织子树包含需求承接组织
  */
 @Service
@@ -41,7 +41,7 @@ public class OrgScopeService {
 
     /**
      * 当前用户是否可管理指定承接组织的需求（经理受理/退回/关闭/分派/评审等动作）。
-     * EXECUTIVE 全线可管；DEMAND_MANAGER 需授权子树覆盖。
+     * EXECUTIVE 全线可管；MANAGER 需授权子树覆盖。
      */
     public boolean canManage(CurrentUser user, Long assigneeOrgId) {
         if (user == null) {
@@ -50,7 +50,7 @@ public class OrgScopeService {
         if (user.hasRole("EXECUTIVE")) {
             return true;
         }
-        if (!user.hasRole("DEMAND_MANAGER")) {
+        if (!user.hasRole("MANAGER")) {
             return false;
         }
         DataScope scope = dataScopeService.currentScope(user);
@@ -87,7 +87,7 @@ public class OrgScopeService {
         }
         LocalDateTime now = LocalDateTime.now();
         List<RoleGrantView> grants = roleGrantMapper.selectList(new LambdaQueryWrapper<RoleGrantView>()
-                .eq(RoleGrantView::getUserId, snapshot.getUserId())
+                .eq(RoleGrantView::getDemandUserId, snapshot.getId())
                 .eq(RoleGrantView::getRoleCode, roleCode)
                 .and(w -> w.isNull(RoleGrantView::getEffectiveFrom).or().le(RoleGrantView::getEffectiveFrom, now))
                 .and(w -> w.isNull(RoleGrantView::getEffectiveTo).or().ge(RoleGrantView::getEffectiveTo, now)));
@@ -100,13 +100,13 @@ public class OrgScopeService {
             return false;
         }
         OrgSnapshotView target = orgSnapshotMapper.selectOne(new LambdaQueryWrapper<OrgSnapshotView>()
-                .eq(OrgSnapshotView::getOrgId, targetOrgId));
+                .eq(OrgSnapshotView::getId, targetOrgId));
         if (target == null || target.getPath() == null) {
             return false;
         }
         // 授权组织物化路径是目标组织路径的前缀即覆盖（含自身与子树）
         List<OrgSnapshotView> grantOrgs = orgSnapshotMapper.selectList(new LambdaQueryWrapper<OrgSnapshotView>()
-                .in(OrgSnapshotView::getOrgId, grantOrgIds));
+                .in(OrgSnapshotView::getId, grantOrgIds));
         return grantOrgs.stream().anyMatch(o -> o.getPath() != null && target.getPath().startsWith(o.getPath()));
     }
 }

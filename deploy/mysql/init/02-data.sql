@@ -8,13 +8,13 @@ SET NAMES utf8mb4;
 USE demandhub;
 
 -- ---------- 需求类型初始化 ----------
-INSERT INTO demand_type(type_code, type_name, default_org_id, state_machine_key, sort) VALUES
+INSERT IGNORE INTO demand_type(type_code, type_name, default_org_id, state_machine_key, sort) VALUES
 ('TECH',  '科技需求', /* 财管科技产品部 org_id */ NULL, 'DEFAULT', 1),
 ('MATL',  '物料需求', /* 客户陪伴服务部 org_id */ NULL, 'DEFAULT', 2),
 ('TRAIN', '培训需求', /* 培训开发部 org_id */     NULL, 'DEFAULT', 3);
 
 -- ---------- 通用字典初始化 ----------
-INSERT INTO sys_dict(dict_type, item_code, item_name, sort) VALUES
+INSERT IGNORE INTO sys_dict(dict_type, item_code, item_name, sort) VALUES
 ('URGENCY','NORMAL',  '普通', 1),
 ('URGENCY','URGENT',  '紧急', 2),
 ('URGENCY','CRITICAL','特急', 3),
@@ -26,7 +26,7 @@ INSERT INTO sys_dict(dict_type, item_code, item_name, sort) VALUES
 ('HOLD_REASON','OTHER',        '其他',9);
 
 -- ---------- 通知模板初始化（阶段 4，template_code = 状态机事件名 / SLA_ALERT） ----------
-INSERT INTO notification_template(template_code, template_name, title_template, content_template, remark) VALUES
+INSERT IGNORE INTO notification_template(template_code, template_name, title_template, content_template, remark) VALUES
 ('SUBMIT',            '需求提交提醒',   '新需求待受理：${demand_no}',        '需求 ${demand_no}「${title}」已由 ${operator_name} 提交，请及时受理。', '通知承接组织经理'),
 ('WITHDRAW',          '需求撤销提醒',   '需求已撤销：${demand_no}',          '需求 ${demand_no}「${title}」已被提报人撤销。', NULL),
 ('ACCEPT',            '受理通过提醒',   '需求已受理：${demand_no}',          '您提报的需求 ${demand_no}「${title}」已受理，进入需求池。', NULL),
@@ -47,7 +47,7 @@ INSERT INTO notification_template(template_code, template_name, title_template, 
 ('SLA_ALERT',         'SLA 告警',      'SLA ${level_text}：${demand_no}',    '需求 ${demand_no}「${title}」在状态「${to_status}」已停留 ${elapsed_minutes} 分钟，超过${level_text}阈值，请及时跟进。', '即将超时黄色预警 / 已超时红色告警');
 
 -- ---------- SLA 默认配置 ----------
-INSERT INTO sla_config(demand_type_code, status, warn_minutes, max_minutes, remark) VALUES
+INSERT IGNORE INTO sla_config(demand_type_code, status, warn_minutes, max_minutes, remark) VALUES
 ('TECH', 'SUBMITTED',    1440, 2880, '受理时限：1天预警 / 2天告警'),
 ('TECH', 'TRIAGE',       1440, 2880, '分派时限'),
 ('TECH', 'ANALYZING',    4320, 7200, '分析时限：3天 / 5天'),

@@ -2,6 +2,7 @@ package com.demandhub.agent.llm;
 
 import com.demandhub.agent.entity.DemandView;
 import com.demandhub.agent.entity.KnowledgeDocEntity;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -15,9 +16,11 @@ import java.util.Map;
 /**
  * 大模型平台 Mock 实现（一期）：确定性规则模拟对话/生成/向量化。
  * 所有能力先检查 {@link LlmSwitch}，不可用时抛 {@link LlmUnavailableException}（降级）。
- * 二期替换为真实 HTTP 客户端（超时/异常 → 同样抛 LlmUnavailableException），调用方不变。
+ * 二期替换为真实 HTTP 客户端（超时/异常 → 同样抛 LlmUnavailableException），调用方不变；
+ * 新增 LlmClient 真实实现并设 demandhub.integration.llm.mock=false 即可切换。
  */
 @Component
+@ConditionalOnProperty(name = "demandhub.integration.llm.mock", havingValue = "true", matchIfMissing = true)
 public class MockLlmClient implements LlmClient {
 
     private final LlmSwitch llmSwitch;
