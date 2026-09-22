@@ -1,6 +1,8 @@
 # DemandHub 用户角色与鉴权重构 & 创金零售 H5 嵌入 — 开发阶段计划 v2.0（渠道 SSO 票据版）
 
 > 编写日期：2026-09-22　|　主责：财管科技产品部 DemandHub 团队
+>
+> **v2.1 细化（2026-09-22）**：明确跳转 URL 只带 ticket、不带用户名/企微ID 等明文身份，身份字段仅经 verify 响应返回（对接标准 v2.1 第 3.1/3.3 节）；新增 4.5 渠道识别与来源落库链路；P3/P5 补充字段映射与防伪自测。
 > **v2.0 相对 v1.0 的核心变化**
 >
 > ：DemandHub 
@@ -168,13 +170,39 @@ sequenceDiagram
 
 * H5 不开放密码登录；PC 移除 Mock 选人入口（dev profile 下可保留）。
 
-### 4.5 渠道来源落库
+### 4.5 渠道识别与来源落库链路
+
+**核心原则：渠道身份只在服务端建立和传递；URL 上的 `from` 只用于选择渠道适配器与 H5 外壳，不决定身份、不决定落库渠道；用户名、企微 ID 只来自 verify 响应体。**
+
+```mermaid
+flowchart LR
+  A["创金零售入口 302：from+ticket（不含身份）"] -->|from 仅选适配器/外壳| B["channel-sso 端点"]
+  P["PC 账密登录"] --> P2["登录成功"]
+  B --> C["回源 verify（HMAC 签名）"]
+  C -->|user_id=企微ID/name/dept| D["匹配/建 OneID"]
+  D --> E["JWT：channel=CHUANGJIN_LS"]
+  P2 --> E2["JWT：channel=WEB"]
+  E --> F["网关注入 X-Channel，剥离伪造头"]
+  E2 --> F
+  F --> G["UserContext.channel"]
+  G --> H[("demand.channel / 草稿渠道 = 服务端会话渠道")]
+```
+
+- **渠道何时确定（仅两个可信来源）**：① channel-sso 票据核验通过——渠道码取自服务端按 `channel` 参数在白名单内选定的适配器，**不是**从 URL 明文身份取得；② PC 账密登录 = WEB。渠道码写入 JWT claims，会话期内不可更改。
+- **每个请求怎么传递**：网关验签后从 claims 取 channel 注入 `X-Channel`；客户端自带的 `X-Channel`、`X-User-*` 头一律剥离后重建。
+- **落库取哪里**：提交、草稿、附件等写操作的渠道一律取 `UserContext.channel`，缺省 WEB；**删除现有从前端请求体取 channel 的逻辑**（`DemandSubmitService` 现约第 90 行），H5 两处写死 `'H5'` 同步删除。
+- **渠道信息的三个存储层次（各回答一个问题）**：
+  1. `channel_user_mapping`：OneID 与渠道身份绑定（CHUANGJIN_LS + 企微 userid）——“这个人在渠道侧是谁”；
+  2. `demand_user.last_login_channel`：最近一次登录渠道——“这个人最近从哪进”；
+  3. `demand.channel`：每条需求/草稿的提报渠道，列表筛选与看板统计口径——“这条需求从哪提”。
+- **verify 响应字段落库映射**：`user_id`（企微 ID，必填）→ mapping.channel_user_id + demand_user.wecom_userid；`name` → 建号时写 demand_user.name（已存在则不覆盖管理员维护值）；`dept_id` → 按 demand_org.external_dept_id 映射主组织，未映射挂“未分配组织”虚拟节点并进校准清单，不阻塞提报；`phone/employee_no/email` 仅补全缺失值。
+- **防伪测试点（纳入 P6 验收）**：URL 手拼 userid/name 不被读取；篡改 `from` 不改变身份；请求体传 `channel=OTHER` 落库仍为会话渠道；重放 ticket 返回 40002；无 token 直调提交接口 401。
 
 
 
-* 网关注入 `X-Channel`（由会话 claims 取，SSO 登录写 CHUANGJIN\_LS，PC 写 WEB）。
 
-* `DemandSubmitService` 提交 / 草稿渠道取 `UserContext.channel`，缺省 WEB，**忽略前端传入 channel**；`from=chuangjinls` 仅控制 H5 外壳。
+
+
 
 ### 4.6 同域部署（nginx 合并）
 
@@ -254,7 +282,7 @@ sequenceDiagram
 | #   | 任务                     | 说明                                                                                     |
 | --- | ---------------------- | -------------------------------------------------------------------------------------- |
 | 3.1 | 渠道适配器框架                | `ChannelSsoClient` 接口 + 配置化注册（demand\_channel.config\_json），新渠道 = 加配置 + 一个实现类          |
-| 3.2 | `ChuangjinLsSsoClient` | verify 调用：HMAC-SHA256 签名（app\_key/timestamp/nonce）、超时 3s、熔断降级、错误码映射、日志脱敏               |
+| 3.2 | `ChuangjinLsSsoClient` | verify 调用：HMAC-SHA256 签名、超时 3s、熔断降级、错误码映射、日志脱敏；**响应字段映射落库**：user_id（企微ID）→ mapping.channel_user_id + wecom_userid、name→建号姓名、dept_id→external_dept_id 组织映射、phone/工号/邮箱补缺；只信任响应体，不读 URL 明文身份 |
 | 3.3 | Mock SSO 服务            | dev 专用签发页 + verify 端点，覆盖正常 / 票据过期 / 重放 / 字段缺失（无手机）/ 离职 5 种场景                           |
 | 3.4 | 票据端点与状态机               | `GET /system/auth/channel-sso`：一次性消费、TTL 校验、state/nonce 防重放、异常错误页文案                    |
 | 3.5 | 部门映射                   | verify 的 dept\_id → demand\_org.external\_dept\_id；未匹配挂 EXTERNAL (900) 不阻塞登录提报，回流进校准清单 |
@@ -298,14 +326,14 @@ sequenceDiagram
 
 | #   | 任务       | 负责    | 说明                                                                                                |
 | --- | -------- | ----- | ------------------------------------------------------------------------------------------------- |
-| 5.1 | 票据登录链路   | FE    | 守卫识别 URL `ticket` → 调 channel-sso → 存 token → replaceState 清除 ticket；无 ticket 且非企微 UA 显示提示页；失败错误页 |
+| 5.1 | 票据登录链路   | FE    | 守卫识别 URL `ticket`（`from` 仅决定适配器与嵌入外壳）→ 调 channel-sso（渠道码后端白名单选定）→ 存 token → replaceState 清除 ticket/from；**URL 明文 userid/name 一律不读**；无 ticket 且非企微 UA 显示提示页；失败错误页 |
 | 5.2 | 嵌入态外壳    | FE    | `from=chuangjinls` 隐藏 tabbar、仅留左上返回（history.back）；独立访问保留完整外壳（预留）                                  |
 | 5.3 | 视觉与表单    | FE    | 主色 #1F3A8a 对齐、卡片式布局；`<input capture>` 拍照 / 附件；草稿；390\~430px 适配                                    |
 | 5.4 | 工程与部署    | FE    | vite `base:'/h5/'`、路由 base、同域 nginx 配置（合并 80/81）                                                  |
-| 5.5 | 渠道落库     | BE    | X-Channel→UserContext→demand.channel；两处写死 `'H5'` 改掉；草稿同口径                                         |
+| 5.5 | 渠道落库（BE 主责） | BE    | X-Channel→UserContext→demand.channel 与草稿渠道；删除 DemandSubmitService 前端取 channel（约 90 行）与 H5 两处写死 `'H5'`；自测：URL 拼 userid、改 from、请求体传 channel 均不能改变落库渠道 |
 | 5.6 | 站内信 / 红点 | FE+BE | H5 待办红点、消息列表（D6 一期口径）                                                                             |
 
-**验收（Mock + 真机）**：模拟入口无登录页直达提报表单；嵌入态无 tabbar、可返回；URL 不含残留 ticket；来源落库 CHUANGJIN\_LS；拍照 / 附件 / 草稿 iOS / 安卓正常。
+**验收（Mock + 真机）**：模拟入口无登录页直达提报表单；嵌入态无 tabbar、可返回；URL 不含残留 ticket/from；来源落库 CHUANGJIN\_LS；拍照 / 附件 / 草稿 iOS / 安卓正常；**防伪自测：URL 手拼 userid/name、篡改 from、请求体传 channel 均无效，落库仍为 CHUANGJIN_LS**。
 
 ### P6 — 测试环境部署与创金零售真机 E2E（1.5d）
 
@@ -316,7 +344,7 @@ sequenceDiagram
 | 6.1 | 测试环境部署  | docker-compose 同域部署；test profile 指向创金零售测试 verify；app\_secret 走环境变量 |
 | 6.2 | 双方联调    | 创金零售测试环境入口 → 真机（iOS / 安卓各 1）：跳入→免登→提报→PC 受理→分派→验收→站内信触达            |
 | 6.3 | 异常态真机   | ticket 过期 / 重复使用 / 篡改、创金零售停机、离职成员、部门未映射、弱网重试                       |
-| 6.4 | AC 逐项验收 | 对接标准 AC-01\~06 双方签字；来源筛选与统计核对                                      |
+| 6.4 | AC 逐项验收 | 对接标准 AC-01\~08 双方签字（含明文身份伪造、重放等安全项）；来源筛选与统计核对 |
 | 6.5 | 性能与安全   | 签名重放测试、越权 403、伪造头剥离、verify 超时降级、登录锁定                               |
 
 ### P7 — 回归、文档与生产上线（2d）

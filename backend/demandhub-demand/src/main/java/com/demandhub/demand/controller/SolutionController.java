@@ -54,8 +54,8 @@ public class SolutionController {
         return Result.ok();
     }
 
-    @Operation(summary = "方案评审（经理：PASS → CONFIRMED / REJECT → ANALYZING）")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @Operation(summary = "方案评审（本类型本组织经理：PASS → CONFIRMED / REJECT → ANALYZING）")
+    @RequireRole("MANAGER")
     @PostMapping("/{id}/review")
     public Result<Void> review(@PathVariable Long id, @RequestBody SolutionReviewRequest request) {
         solutionService.review(id, request);

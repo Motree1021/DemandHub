@@ -27,6 +27,9 @@ public class RoleGrantView implements Serializable {
 
     private Long orgId;
 
+    /** 需求类型集合（逗号多选），NULL=全部类型 */
+    private String demandTypeScope;
+
     private LocalDateTime effectiveFrom;
 
     private LocalDateTime effectiveTo;

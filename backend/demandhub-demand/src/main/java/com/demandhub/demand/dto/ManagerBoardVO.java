@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * 管理者看板 VO（FR-M6-01）：KPI 卡片 + 近12周趋势 + 类型分布 + 组织积压 Top N + SLA 健康度。
- * 数据范围与列表页一致（DataScopeInterceptor 自动按登录人过滤）：EXECUTIVE 全线，DEMAND_MANAGER 授权子树。
+ * 数据范围与列表页一致（DataScopeInterceptor 自动按登录人过滤）：EXECUTIVE 全线，MANAGER 授权子树。
  */
 @Data
 public class ManagerBoardVO implements Serializable {
@@ -20,6 +20,9 @@ public class ManagerBoardVO implements Serializable {
 
     /** 类型分布（筛选范围内按提交量） */
     private List<TypeCount> typeDistribution;
+
+    /** 渠道来源分布（筛选范围内按提交量；channelName 由前端/渠道表映射，如 CHUANGJIN_LS=创金零售） */
+    private List<ChannelCount> channelDistribution;
 
     /** 组织积压 Top N（当前在途） */
     private List<OrgBacklog> orgBacklog;
@@ -52,6 +55,15 @@ public class ManagerBoardVO implements Serializable {
     public static class TypeCount implements Serializable {
         private String typeCode;
         private String typeName;
+        private Long cnt;
+    }
+
+    @Data
+    public static class ChannelCount implements Serializable {
+        /** 渠道码（WEB/CHUANGJIN_LS 等） */
+        private String channel;
+        /** 渠道显示名（demand_channel.channel_name，未注册回退渠道码） */
+        private String channelName;
         private Long cnt;
     }
 

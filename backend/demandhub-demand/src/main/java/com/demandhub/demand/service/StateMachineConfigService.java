@@ -33,7 +33,7 @@ import java.util.Set;
 @Service
 public class StateMachineConfigService {
 
-    private static final Set<String> VALID_ROLES = Set.of("ADMIN", "EXECUTIVE", "DEMAND_MANAGER", "HANDLER", "REPORTER");
+    private static final Set<String> VALID_ROLES = Set.of("ADMIN", "EXECUTIVE", "MANAGER", "HANDLER");
 
     private final StateMachineConfigMapper configMapper;
     private final StateMachineConfig stateMachineConfig;

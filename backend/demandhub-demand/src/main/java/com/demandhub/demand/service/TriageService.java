@@ -66,7 +66,7 @@ public class TriageService {
     public void accept(Long demandId, String comment) {
         CurrentUser user = requireLogin();
         DemandEntity demand = requireVisible(demandId);
-        orgScopeService.requireManage(user, demand.getAssigneeOrgId());
+        orgScopeService.requireManage(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode());
         stateMachine.transition(demandId, DemandEvent.ACCEPT, user, TransitionContext.of(comment));
     }
 
@@ -78,7 +78,7 @@ public class TriageService {
             throw new BizException(ErrorCode.PARAM_INVALID, "退回补充说明必填");
         }
         DemandEntity demand = requireVisible(demandId);
-        orgScopeService.requireManage(user, demand.getAssigneeOrgId());
+        orgScopeService.requireManage(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode());
         stateMachine.transition(demandId, DemandEvent.RETURN, user, TransitionContext.of(comment.trim()));
     }
 
@@ -90,7 +90,7 @@ public class TriageService {
             throw new BizException(ErrorCode.PARAM_INVALID, "关闭原因必填");
         }
         DemandEntity demand = requireVisible(demandId);
-        orgScopeService.requireManage(user, demand.getAssigneeOrgId());
+        orgScopeService.requireManage(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode());
         stateMachine.transition(demandId, DemandEvent.CLOSE, user,
                 TransitionContext.of(request.reason().trim()).withUpdater(d -> {
                     d.setClosedAt(LocalDateTime.now());
@@ -117,9 +117,10 @@ public class TriageService {
             throw new BizException(ErrorCode.PARAM_INVALID, "被分派人不能为空");
         }
         DemandEntity demand = requireVisible(demandId);
-        orgScopeService.requireManage(user, demand.getAssigneeOrgId());
-        if (!orgScopeService.userHasRoleInOrg(request.assigneeId(), "HANDLER", demand.getAssigneeOrgId())) {
-            throw new BizException(ErrorCode.BIZ_ERROR, "被分派人不是本承接组织的处理人");
+        orgScopeService.requireManage(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode());
+        if (!orgScopeService.userHasRoleInOrg(request.assigneeId(), "HANDLER",
+                demand.getAssigneeOrgId(), demand.getDemandTypeCode())) {
+            throw new BizException(ErrorCode.BIZ_ERROR, "被分派人不是本类型本承接组织的处理人");
         }
         String assigneeName = userLookupService.nameOf(request.assigneeId());
         stateMachine.transition(demandId, DemandEvent.ASSIGN, user,
@@ -159,8 +160,8 @@ public class TriageService {
             if (!"TRIAGE".equals(demand.getStatus())) {
                 throw new BizException(ErrorCode.ILLEGAL_STATE_TRANSITION, "仅待分派状态的需求可领取");
             }
-            if (!orgScopeService.canHandle(user, demand.getAssigneeOrgId())) {
-                throw new BizException(ErrorCode.FORBIDDEN, "仅本承接组织的处理人可领取");
+            if (!orgScopeService.canHandle(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode())) {
+                throw new BizException(ErrorCode.FORBIDDEN, "仅本类型本承接组织的处理人可领取");
             }
             stateMachine.transition(demandId, DemandEvent.CLAIM, user,
                     TransitionContext.of("处理人领取")

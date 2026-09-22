@@ -99,7 +99,7 @@ public class DemandTypeAdminService {
     private void validateRefs(Long defaultOrgId, String stateMachineKey) {
         if (defaultOrgId != null) {
             OrgSnapshotView org = orgSnapshotMapper.selectOne(new LambdaQueryWrapper<OrgSnapshotView>()
-                    .eq(OrgSnapshotView::getOrgId, defaultOrgId));
+                    .eq(OrgSnapshotView::getId, defaultOrgId));
             if (org == null) {
                 throw new BizException(ErrorCode.PARAM_INVALID, "默认承接组织不存在: " + defaultOrgId);
             }

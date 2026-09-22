@@ -19,7 +19,7 @@ import java.util.List;
 @Tag(name = "Agent-RAG 检索")
 @RestController
 @RequestMapping("/agent/rag")
-@RequireRole({"HANDLER", "DEMAND_MANAGER", "ADMIN", "EXECUTIVE"})
+@RequireRole({"HANDLER", "MANAGER", "ADMIN", "EXECUTIVE"})
 public class RagController {
 
     private final RagService ragService;

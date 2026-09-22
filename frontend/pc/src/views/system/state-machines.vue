@@ -84,7 +84,7 @@ import {
 import type { StateMachineConfigItem } from '@/api/admin'
 import { fmtTime } from '@/utils/format'
 
-const EXAMPLE_JSON = '{"rules":[{"from":"SUBMITTED","event":"ACCEPT","to":"TRIAGE","roles":["DEMAND_MANAGER"],"remark":"示例"}]}'
+const EXAMPLE_JSON = '{"rules":[{"from":"SUBMITTED","event":"ACCEPT","to":"TRIAGE","roles":["MANAGER"],"remark":"示例"}]}'
 
 const rows = ref<StateMachineConfigItem[]>([])
 const loading = ref(false)

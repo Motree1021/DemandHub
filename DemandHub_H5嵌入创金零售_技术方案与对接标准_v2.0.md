@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | DemandHub H5 嵌入创金零售技术方案与对接标准 |
-| 版本 | v2.0（取代 v1.0：登录方式由"DemandHub 独立企微应用 OAuth"改为"创金零售 SSO 票据回源校验"） |
+| 版本 | v2.1（v2.0 细化：明确 URL 不得携带身份字段，用户名/企微ID 仅经 verify 响应返回；补充渠道来源落库链路） |
 | 提出方 | 财管科技产品部（DemandHub 团队） |
 | 接收方 | 创金零售系统团队 |
 | 日期 | 2026-09-22 |
@@ -75,6 +75,8 @@ https://{demandhub-h5域名}/h5/report?from=chuangjinls&ticket={ticket}&state={r
 | state | 建议 | 随机串，DemandHub 原样忽略/校验，辅助链路追踪 |
 
 - 跳转需保证在企微内置浏览器当前 webview 打开（`window.location.assign` / 302 均可）。
+
+> **URL 上只允许出现 `from` / `ticket` / `state`，不要拼接用户名、企微 userid、手机号、部门等任何身份字段。** URL 参数可被看到和篡改，DemandHub 对 URL 上的明文身份**一律不读取、不采信**；用户名（name）、企微 ID（user_id）等身份信息统一由 DemandHub 后端持 ticket 调用 3.3 的 verify 接口、在**服务端响应体**中获取。ticket 一次性、≤60s 且与登录用户绑定，等同于"加密取件凭证"，即使被截取也无法复用。
 
 ### 3.2 ticket 规则
 
@@ -205,7 +207,8 @@ POST {ls_base_url}/openapi/demandhub/notify/send
 ### 4.4 数据落库
 
 - 该渠道用户提交的需求，DemandHub 后台来源标识为"创金零售"（渠道码 CHUANGJIN_LS），可单独筛选、统计；
-- 身份来源以后端回源结果为准，前端无法伪造渠道。
+- 渠道识别以后端会话为准：verify 通过后渠道码写入 DemandHub 自有 JWT，后续每次请求由网关注入服务端上下文，**不接受前端/URL 传入渠道参数**，前端无法伪造渠道；
+- 身份字段同样只取自 verify 响应：`user_id`（企微 ID）落渠道映射并回填 `wecom_userid`，`name` 落 OneID 姓名，`dept_id` 按 DemandHub 维护的部门对照表映射组织。
 
 ### 4.5 PC 管理端
 
@@ -274,3 +277,4 @@ POST {ls_base_url}/openapi/demandhub/notify/send
 |---|---|---|
 | v1.0 | 2026-09-22 | 初稿：路由跳转 + DemandHub 独立企微应用 OAuth |
 | v2.0 | 2026-09-22 | 改为渠道 SSO 票据模式：DemandHub 不注册企微应用；新增 ticket/verify 接口标准、签名规范、错误码、异常态、二期代发通知、AC-07/08 |
+| v2.1 | 2026-09-22 | 细化身份传递：明确跳转 URL 只带 ticket、不得带用户名/企微ID 等明文身份；身份字段仅经 verify 响应体返回；补充渠道识别与来源落库链路（4.4） |

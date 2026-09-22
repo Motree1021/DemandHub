@@ -1,21 +1,25 @@
 import { get, post, put, del } from './request'
 
-/** 业务角色授权记录 */
+/** 业务角色授权记录（角色族 ADMIN/EXECUTIVE/MANAGER/HANDLER） */
 export interface RoleGrant {
   id: number
-  userId: string
+  /** 被授权用户 OneID */
+  demandUserId: number
   roleCode: string
   orgId: number | null
+  /** 需求类型集合（逗号多选），null=跟随角色默认 */
   demandTypeScope: string | null
   effectiveFrom: string | null
   effectiveTo: string | null
-  grantedBy: string | null
+  /** 授权人 OneID */
+  grantedBy: number | null
   createdAt: string
 }
 
 export interface RoleGrantSaveRequest {
   id?: number
-  userId: string
+  /** 被授权用户 OneID（必填） */
+  demandUserId: number | null
   roleCode: string
   orgId?: number | null
   demandTypeScope?: string | null
@@ -32,8 +36,8 @@ export interface PageResult<T> {
 }
 
 /** 授权分页查询（仅 ADMIN） */
-export function pageGrants(params: { current: number; size: number; userId?: string; roleCode?: string }): Promise<PageResult<RoleGrant>> {
-  return get('/system/grant/page', params)
+export function pageGrants(params: { current: number; size: number; demandUserId?: number; roleCode?: string }): Promise<PageResult<RoleGrant>> {
+  return get('/system/grant/page', params as Record<string, unknown>)
 }
 
 /** 新增授权 */
@@ -46,7 +50,7 @@ export function updateGrant(id: number, data: RoleGrantSaveRequest): Promise<voi
   return put(`/system/grant/${id}`, data)
 }
 
-/** 删除授权 */
+/** 回收授权 */
 export function deleteGrant(id: number): Promise<void> {
   return del(`/system/grant/${id}`)
 }
@@ -61,8 +65,8 @@ export interface UserSnapshotVO {
   status: string
 }
 
-export function pageUsers(params: { current: number; size: number; keyword?: string }): Promise<PageResult<UserSnapshotVO>> {
-  return get('/system/user/page', params)
+export function pageUsers(params: { current: number; size: number; keyword?: string; status?: string }): Promise<PageResult<UserSnapshotVO>> {
+  return get('/system/user/page', params as Record<string, unknown>)
 }
 
 /** 组织树 */
@@ -73,6 +77,9 @@ export interface OrgNode {
   parentId: number
   path: string
   orgKind: string | null
+  /** 渠道外部部门ID（回流校准用） */
+  externalDeptId?: string | null
+  status?: string
   children?: OrgNode[]
 }
 

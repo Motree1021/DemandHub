@@ -21,6 +21,9 @@
           <el-option label="紧急" value="URGENT" />
           <el-option label="特急" value="CRITICAL" />
         </el-select>
+        <el-select v-model="query.channel" placeholder="全部来源" clearable style="width: 130px">
+          <el-option v-for="c in CHANNEL_OPTIONS" :key="c.value" :label="c.label" :value="c.value" />
+        </el-select>
         <el-select v-model="query.onHold" placeholder="挂起状态" clearable style="width: 110px">
           <el-option label="正常" :value="0" />
           <el-option label="已挂起" :value="1" />
@@ -48,6 +51,9 @@
         <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
         <el-table-column label="类型" width="100">
           <template #default="{ row }">{{ typeLabel(row.demandTypeCode, row.typeName) }}</template>
+        </el-table-column>
+        <el-table-column label="来源" width="100">
+          <template #default="{ row }">{{ channelLabel(row.channel) }}</template>
         </el-table-column>
         <el-table-column label="提报人" width="100">
           <template #default="{ row }">{{ row.submitterName || '-' }}</template>
@@ -99,7 +105,7 @@ import { useRouter } from 'vue-router'
 import { pageDemands, type DemandListItem } from '@/api/demand'
 import { listActiveTypes, type DemandTypeItem } from '@/api/directory'
 import { useUserStore } from '@/store/modules/user'
-import { STATUS_META, statusLabel, statusTagType, urgencyLabel, urgencyTagType, typeLabel, fmtTime } from '@/utils/format'
+import { STATUS_META, statusLabel, statusTagType, urgencyLabel, urgencyTagType, typeLabel, fmtTime, CHANNEL_OPTIONS, channelLabel } from '@/utils/format'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -117,6 +123,7 @@ const query = reactive({
   status: undefined as string | undefined,
   demandTypeCode: undefined as string | undefined,
   urgency: undefined as string | undefined,
+  channel: undefined as string | undefined,
   keyword: undefined as string | undefined,
   onHold: undefined as number | undefined
 })
@@ -126,7 +133,7 @@ const sortOrder = ref<'descending' | 'ascending' | null>(null)
 
 /** 经理/处理人/管理者/管理员可见"本组织承接" */
 const canSeeOrg = computed(() =>
-  userStore.roles.some((r) => ['DEMAND_MANAGER', 'HANDLER', 'EXECUTIVE', 'ADMIN'].includes(r))
+  userStore.roles.some((r) => ['MANAGER', 'HANDLER', 'EXECUTIVE', 'ADMIN'].includes(r))
 )
 
 async function load(page = query.current) {
@@ -141,6 +148,7 @@ async function load(page = query.current) {
       status: query.status,
       demandTypeCode: query.demandTypeCode,
       urgency: query.urgency,
+      channel: query.channel,
       keyword: query.keyword,
       onHold: query.onHold,
       mine,
@@ -183,6 +191,7 @@ function onReset() {
   query.status = undefined
   query.demandTypeCode = undefined
   query.urgency = undefined
+  query.channel = undefined
   query.keyword = undefined
   query.onHold = undefined
   dateRange.value = null
@@ -195,8 +204,8 @@ function goDetail(id: number) {
 
 onMounted(async () => {
   typeList.value = await listActiveTypes()
-  // 纯提报人默认"我的提报"，其他角色默认"本组织承接"
-  if (canSeeOrg.value && !userStore.roles.includes('REPORTER')) {
+  // 普通用户默认"我的提报"，经理/处理人等默认"本组织承接"
+  if (canSeeOrg.value) {
     activeTab.value = 'org'
   }
   load(1)

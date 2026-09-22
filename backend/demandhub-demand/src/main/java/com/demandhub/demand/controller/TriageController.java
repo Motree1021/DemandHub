@@ -41,8 +41,8 @@ public class TriageController {
         this.demandMapper = demandMapper;
     }
 
-    @Operation(summary = "待受理队列（本组织 SUBMITTED，分页+筛选+排序）")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @Operation(summary = "待受理队列（本类型本组织 SUBMITTED，分页+筛选+排序）")
+    @RequireRole({"MANAGER", "EXECUTIVE"})
     @GetMapping("/queue")
     public Result<Page<DemandEntity>> queue(@RequestParam(defaultValue = "1") long current,
                                             @RequestParam(defaultValue = "10") long size,
@@ -53,15 +53,15 @@ public class TriageController {
     }
 
     @Operation(summary = "待受理计数（工作台首屏角标）")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @RequireRole({"MANAGER", "EXECUTIVE"})
     @GetMapping("/queue/count")
     public Result<Long> queueCount(@RequestParam(required = false) String urgency,
                                    @RequestParam(required = false) String demandTypeCode) {
         return Result.ok(demandMapper.selectCount(queueWrapper(urgency, demandTypeCode, "asc")));
     }
 
-    @Operation(summary = "需求池（本组织 TRIAGE，按紧急程度+提交时间）")
-    @RequireRole({"DEMAND_MANAGER", "HANDLER", "EXECUTIVE"})
+    @Operation(summary = "需求池（本类型本组织 TRIAGE，按紧急程度+提交时间）")
+    @RequireRole({"MANAGER", "HANDLER", "EXECUTIVE"})
     @GetMapping("/pool")
     public Result<Page<DemandEntity>> pool(@RequestParam(defaultValue = "1") long current,
                                            @RequestParam(defaultValue = "10") long size,
@@ -75,7 +75,7 @@ public class TriageController {
     }
 
     @Operation(summary = "受理通过 → TRIAGE")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @RequireRole("MANAGER")
     @PostMapping("/{id}/accept")
     public Result<Void> accept(@PathVariable Long id, @RequestBody(required = false) TriageActionRequest request) {
         triageService.accept(id, request == null ? null : request.comment());
@@ -83,7 +83,7 @@ public class TriageController {
     }
 
     @Operation(summary = "退回补充 → NEED_INFO（说明必填）")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @RequireRole("MANAGER")
     @PostMapping("/{id}/return")
     public Result<Void> returnForInfo(@PathVariable Long id, @RequestBody TriageActionRequest request) {
         triageService.returnForInfo(id, request.comment());
@@ -91,7 +91,7 @@ public class TriageController {
     }
 
     @Operation(summary = "关闭（不受理/重复/其他，原因必填）")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @RequireRole("MANAGER")
     @PostMapping("/{id}/close")
     public Result<Void> close(@PathVariable Long id, @RequestBody CloseRequest request) {
         triageService.close(id, request);
@@ -99,7 +99,7 @@ public class TriageController {
     }
 
     @Operation(summary = "经理分派 → ANALYZING")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @RequireRole("MANAGER")
     @PostMapping("/{id}/assign")
     public Result<Void> assign(@PathVariable Long id, @RequestBody AssignRequest request) {
         triageService.assign(id, request);

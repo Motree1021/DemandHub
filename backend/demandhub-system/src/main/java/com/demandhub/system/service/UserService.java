@@ -1,11 +1,15 @@
 package com.demandhub.system.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.demandhub.common.core.ErrorCode;
+import com.demandhub.common.exception.BizException;
 import com.demandhub.system.entity.OrgSnapshot;
 import com.demandhub.system.entity.UserSnapshot;
 import com.demandhub.system.mapper.OrgSnapshotMapper;
 import com.demandhub.system.mapper.UserSnapshotMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,10 +27,12 @@ public class UserService {
 
     private final UserSnapshotMapper userMapper;
     private final OrgSnapshotMapper orgMapper;
+    private final SessionService sessionService;
 
-    public UserService(UserSnapshotMapper userMapper, OrgSnapshotMapper orgMapper) {
+    public UserService(UserSnapshotMapper userMapper, OrgSnapshotMapper orgMapper, SessionService sessionService) {
         this.userMapper = userMapper;
         this.orgMapper = orgMapper;
+        this.sessionService = sessionService;
     }
 
     public UserSnapshot findById(Long id) {
@@ -140,5 +146,106 @@ public class UserService {
             }
         }
         return sb.length() == 0 ? null : sb.toString();
+    }
+
+    // ==================== P4 管理端操作（仅 ADMIN，见 UserController） ====================
+
+    /** 管理端分页（关键字匹配姓名/登录账号/工号；status 精确过滤） */
+    public Page<UserSnapshot> page(long current, long size, String keyword, String status) {
+        return userMapper.selectPage(new Page<>(current, size), new LambdaQueryWrapper<UserSnapshot>()
+                .and(StringUtils.hasText(keyword), w -> w
+                        .like(UserSnapshot::getName, keyword)
+                        .or().like(UserSnapshot::getLoginName, keyword)
+                        .or().like(UserSnapshot::getEmployeeNo, keyword))
+                .eq(StringUtils.hasText(status), UserSnapshot::getStatus, status)
+                .orderByAsc(UserSnapshot::getId));
+    }
+
+    /** 用户详情（含部门路径；敏感字段由 Controller 脱敏） */
+    public UserSnapshot detail(Long id) {
+        UserSnapshot user = findById(id);
+        if (user == null) {
+            throw new BizException(ErrorCode.USER_NOT_FOUND);
+        }
+        user.setDeptPath(buildDeptPath(user.getPrimaryOrgId()));
+        return user;
+    }
+
+    /** PENDING 用户资料补全并激活（渠道自动建号的字段缺失用户，D4） */
+    public void complete(Long id, String name, String phone, String email, String employeeNo, Long primaryOrgId) {
+        UserSnapshot user = detail(id);
+        if (!"PENDING".equals(user.getStatus())) {
+            throw new BizException(ErrorCode.BIZ_ERROR, "仅 PENDING 状态用户需要补全");
+        }
+        if (primaryOrgId != null && orgMapper.selectById(primaryOrgId) == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "组织不存在");
+        }
+        UserSnapshot update = new UserSnapshot();
+        update.setId(id);
+        update.setName(name);
+        update.setPhone(phone);
+        update.setEmail(email);
+        update.setEmployeeNo(employeeNo);
+        if (primaryOrgId != null) {
+            update.setPrimaryOrgId(primaryOrgId);
+        }
+        update.setIsEmployee(1);
+        update.setStatus("ACTIVE");
+        userMapper.updateById(update);
+    }
+
+    /**
+     * 激活/停用。停用即全清会话（含 refresh）立即踢下线；MERGED 用户不可变更。
+     *
+     * @param active true=激活（DISABLED/PENDING→ACTIVE）；false=停用（→DISABLED）
+     */
+    public void changeStatus(Long id, boolean active) {
+        UserSnapshot user = detail(id);
+        if ("MERGED".equals(user.getStatus())) {
+            throw new BizException(ErrorCode.BIZ_ERROR, "已合并用户不可变更状态");
+        }
+        if (!active && "DISABLED".equals(user.getStatus())) {
+            return;
+        }
+        UserSnapshot update = new UserSnapshot();
+        update.setId(id);
+        update.setStatus(active ? "ACTIVE" : "DISABLED");
+        if (active) {
+            update.setIsEmployee(1);
+        }
+        userMapper.updateById(update);
+        if (!active) {
+            sessionService.deleteAllSessionsByUser(String.valueOf(id));
+        }
+    }
+
+    /** 设置 PC 登录账号（唯一性校验，排除自身） */
+    public void setLoginAccount(Long id, String loginName) {
+        UserSnapshot user = detail(id);
+        if ("MERGED".equals(user.getStatus())) {
+            throw new BizException(ErrorCode.BIZ_ERROR, "已合并用户不可设置登录账号");
+        }
+        UserSnapshot occupied = findByLoginName(loginName);
+        if (occupied != null && !occupied.getId().equals(id)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "登录账号已被占用");
+        }
+        UserSnapshot update = new UserSnapshot();
+        update.setId(id);
+        update.setLoginName(loginName);
+        userMapper.updateById(update);
+    }
+
+    /** 管理员重置密码：password_updated_at 置 NULL 强制下次登录改密，并全清会话 */
+    public void resetPassword(Long id, String passwordHash) {
+        UserSnapshot user = detail(id);
+        if (user.getLoginName() == null) {
+            throw new BizException(ErrorCode.BIZ_ERROR, "该用户未设置登录账号，请先设置登录账号");
+        }
+        UserSnapshot update = new UserSnapshot();
+        update.setId(id);
+        update.setPasswordHash(passwordHash);
+        update.setPasswordUpdatedAt(null);
+        userMapper.updateById(update);
+        sessionService.deleteAllSessionsByUser(String.valueOf(id));
     }
 }

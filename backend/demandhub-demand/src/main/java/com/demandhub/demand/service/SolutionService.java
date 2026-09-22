@@ -131,6 +131,8 @@ public class SolutionService {
             throw new BizException(ErrorCode.PARAM_INVALID, "打回意见必填");
         }
         DemandEntity demand = requireVisible(solution.getDemandId());
+        // 评审双重命中：类型集合 × 组织子树均为本需求方可评审
+        orgScopeService.requireManage(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode());
         stateMachine.transition(solution.getDemandId(), pass ? DemandEvent.REVIEW_PASS : DemandEvent.REVIEW_REJECT,
                 user, TransitionContext.of(request.comment())
                         .putExtra("solutionId", solutionId)
@@ -186,10 +188,10 @@ public class SolutionService {
         if (user.getId().equals(demand.getAssigneeUserId())) {
             return;
         }
-        if (orgScopeService.canManage(user, demand.getAssigneeOrgId())) {
+        if (orgScopeService.canManage(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode())) {
             return;
         }
-        throw new BizException(ErrorCode.FORBIDDEN, "仅当前处理人或本组织经理可操作");
+        throw new BizException(ErrorCode.FORBIDDEN, "仅当前处理人或本类型本组织经理可操作");
     }
 
     private SolutionEntity requireSolution(Long solutionId) {

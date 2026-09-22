@@ -17,8 +17,8 @@ import java.time.LocalDateTime;
 @TableName("demand_org")
 public class OrgSnapshot implements Serializable {
 
-    /** 组织 ID（即原权限中心 org_id，100~141 保留） */
-    @TableId(type = IdType.INPUT)
+    /** 组织 ID（即原权限中心 org_id，100~141 保留；管理端新增时自增回填用于 path 物化） */
+    @TableId(type = IdType.AUTO)
     private Long id;
 
     /** 与 id 同义，兼容旧代码 */

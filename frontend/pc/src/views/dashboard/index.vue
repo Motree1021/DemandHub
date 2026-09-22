@@ -107,17 +107,18 @@ const notices = ref<NotificationItem[]>([])
 const queueCount = ref(0)
 
 const isManagerLike = computed(
-  () => userStore.roles.includes('DEMAND_MANAGER') || userStore.roles.includes('EXECUTIVE') || userStore.isAdmin
+  () => userStore.roles.includes('MANAGER') || userStore.roles.includes('EXECUTIVE') || userStore.isAdmin
 )
 const isHandler = computed(() => userStore.roles.includes('HANDLER'))
 
-const todoTitle = computed(() => (userStore.roles.includes('REPORTER') && !isManagerLike.value ? '我的在途提报' : '我的待办'))
+// 角色族版不设提报人角色：非经理/非处理人的普通用户视角即"我的在途提报"
+const todoTitle = computed(() => (!isManagerLike.value ? '我的在途提报' : '我的待办'))
 
 async function loadTodo() {
   todoLoading.value = true
   try {
-    // 提报人视角：我的在途提报；其他视角：本组织在途（数据权限自动过滤）
-    const mine = userStore.roles.includes('REPORTER') && !isManagerLike.value && !isHandler.value
+    // 普通用户视角：我的在途提报；经理/处理人视角：本组织在途（数据权限自动过滤）
+    const mine = !isManagerLike.value && !isHandler.value
     const data = await pageDemands({ current: 1, size: 5, mine })
     // 在途 = 非终态
     todoRows.value = data.records.filter((d) => !['DONE', 'CLOSED'].includes(d.status)).slice(0, 5)

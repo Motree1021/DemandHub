@@ -89,7 +89,7 @@ public class DashboardService {
         return new LocalDateTime[]{start.atStartOfDay(), end.atStartOfDay()};
     }
 
-    /** 管理者看板（EXECUTIVE 全线 / DEMAND_MANAGER 授权子树，数据范围由拦截器自动注入） */
+    /** 管理者看板（EXECUTIVE 全线 / MANAGER 授权子树，数据范围由拦截器自动注入） */
     public ManagerBoardVO managerBoard(String range, LocalDate from, LocalDate to) {
         LocalDateTime[] rt = resolveRange(range, from, to);
         LocalDateTime fromDt = rt[0];
@@ -107,6 +107,7 @@ public class DashboardService {
 
         vo.setTrend(buildTrend());
         vo.setTypeDistribution(buildTypeDistribution(fromDt, toDt));
+        vo.setChannelDistribution(buildChannelDistribution(fromDt, toDt));
         vo.setOrgBacklog(buildOrgBacklog(10));
 
         ManagerBoardVO.SlaHealth slaHealth = computeSlaHealth();
@@ -134,10 +135,10 @@ public class DashboardService {
                 .collect(Collectors.toMap(m -> ((Number) m.get("userId")).longValue(),
                         m -> ((Number) m.get("inflightCnt")).longValue(), (a, b) -> a));
 
-        // 工时：effort_log 表不被拦截器过滤，显式按当前用户数据范围限定承接组织
+        // 工时：effort_log 表不被拦截器过滤，显式按当前用户数据范围限定承接组织（全类型并集）
         CurrentUser user = UserContext.get();
         DataScope scope = user == null ? DataScope.noAccess() : dataScopeService.currentScope(user);
-        List<Long> orgIds = scope.isBypass() ? null : new ArrayList<>(scope.getOrgIds());
+        List<Long> orgIds = scope.isBypass() ? null : new ArrayList<>(scope.unionOrgIds());
         Map<Long, BigDecimal> effortMap = new HashMap<>();
         if (orgIds == null || !orgIds.isEmpty()) {
             effortMap = dashboardMapper.sumEffortByUser(orgIds).stream()
@@ -198,6 +199,20 @@ public class DashboardService {
             tc.setTypeName(typeNames.getOrDefault(tc.getTypeCode(), tc.getTypeCode()));
             tc.setCnt(((Number) m.get("cnt")).longValue());
             return tc;
+        }).collect(Collectors.toList());
+    }
+
+    /** 渠道来源分布：channelName 取 demand_channel 注册表（如 CHUANGJIN_LS=创金零售），未注册回退渠道码 */
+    private List<ManagerBoardVO.ChannelCount> buildChannelDistribution(LocalDateTime from, LocalDateTime to) {
+        Map<String, String> channelNames = dashboardMapper.listChannelNames().stream()
+                .collect(Collectors.toMap(m -> String.valueOf(m.get("channelCode")),
+                        m -> String.valueOf(m.get("channelName")), (a, b) -> a));
+        return dashboardMapper.countByChannel(from, to).stream().map(m -> {
+            ManagerBoardVO.ChannelCount cc = new ManagerBoardVO.ChannelCount();
+            cc.setChannel(String.valueOf(m.get("channel")));
+            cc.setChannelName(channelNames.getOrDefault(cc.getChannel(), cc.getChannel()));
+            cc.setCnt(((Number) m.get("cnt")).longValue());
+            return cc;
         }).collect(Collectors.toList());
     }
 

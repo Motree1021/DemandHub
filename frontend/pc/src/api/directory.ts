@@ -6,19 +6,18 @@ export type { UserSnapshotVO, OrgNode, DemandTypeItem }
 export { orgTree }
 
 /**
- * 一期 Mock 环境的用户目录兜底：
- * 后端 /system/user/page 限 ADMIN，非管理员选人（分派/@人/代办提报）时无可用查询接口。
- * 这里先试调真实接口，403 时回退到与 Mock 权限中心一致的 7 个内置用户。
- * 二期对接真实权限中心后该兜底自然失效（接口会对全员开放）。
+ * 用户目录兜底：
+ * 后端 /system/user/page 限 ADMIN，非管理员选人（分派/@人/代提报）时无可用查询接口。
+ * 这里先试调真实接口，403 时回退到与 dev 种子一致的 7 个内置用户（userId 由 OneID 派生）。
  */
 const MOCK_USERS: UserSnapshotVO[] = [
-  { id: 1001, userId: 'u_admin_001', name: '张管理', primaryOrgId: 110, deptPath: '创金合信零售业务线/财管科技产品部', status: 'ACTIVE' },
-  { id: 1002, userId: 'u_exec_001', name: '李总', primaryOrgId: 100, deptPath: '创金合信零售业务线', status: 'ACTIVE' },
-  { id: 1003, userId: 'u_mgr_tech', name: '王经理', primaryOrgId: 110, deptPath: '创金合信零售业务线/财管科技产品部', status: 'ACTIVE' },
-  { id: 1004, userId: 'u_handler_a1', name: '陈陪伴', primaryOrgId: 121, deptPath: '创金合信零售业务线/客户陪伴服务部/客户陪伴一组', status: 'ACTIVE' },
-  { id: 1005, userId: 'u_handler_b1', name: '刘培训', primaryOrgId: 131, deptPath: '创金合信零售业务线/培训开发部/培训开发一组', status: 'ACTIVE' },
-  { id: 1006, userId: 'u_reporter_1', name: '赵一线', primaryOrgId: 141, deptPath: '创金合信零售业务线/零售一线营业部/营业部一组', status: 'ACTIVE' },
-  { id: 1007, userId: 'u_reporter_2', name: '钱一线', primaryOrgId: 141, deptPath: '创金合信零售业务线/零售一线营业部/营业部一组', status: 'ACTIVE' }
+  { id: 1001, userId: '1001', name: '张管理', primaryOrgId: 110, deptPath: '创金合信零售业务线/财管科技产品部', status: 'ACTIVE' },
+  { id: 1002, userId: '1002', name: '李总', primaryOrgId: 100, deptPath: '创金合信零售业务线', status: 'ACTIVE' },
+  { id: 1003, userId: '1003', name: '王经理', primaryOrgId: 110, deptPath: '创金合信零售业务线/财管科技产品部', status: 'ACTIVE' },
+  { id: 1004, userId: '1004', name: '陈陪伴', primaryOrgId: 121, deptPath: '创金合信零售业务线/客户陪伴服务部/客户陪伴一组', status: 'ACTIVE' },
+  { id: 1005, userId: '1005', name: '刘培训', primaryOrgId: 131, deptPath: '创金合信零售业务线/培训开发部/培训开发一组', status: 'ACTIVE' },
+  { id: 1006, userId: '1006', name: '赵一线', primaryOrgId: 141, deptPath: '创金合信零售业务线/零售一线营业部/营业部一组', status: 'ACTIVE' },
+  { id: 1007, userId: '1007', name: '钱一线', primaryOrgId: 141, deptPath: '创金合信零售业务线/零售一线营业部/营业部一组', status: 'ACTIVE' }
 ]
 
 let cachedUsers: UserSnapshotVO[] | null = null

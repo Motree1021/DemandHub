@@ -661,7 +661,7 @@ const userMap = computed(() => new Map(allUsers.value.map((u) => [u.id, u.name])
 
 /** AI 处理辅助：处理人/经理/管理员可用（与后端 /agent/assist 角色一致） */
 const canUseAgentAssist = computed(
-  () => userStore.roles.includes('HANDLER') || userStore.roles.includes('DEMAND_MANAGER') || userStore.isAdmin
+  () => userStore.roles.includes('HANDLER') || userStore.roles.includes('MANAGER') || userStore.isAdmin
 )
 
 /** RAG 相似推荐：处理人/经理/管理员/管理者可见（与后端 /agent/rag 角色一致） */

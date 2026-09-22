@@ -52,13 +52,19 @@
       </el-col>
     </el-row>
     <el-row :gutter="16" class="mb16">
-      <el-col :span="14">
+      <el-col :span="10">
         <el-card shadow="never">
           <template #header>组织积压 Top 10（当前在途）</template>
           <div ref="backlogRef" class="chart" />
         </el-card>
       </el-col>
-      <el-col :span="10">
+      <el-col :span="7">
+        <el-card shadow="never">
+          <template #header>渠道来源分布（{{ rangeLabel }}提交）</template>
+          <div ref="channelRef" class="chart" />
+        </el-card>
+      </el-col>
+      <el-col :span="7">
         <el-card shadow="never">
           <template #header>SLA 健康度分布</template>
           <div ref="slaRef" class="chart" />
@@ -203,7 +209,7 @@ const org = ref<OrgBoard | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
 
-const isManager = computed(() => userStore.roles.includes('DEMAND_MANAGER'))
+const isManager = computed(() => userStore.roles.includes('MANAGER'))
 const canRefreshStat = computed(() => userStore.roles.includes('EXECUTIVE') || userStore.isAdmin)
 
 const rangeLabel = computed(() => (range.value === 'week' ? '本周' : range.value === 'quarter' ? '本季' : '本月'))
@@ -229,6 +235,7 @@ const kpiCards = computed(() => {
 const trendRef = ref<HTMLElement>()
 const typeRef = ref<HTMLElement>()
 const backlogRef = ref<HTMLElement>()
+const channelRef = ref<HTMLElement>()
 const slaRef = ref<HTMLElement>()
 let charts: echarts.ECharts[] = []
 
@@ -280,6 +287,20 @@ function renderCharts() {
     xAxis: { type: 'value', minInterval: 1 },
     yAxis: { type: 'category', data: b.orgBacklog.map((o) => o.orgName).reverse() },
     series: [{ type: 'bar', data: b.orgBacklog.map((o) => o.cnt).reverse(), color: '#d97706', barMaxWidth: 18, label: { show: true, position: 'right' } }]
+  })
+
+  mk(channelRef.value, {
+    tooltip: { trigger: 'item', formatter: '{b}: {c}（{d}%）' },
+    legend: { bottom: 0 },
+    series: [
+      {
+        type: 'pie',
+        radius: ['38%', '62%'],
+        center: ['50%', '44%'],
+        label: { formatter: '{b}\n{c}' },
+        data: (b.channelDistribution || []).map((c) => ({ name: c.channelName || c.channel, value: c.cnt }))
+      }
+    ]
   })
 
   mk(slaRef.value, {

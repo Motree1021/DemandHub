@@ -12,6 +12,8 @@ export interface ManagerBoard {
   }
   trend: { weekStart: string; newCnt: number; doneCnt: number }[]
   typeDistribution: { typeCode: string; typeName: string; cnt: number }[]
+  /** 渠道来源分布（channelName 由 demand_channel 注册表映射，如 创金零售） */
+  channelDistribution: { channel: string; channelName: string; cnt: number }[]
   orgBacklog: { orgId: number; orgName: string; cnt: number }[]
   slaHealth: { normal: number; warn: number; over: number }
 }

@@ -10,6 +10,7 @@ import com.demandhub.demand.entity.UserSnapshotView;
 import com.demandhub.demand.mapper.OrgSnapshotViewMapper;
 import com.demandhub.demand.mapper.RoleGrantViewMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -18,8 +19,9 @@ import java.util.stream.Collectors;
 
 /**
  * 组织维度业务权限校验（写入侧补充：数据权限拦截器只拦 SELECT，写操作自行校验归属）。
- * - 经理管事：MANAGER 授权组织子树包含需求承接组织，或 EXECUTIVE 全线
- * - 处理人领活：HANDLER 授权组织子树包含需求承接组织
+ * 角色族三维（角色族 × 组织子树 × 类型集合）：受理/分派/评审等动作须 组织子树 与 类型范围 双重命中。
+ * - 经理管事：MANAGER 授权（类型集合含需求类型 且 组织子树覆盖承接组织）
+ * - 处理人领活：HANDLER 授权（类型集合含需求类型 且 组织子树覆盖承接组织）
  */
 @Service
 public class OrgScopeService {
@@ -40,44 +42,41 @@ public class OrgScopeService {
     }
 
     /**
-     * 当前用户是否可管理指定承接组织的需求（经理受理/退回/关闭/分派/评审等动作）。
-     * EXECUTIVE 全线可管；MANAGER 需授权子树覆盖。
+     * 当前用户是否可管理指定承接组织、指定类型需求（经理受理/退回/关闭/分派/评审等动作）。
+     * 双重命中：MANAGER 授权的类型集合含 typeCode 且组织子树覆盖 assigneeOrgId。
      */
-    public boolean canManage(CurrentUser user, Long assigneeOrgId) {
-        if (user == null) {
-            return false;
-        }
-        if (user.hasRole("EXECUTIVE")) {
-            return true;
-        }
-        if (!user.hasRole("MANAGER")) {
+    public boolean canManage(CurrentUser user, Long assigneeOrgId, String typeCode) {
+        if (user == null || !user.hasRole("MANAGER")) {
             return false;
         }
         DataScope scope = dataScopeService.currentScope(user);
-        return assigneeOrgId != null && scope.getOrgIds().contains(assigneeOrgId);
+        Set<Long> orgIds = typeCode == null ? null : scope.getOrgIdsByType().get(typeCode);
+        return assigneeOrgId != null && orgIds != null && orgIds.contains(assigneeOrgId);
     }
 
-    public void requireManage(CurrentUser user, Long assigneeOrgId) {
-        if (!canManage(user, assigneeOrgId)) {
-            throw new BizException(ErrorCode.FORBIDDEN, "仅本承接组织的需求经理可操作");
+    public void requireManage(CurrentUser user, Long assigneeOrgId, String typeCode) {
+        if (!canManage(user, assigneeOrgId, typeCode)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "仅本类型本承接组织的需求经理可操作");
         }
     }
 
     /**
-     * 当前用户是否可作为处理人领取指定承接组织的需求（HANDLER 授权子树覆盖）。
+     * 当前用户是否可作为处理人领取指定承接组织、指定类型需求（HANDLER 授权双重命中）。
      */
-    public boolean canHandle(CurrentUser user, Long assigneeOrgId) {
-        if (user == null || !user.hasRole("HANDLER") || assigneeOrgId == null) {
+    public boolean canHandle(CurrentUser user, Long assigneeOrgId, String typeCode) {
+        if (user == null || !user.hasRole("HANDLER") || assigneeOrgId == null || typeCode == null) {
             return false;
         }
         DataScope scope = dataScopeService.currentScope(user);
-        return scope.getOrgIds().contains(assigneeOrgId);
+        Set<Long> orgIds = scope.getOrgIdsByType().get(typeCode);
+        return orgIds != null && orgIds.contains(assigneeOrgId);
     }
 
     /**
-     * 校验某用户（数值 ID）是否具备指定角色且授权组织子树覆盖目标组织（分派校验被分派人用）。
+     * 校验某用户（数值 ID）是否具备指定角色，且授权 类型集合含 typeCode、组织子树覆盖 targetOrgId
+     * （分派校验被分派人用：被分派人必须是本类型本承接组织的处理人）。
      */
-    public boolean userHasRoleInOrg(Long targetUserId, String roleCode, Long targetOrgId) {
+    public boolean userHasRoleInOrg(Long targetUserId, String roleCode, Long targetOrgId, String typeCode) {
         if (targetUserId == null || targetOrgId == null) {
             return false;
         }
@@ -91,6 +90,8 @@ public class OrgScopeService {
                 .eq(RoleGrantView::getRoleCode, roleCode)
                 .and(w -> w.isNull(RoleGrantView::getEffectiveFrom).or().le(RoleGrantView::getEffectiveFrom, now))
                 .and(w -> w.isNull(RoleGrantView::getEffectiveTo).or().ge(RoleGrantView::getEffectiveTo, now)));
+        // 类型命中：scope 为空（跟随默认=全部类型）或显式包含该类型
+        grants = grants.stream().filter(g -> scopeCoversType(g.getDemandTypeScope(), typeCode)).toList();
         if (grants.isEmpty()) {
             return false;
         }
@@ -108,5 +109,18 @@ public class OrgScopeService {
         List<OrgSnapshotView> grantOrgs = orgSnapshotMapper.selectList(new LambdaQueryWrapper<OrgSnapshotView>()
                 .in(OrgSnapshotView::getId, grantOrgIds));
         return grantOrgs.stream().anyMatch(o -> o.getPath() != null && target.getPath().startsWith(o.getPath()));
+    }
+
+    /** 授权类型集合是否覆盖类型：NULL/空 = 全部类型；否则显式包含 */
+    private boolean scopeCoversType(String demandTypeScope, String typeCode) {
+        if (!StringUtils.hasText(demandTypeScope) || typeCode == null) {
+            return true;
+        }
+        for (String t : demandTypeScope.split(",")) {
+            if (typeCode.equals(t.trim())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

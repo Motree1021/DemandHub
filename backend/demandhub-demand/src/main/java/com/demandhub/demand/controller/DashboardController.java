@@ -33,9 +33,9 @@ public class DashboardController {
         this.dashboardService = dashboardService;
     }
 
-    @Operation(summary = "管理者看板（KPI + 近12周趋势 + 类型分布 + 组织积压TopN + SLA健康度）")
+    @Operation(summary = "管理者看板（KPI + 近12周趋势 + 类型分布 + 渠道分布 + 组织积压TopN + SLA健康度）")
     @GetMapping("/manager")
-    @RequireRole({"EXECUTIVE", "DEMAND_MANAGER"})
+    @RequireRole({"EXECUTIVE", "MANAGER"})
     public Result<ManagerBoardVO> managerBoard(
             @RequestParam(defaultValue = "month") String range,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -43,9 +43,9 @@ public class DashboardController {
         return Result.ok(dashboardService.managerBoard(range, from, to));
     }
 
-    @Operation(summary = "经理看板（本组织：待受理/池中/处理中/本周完成/人均在途/成员工作量）")
+    @Operation(summary = "经理看板（本类型本组织：待受理/池中/处理中/本周完成/人均在途/成员工作量）")
     @GetMapping("/org")
-    @RequireRole({"DEMAND_MANAGER", "EXECUTIVE"})
+    @RequireRole({"MANAGER", "EXECUTIVE"})
     public Result<OrgBoardVO> orgBoard() {
         return Result.ok(dashboardService.orgBoard());
     }

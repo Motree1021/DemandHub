@@ -11,7 +11,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * 详情页“可用操作列表”策略：由状态机规则（canTransit）+ 归属/组织校验推导，前后端按钮显隐一致。
+ * 详情页“可用操作列表”策略（SRS 第 4 节角色权限矩阵）：
+ * 由状态机规则（canTransit）+ 归属/组织×类型双重命中校验推导，前后端按钮显隐一致。
+ * - 提报人动作（撤销/补充提交/验收）：仅提报人本人（或实际需求人）；
+ * - 经理动作（受理/退回/关闭/分派/评审）：MANAGER 授权类型×组织双重命中；
+ * - 处理人动作（领取/开始/提交验收）：HANDLER 类型×组织命中 且 在途动作为本人；
+ * - 类型修正：仅 EXECUTIVE。
  */
 @Service
 public class ActionPolicyService {
@@ -31,8 +36,8 @@ public class ActionPolicyService {
         }
         boolean mine = u.getId().equals(d.getSubmitterId()) || Objects.equals(u.getId(), d.getActualDemanderId());
         boolean assignee = Objects.equals(u.getId(), d.getAssigneeUserId());
-        boolean manager = orgScopeService.canManage(u, d.getAssigneeOrgId());
-        boolean handlerInOrg = orgScopeService.canHandle(u, d.getAssigneeOrgId());
+        boolean manager = orgScopeService.canManage(u, d.getAssigneeOrgId(), d.getDemandTypeCode());
+        boolean handlerInOrg = orgScopeService.canHandle(u, d.getAssigneeOrgId(), d.getDemandTypeCode());
         boolean terminal = "DONE".equals(d.getStatus()) || "CLOSED".equals(d.getStatus());
 
         if (mine && can(d, DemandEvent.WITHDRAW, u)) {

@@ -57,6 +57,8 @@ export interface DemandListItem {
   submitterId: number
   submitterName: string | null
   actualDemanderId: number | null
+  /** 提报渠道（WEB/CHUANGJIN_LS 等） */
+  channel: string | null
   submitterOrgId: number | null
   assigneeOrgId: number | null
   assigneeOrgName: string | null
@@ -139,6 +141,8 @@ export interface DemandPageQuery {
   size: number
   status?: string
   demandTypeCode?: string
+  /** 提报渠道（WEB/CHUANGJIN_LS 等） */
+  channel?: string
   urgency?: string
   keyword?: string
   onHold?: number

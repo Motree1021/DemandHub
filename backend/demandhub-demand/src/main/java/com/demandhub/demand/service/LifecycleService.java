@@ -70,10 +70,10 @@ public class LifecycleService {
         if (user.getId().equals(demand.getAssigneeUserId())) {
             return;
         }
-        if (orgScopeService.canManage(user, demand.getAssigneeOrgId())) {
+        if (orgScopeService.canManage(user, demand.getAssigneeOrgId(), demand.getDemandTypeCode())) {
             return;
         }
-        throw new BizException(ErrorCode.FORBIDDEN, "仅当前处理人或本组织经理可操作");
+        throw new BizException(ErrorCode.FORBIDDEN, "仅当前处理人或本类型本组织经理可操作");
     }
 
     private DemandEntity requireVisible(Long demandId) {

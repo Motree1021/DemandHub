@@ -34,6 +34,9 @@ public class DemandListItemVO {
 
     private Long actualDemanderId;
 
+    /** 提报渠道（WEB/CHUANGJIN_LS 等） */
+    private String channel;
+
     private Long submitterOrgId;
 
     private Long assigneeOrgId;

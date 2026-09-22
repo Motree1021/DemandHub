@@ -28,7 +28,7 @@ public class OrgLookupService {
             return null;
         }
         OrgSnapshotView org = orgSnapshotMapper.selectOne(new LambdaQueryWrapper<OrgSnapshotView>()
-                .eq(OrgSnapshotView::getOrgId, orgId));
+                .eq(OrgSnapshotView::getId, orgId));
         return org == null ? String.valueOf(orgId) : org.getName();
     }
 
@@ -37,7 +37,7 @@ public class OrgLookupService {
             return Collections.emptyMap();
         }
         return orgSnapshotMapper.selectList(new LambdaQueryWrapper<OrgSnapshotView>()
-                        .in(OrgSnapshotView::getOrgId, orgIds.stream().filter(Objects::nonNull).distinct().toList()))
+                        .in(OrgSnapshotView::getId, orgIds.stream().filter(Objects::nonNull).distinct().toList()))
                 .stream()
                 .collect(Collectors.toMap(OrgSnapshotView::getOrgId, OrgSnapshotView::getName, (a, b) -> a));
     }

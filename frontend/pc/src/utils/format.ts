@@ -54,6 +54,23 @@ export function typeLabel(code: string | null | undefined, typeName?: string | n
   return typeName || (code && TYPE_LABELS[code]) || code || '-'
 }
 
+/** 提报渠道展示（demand_channel 注册表常用项；未注册渠道码回退原样） */
+export const CHANNEL_LABELS: Record<string, string> = {
+  WEB: 'PC 网页',
+  CHUANGJIN_LS: '创金零售',
+  WECOM_BOT: '企微机器人',
+  FEISHU_BOT: '飞书机器人',
+  DOUBAO_WORK: '豆包工作台',
+  WORKBUDDY: 'WorkBuddy',
+  VOICE: '语音提报'
+}
+
+export const CHANNEL_OPTIONS = Object.entries(CHANNEL_LABELS).map(([value, label]) => ({ value, label }))
+
+export function channelLabel(code: string | null | undefined, channelName?: string | null): string {
+  return channelName || (code && CHANNEL_LABELS[code]) || code || '-'
+}
+
 /** 流转动作展示（与后端 DemandEvent 一致） */
 export const EVENT_LABELS: Record<string, string> = {
   SUBMIT: '提交需求',

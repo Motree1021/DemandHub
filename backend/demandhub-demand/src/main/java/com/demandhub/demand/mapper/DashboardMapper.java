@@ -11,7 +11,7 @@ import java.util.Map;
 /**
  * 看板聚合查询（FR-M6-01/02）。
  * 均为 demand 表简单查询，DataScopeInterceptor 自动按登录人追加数据范围
- * （EXECUTIVE 全线 bypass；DEMAND_MANAGER 授权子树），与列表页口径一致。
+ * （EXECUTIVE 全线 bypass；MANAGER/HANDLER 授权子树），与列表页口径一致。
  */
 public interface DashboardMapper {
 
@@ -46,6 +46,15 @@ public interface DashboardMapper {
     @Select("SELECT demand_type_code AS typeCode, COUNT(*) AS cnt FROM demand "
             + "WHERE is_deleted = 0 AND submitted_at >= #{from} AND submitted_at < #{to} GROUP BY demand_type_code ORDER BY cnt DESC")
     List<Map<String, Object>> countByType(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /** 渠道来源分布（按提交时间区间，FR 来源统计：CHUANGJIN_LS 显示为"创金零售"） */
+    @Select("SELECT channel, COUNT(*) AS cnt FROM demand "
+            + "WHERE is_deleted = 0 AND submitted_at >= #{from} AND submitted_at < #{to} GROUP BY channel ORDER BY cnt DESC")
+    List<Map<String, Object>> countByChannel(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /** 渠道名映射（demand_channel 注册表，无数据权限过滤；未注册渠道码回退原样展示） */
+    @Select("SELECT channel_code AS channelCode, channel_name AS channelName FROM demand_channel")
+    List<Map<String, Object>> listChannelNames();
 
     /** 组织积压 Top N（当前在途按承接组织） */
     @Select("SELECT assignee_org_id AS orgId, COUNT(*) AS cnt FROM demand "

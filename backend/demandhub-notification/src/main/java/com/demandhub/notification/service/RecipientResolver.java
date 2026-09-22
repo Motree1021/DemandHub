@@ -36,29 +36,30 @@ public class RecipientResolver {
 
     /** 事件接收人（数值用户 ID，去重，不含操作人本人） */
     public Set<Long> resolve(DemandEventMessage msg) {
+        String typeCode = msg.getDemandTypeCode();
         Set<Long> receivers = new LinkedHashSet<>();
         switch (msg.getEvent()) {
-            case "SUBMIT" -> receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId()));
-            case "WITHDRAW" -> receivers.addAll(managersOfOrg(msg.getAssigneeOrgId()));
+            case "SUBMIT" -> receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId(), typeCode));
+            case "WITHDRAW" -> receivers.addAll(managersOfOrg(msg.getAssigneeOrgId(), typeCode));
             case "ACCEPT", "RETURN", "CLOSE", "CLAIM", "START", "SUBMIT_ACCEPTANCE" ->
                     addIfNotNull(receivers, msg.getSubmitterId());
             case "ASSIGN" -> addIfNotNull(receivers, extraLong(msg, "assigneeId"));
-            case "SUBMIT_REVIEW" -> receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId()));
+            case "SUBMIT_REVIEW" -> receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId(), typeCode));
             case "REVIEW_PASS", "REVIEW_REJECT", "ACCEPT_REJECT" -> addIfNotNull(receivers, msg.getAssigneeUserId());
             case "ACCEPT_PASS" -> {
                 addIfNotNull(receivers, msg.getAssigneeUserId());
-                receivers.addAll(managersOfOrg(msg.getAssigneeOrgId()));
+                receivers.addAll(managersOfOrg(msg.getAssigneeOrgId(), typeCode));
             }
             case "CHANGE_TYPE" -> {
                 addIfNotNull(receivers, msg.getSubmitterId());
-                receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId()));
+                receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId(), typeCode));
             }
             case "HOLD", "RESUME" -> {
                 addIfNotNull(receivers, msg.getSubmitterId());
                 addIfNotNull(receivers, msg.getAssigneeUserId());
             }
             case "SLA_ALERT" -> {
-                receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId()));
+                receivers.addAll(managersOrExecutives(msg.getAssigneeOrgId(), typeCode));
                 receivers.addAll(executives());
                 addIfNotNull(receivers, msg.getAssigneeUserId());
             }
@@ -73,14 +74,14 @@ public class RecipientResolver {
         return receivers;
     }
 
-    /** 承接组织经理（授权子树覆盖）；无人覆盖时兜底需求管理者（EXECUTIVE 全线可管） */
-    public Set<Long> managersOrExecutives(Long assigneeOrgId) {
-        Set<Long> managers = managersOfOrg(assigneeOrgId);
+    /** 承接组织经理（授权子树+类型双覆盖）；无人覆盖时兜底需求管理者（EXECUTIVE 全线可管） */
+    public Set<Long> managersOrExecutives(Long assigneeOrgId, String typeCode) {
+        Set<Long> managers = managersOfOrg(assigneeOrgId, typeCode);
         return managers.isEmpty() ? executives() : managers;
     }
 
-    /** 承接组织的需求经理：MANAGER 有效授权且授权组织物化路径是承接组织路径前缀 */
-    public Set<Long> managersOfOrg(Long assigneeOrgId) {
+    /** 承接组织的需求经理：MANAGER 有效授权、类型集合覆盖本需求类型，且授权组织物化路径是承接组织路径前缀 */
+    public Set<Long> managersOfOrg(Long assigneeOrgId, String typeCode) {
         if (assigneeOrgId == null) {
             return Set.of();
         }
@@ -89,7 +90,9 @@ public class RecipientResolver {
         if (target == null || target.getPath() == null) {
             return Set.of();
         }
-        List<RoleGrantView> grants = effectiveGrants("MANAGER");
+        List<RoleGrantView> grants = effectiveGrants("MANAGER").stream()
+                .filter(g -> scopeCoversType(g.getDemandTypeScope(), typeCode))
+                .collect(Collectors.toList());
         Set<Long> grantOrgIds = grants.stream().map(RoleGrantView::getOrgId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
         if (grantOrgIds.isEmpty()) {
@@ -116,6 +119,19 @@ public class RecipientResolver {
                 .eq(RoleGrantView::getRoleCode, roleCode)
                 .and(w -> w.isNull(RoleGrantView::getEffectiveFrom).or().le(RoleGrantView::getEffectiveFrom, now))
                 .and(w -> w.isNull(RoleGrantView::getEffectiveTo).or().ge(RoleGrantView::getEffectiveTo, now)));
+    }
+
+    /** 授权类型集合是否覆盖目标类型：NULL/空 = 全部类型；typeCode 为空则不过滤 */
+    private boolean scopeCoversType(String scope, String typeCode) {
+        if (typeCode == null || typeCode.isBlank() || scope == null || scope.isBlank()) {
+            return true;
+        }
+        for (String t : scope.split(",")) {
+            if (typeCode.equals(t.trim())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void addIfNotNull(Set<Long> receivers, Long userId) {

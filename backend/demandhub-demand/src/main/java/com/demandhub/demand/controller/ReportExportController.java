@@ -41,7 +41,7 @@ public class ReportExportController {
 
     @Operation(summary = "创建导出任务（异步，完成后站内信通知）")
     @PostMapping("/export")
-    @RequireRole({"EXECUTIVE", "DEMAND_MANAGER", "ADMIN"})
+    @RequireRole({"EXECUTIVE", "MANAGER", "ADMIN"})
     public Result<ReportExportTaskEntity> export(@RequestBody ReportExportRequest request) {
         return Result.ok(reportExportService.createTask(request));
     }

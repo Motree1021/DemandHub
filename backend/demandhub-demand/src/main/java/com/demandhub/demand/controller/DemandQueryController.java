@@ -75,6 +75,7 @@ public class DemandQueryController {
                                                @RequestParam(defaultValue = "10") long size,
                                                @RequestParam(required = false) String status,
                                                @RequestParam(required = false) String demandTypeCode,
+                                               @RequestParam(required = false) String channel,
                                                @RequestParam(required = false) String urgency,
                                                @RequestParam(required = false) String keyword,
                                                @RequestParam(required = false) Integer onHold,
@@ -83,6 +84,7 @@ public class DemandQueryController {
         LambdaQueryWrapper<DemandEntity> wrapper = new LambdaQueryWrapper<DemandEntity>()
                 .eq(StringUtils.hasText(status), DemandEntity::getStatus, status)
                 .eq(StringUtils.hasText(demandTypeCode), DemandEntity::getDemandTypeCode, demandTypeCode)
+                .eq(StringUtils.hasText(channel), DemandEntity::getChannel, channel)
                 .eq(StringUtils.hasText(urgency), DemandEntity::getUrgency, urgency)
                 .eq(onHold != null, DemandEntity::getOnHold, onHold)
                 .and(StringUtils.hasText(keyword), w -> w.like(DemandEntity::getTitle, keyword)

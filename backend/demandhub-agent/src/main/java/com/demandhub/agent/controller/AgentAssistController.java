@@ -25,7 +25,7 @@ import java.util.List;
 @Tag(name = "Agent-处理辅助")
 @RestController
 @RequestMapping("/agent/assist")
-@RequireRole({"HANDLER", "DEMAND_MANAGER", "ADMIN"})
+@RequireRole({"HANDLER", "MANAGER", "ADMIN"})
 public class AgentAssistController {
 
     private final AgentAssistService assistService;
