@@ -114,7 +114,7 @@ onMounted(async () => {
 .card-title {
   font-size: 15px;
   font-weight: 600;
-  border-left: 3px solid #1a3a6b;
+  border-left: 3px solid #1F3A8A;
   padding-left: 8px;
   margin-bottom: 14px;
 }

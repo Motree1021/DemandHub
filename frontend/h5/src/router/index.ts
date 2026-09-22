@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/store/user'
-import { silentLogin, me } from '@/api/auth'
+import { channelSso, me } from '@/api/auth'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -12,7 +12,7 @@ const routes: RouteRecordRaw[] = [
     path: '/auth',
     name: 'Auth',
     component: () => import('@/views/auth/index.vue'),
-    meta: { title: '登录授权', public: true }
+    meta: { title: '登录', public: true }
   },
   {
     path: '/report',
@@ -58,10 +58,12 @@ const router = createRouter({
 })
 
 /**
- * 路由守卫：
- * 1. 识别 from=chuangjinls（创金零售 App 跳转入口），记录来源
- * 2. URL 携带 code（企微静默授权回调）时先完成登录再进入目标页
- * 3. 无登录态时进入 /auth 授权页（一期 Mock；二期直接重定向企微 OAuth 链接）
+ * 路由守卫（对接标准 v2.1 §3.1，P5 任务 5.1）：
+ * 1. 识别 URL ticket（from 仅决定渠道适配与嵌入外壳）→ 调 channel-sso（渠道码后端白名单选定）
+ *    → 存 token → replace 清除地址栏 ticket/from/state；
+ *    URL 明文 userid/name 等身份字段一律不读、不采信（身份仅经服务端 verify 响应返回）。
+ * 2. 票据校验失败 → /auth 错误页（复用后端 AC07 文案）。
+ * 3. 无 ticket 且无登录态 → /auth 提示页（非企微 UA 引导从创金零售进入）。
  */
 router.beforeEach(async (to, _from, next) => {
   document.title = (to.meta.title as string) || 'DemandHub'
@@ -73,17 +75,25 @@ router.beforeEach(async (to, _from, next) => {
     userStore.setFrom(from)
   }
 
-  // 企微静默授权回调：code 换 token 后继续访问（去掉地址栏 code，避免刷新重复登录）
-  const code = to.query.code as string | undefined
-  if (code && !to.meta.public) {
+  // 一次性票据登录：任何路由携带 ticket 都先完成登录再进入目标页
+  const ticket = to.query.ticket as string | undefined
+  if (ticket) {
     try {
-      const resp = await silentLogin(code, userStore.from || undefined)
+      const resp = await channelSso(
+        userStore.from || 'chuangjinls',
+        ticket,
+        to.query.state as string | undefined
+      )
       userStore.setLogin(resp)
+      // 登录成功后立即从地址栏清除 ticket/from/state（§3.2），避免刷新重复消费与票据泄露
       const query = { ...to.query }
-      delete query.code
+      delete query.ticket
+      delete query.from
+      delete query.state
       return next({ path: to.path, query, replace: true })
-    } catch {
-      return next({ path: '/auth', query: { redirect: to.fullPath } })
+    } catch (e) {
+      const message = e instanceof Error && e.message ? e.message : '登录失败，请从创金零售重新进入'
+      return next({ path: '/auth', query: { error: message }, replace: true })
     }
   }
 

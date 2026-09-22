@@ -87,7 +87,8 @@ public class DemandSubmitService {
             demand.setSubmitterOrgId(submitter.getPrimaryOrgId());
             demand.setSubmitterOrgSnapshot(submitter.getDeptPath());
         }
-        demand.setChannel(StringUtils.hasText(request.channel()) ? request.channel() : "WEB");
+        // 来源渠道只信会话 claims（网关注入 X-Channel），不接收前端传值，伪造无效（P5 任务 5.5）
+        demand.setChannel(StringUtils.hasText(user.getChannel()) ? user.getChannel() : "WEB");
         // 路由策略（架构 4.2）：一期按类型默认承接组织；未配置则进需求管理者队列（assignee_org_id 为空）
         demand.setAssigneeOrgId(type.getDefaultOrgId());
         demand.setExpectDeliveryAt(request.expectDeliveryAt());

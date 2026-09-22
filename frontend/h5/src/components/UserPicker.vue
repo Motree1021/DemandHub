@@ -28,7 +28,7 @@
           @click="onPick(u)"
         >
           <template #right-icon>
-            <van-icon v-if="isChecked(u.id)" name="success" color="#1a3a6b" />
+            <van-icon v-if="isChecked(u.id)" name="success" color="#1F3A8A" />
           </template>
         </van-cell>
         <van-empty v-if="!filtered.length" description="未找到匹配用户" />

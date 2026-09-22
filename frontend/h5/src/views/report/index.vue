@@ -30,7 +30,7 @@
     <div class="form-card">
       <van-field v-model="form.title" label="需求标题" required maxlength="100" placeholder="一句话描述你要解决的问题">
         <template #button>
-          <van-icon name="volume-o" size="22" color="#1a3a6b" @click="onVoicePlaceholder" />
+          <van-icon name="volume-o" size="22" color="#1F3A8A" @click="onVoicePlaceholder" />
         </template>
       </van-field>
       <van-field
@@ -144,20 +144,26 @@
         <div v-for="item in attachments" :key="item.att.id" class="att-thumb" @click="onPreview(item)">
           <img v-if="isImage(item.att)" :src="item.url" alt="附件缩略图" />
           <div v-else class="att-file">
-            <van-icon name="description" size="24" color="#1a3a6b" />
+            <van-icon name="description" size="24" color="#1F3A8A" />
             <span class="att-file-name">{{ item.att.fileName }}</span>
           </div>
           <van-icon name="cross" class="att-del" @click.stop="onRemoveAttachment(item)" />
         </div>
-        <van-uploader v-model="uploaderFiles" multiple accept="image/*" :after-read="onUpload" :max-count="9">
+        <van-uploader
+          v-model="uploaderFiles"
+          multiple
+          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
+          :after-read="onUpload"
+          :max-count="9"
+        >
           <div class="att-add">
             <van-icon v-if="!uploading" name="photograph" size="26" color="#999" />
             <van-loading v-else size="22" />
-            <span class="att-add-text">{{ uploading ? `${uploadPercent}%` : '拍照/相册' }}</span>
+            <span class="att-add-text">{{ uploading ? `${uploadPercent}%` : '拍照/附件' }}</span>
           </div>
         </van-uploader>
       </div>
-      <div class="att-tip">支持拍照或从相册选择，单文件 ≤ 50MB</div>
+      <div class="att-tip">支持拍照、相册或文件附件（图片/PDF/Office），单文件 ≤ 50MB</div>
     </div>
 
     <!-- 提交区（触控高度 ≥44px） -->
@@ -293,7 +299,7 @@ const typeActions = computed(() =>
   typeList.value.map((t) => ({
     name: `${typeMeta(t.typeCode).icon} ${t.typeName}`,
     value: t.typeCode,
-    color: t.typeCode === form.demandTypeCode ? '#1a3a6b' : undefined
+    color: t.typeCode === form.demandTypeCode ? '#1F3A8A' : undefined
   }))
 )
 
@@ -414,7 +420,6 @@ async function onSaveDraft() {
   try {
     const saved = await saveDraft({
       id: currentDraftId.value || undefined,
-      channel: 'H5',
       formPayload: buildDraftPayload()
     })
     currentDraftId.value = saved.id
@@ -519,7 +524,6 @@ async function onSubmit() {
       urgency: form.urgency,
       expectDeliveryAt: form.expectDeliveryAt,
       actualDemanderId: proxyMode.value ? form.actualDemanderId || undefined : undefined,
-      channel: 'H5',
       ext: currentExt(),
       attachmentIds: attachments.value.map((a) => a.att.id)
     })
@@ -547,7 +551,7 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   padding: 14px 16px 26px;
-  background: linear-gradient(135deg, #1a3a6b 0%, #245086 100%);
+  background: linear-gradient(135deg, #1F3A8A 0%, #2F56B8 100%);
   color: #fff;
 }
 
@@ -607,9 +611,9 @@ onMounted(async () => {
 .ext-title {
   font-size: 13px;
   font-weight: 600;
-  color: #1a3a6b;
+  color: #1F3A8A;
   padding: 12px 16px 4px;
-  border-left: 3px solid #1a3a6b;
+  border-left: 3px solid #1F3A8A;
   margin: 8px 0 4px 12px;
   padding-left: 8px;
 }
@@ -637,9 +641,9 @@ onMounted(async () => {
 }
 
 .urgency-tag.selected {
-  background: #1a3a6b;
+  background: #1F3A8A;
   color: #fff;
-  border-color: #1a3a6b;
+  border-color: #1F3A8A;
 }
 
 .proxy-tip {
@@ -685,7 +689,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   font-size: 10px;
-  color: #1a3a6b;
+  color: #1F3A8A;
   padding: 4px;
 }
 

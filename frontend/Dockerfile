@@ -1,6 +1,6 @@
 # DemandHub 前端镜像（阶段 8）：PC 端 + H5 端构建产物由同一 Nginx 托管
 # 用法：docker build -t demandhub/frontend:1.0.0 frontend/
-# Nginx 80 端口服务 PC 端，81 端口服务 H5 端，/api 反代后端网关
+# Nginx 80 端口同域托管：PC 端 / 、H5 端 /h5/，/api 反代后端网关（P5 合并原 80/81 双端口）
 # REGISTRY：Docker Hub 不可达时可传镜像加速源，如 --build-arg REGISTRY=docker.m.daocloud.io/library
 
 ARG REGISTRY=docker.io/library
@@ -25,4 +25,4 @@ FROM ${REGISTRY}/nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build-pc /app/dist /usr/share/nginx/html/pc
 COPY --from=build-h5 /app/dist /usr/share/nginx/html/h5
-EXPOSE 80 81
+EXPOSE 80

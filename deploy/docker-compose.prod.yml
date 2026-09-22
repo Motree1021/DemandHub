@@ -3,7 +3,7 @@ name: demandhub-prod
 # DemandHub 生产编排（阶段 8）：中间件 + 后端 5 模块 + 前端 Nginx 一键拉起
 # 首次构建启动：docker compose -f deploy/docker-compose.prod.yml up -d --build
 # 停止：docker compose -f deploy/docker-compose.prod.yml down
-# PC 端: http://host/   H5 端: http://host:81/   API 入口: http://host:8080/api
+# PC 端: http://host/   H5 端: http://host/h5/（P5 起同域，原 81 端口已合并）   API 入口: http://host:8080/api
 # （网关不聚合接口文档；如需 doc.html 调试可临时为各模块映射端口）
 #
 # 外部接口开关（默认 Mock，拿到真实凭证后改为 false 并提供真实实现镜像）：
@@ -231,8 +231,7 @@ services:
         REGISTRY: ${REGISTRY:-docker.io/library}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     ports:
-      - "80:80"    # PC 端
-      - "81:81"    # H5 端
+      - "80:80"    # 同域：PC / 、H5 /h5/（P5 合并原 81 端口）
     depends_on:
       - gateway
 

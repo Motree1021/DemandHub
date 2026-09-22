@@ -16,9 +16,9 @@ document.addEventListener('focusin', (e) => {
 </script>
 
 <style>
-/* 全局主题：主色对齐创金零售深蓝 #1a3a6b */
+/* 全局主题：主色对齐创金零售深蓝 #1F3A8A */
 :root {
-  --van-primary-color: #1a3a6b;
+  --van-primary-color: #1F3A8A;
   --van-danger-color: #ff4757;
 }
 

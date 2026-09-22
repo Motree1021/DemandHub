@@ -18,7 +18,7 @@
       <slot />
     </div>
 
-    <!-- 底部 TabBar：提报 / 我的 / 通知（未读角标） -->
+    <!-- 底部 TabBar：提报 / 我的 / 通知（未读角标）；嵌入态（from=chuangjinls）隐藏 -->
     <van-tabbar
       v-if="showTabbar"
       :model-value="activeTab"
@@ -38,6 +38,7 @@
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/store/notification'
+import { useUserStore } from '@/store/user'
 
 const props = withDefaults(
   defineProps<{
@@ -51,10 +52,15 @@ const props = withDefaults(
 
 const router = useRouter()
 const notifyStore = useNotificationStore()
+const userStore = useUserStore()
 
-const showTabbar = computed(() => props.activeTab !== '')
+/** 嵌入态：从创金零售 App 跳入（from=chuangjinls）→ 隐藏 tabbar、仅留左上返回（任务 5.2） */
+const isEmbed = computed(() => userStore.from === 'chuangjinls')
+const showTabbar = computed(() => props.activeTab !== '' && !isEmbed.value)
+const showBack = computed(() => props.showBack || isEmbed.value)
 
 function onBack() {
+  // 嵌入态入口页 history.back 即返回创金零售；独立访问无历史时回提报页
   if (window.history.length > 1) {
     router.back()
   } else {
@@ -80,9 +86,9 @@ onMounted(() => {
   background: #f5f6f8;
 }
 
-/* 深蓝头部，对齐创金零售 #1a3a6b -> #245086 渐变 */
+/* 深蓝头部，对齐创金零售 #1F3A8A -> #2F56B8 渐变 */
 .app-navbar {
-  --van-nav-bar-background: linear-gradient(135deg, #1a3a6b 0%, #245086 100%);
+  --van-nav-bar-background: linear-gradient(135deg, #1F3A8A 0%, #2F56B8 100%);
   --van-nav-bar-title-text-color: #fff;
   --van-nav-bar-text-color: #fff;
   --van-nav-bar-icon-color: #fff;
@@ -98,7 +104,7 @@ onMounted(() => {
 }
 
 .app-tabbar {
-  --van-tabbar-item-active-color: #1a3a6b;
+  --van-tabbar-item-active-color: #1F3A8A;
   --van-tabbar-item-active-background: #fff;
 }
 </style>

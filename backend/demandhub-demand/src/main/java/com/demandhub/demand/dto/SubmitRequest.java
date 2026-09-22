@@ -9,6 +9,7 @@ import java.util.Map;
  * TECH: relatedSystem/relatedModule/businessScenario/acceptanceCriteria
  * MATL: materialSubtype/usageScenario/quantity/expectedArrivalAt
  * TRAIN: trainingSubtype/traineeObject/traineeCount/expectedCompleteAt
+ * 来源渠道不从前端接收：由网关注入的 X-Channel（会话 claims）落库，伪造无效。
  */
 public record SubmitRequest(Long draftId,
                             String title,
@@ -18,7 +19,6 @@ public record SubmitRequest(Long draftId,
                             String urgency,
                             LocalDateTime expectDeliveryAt,
                             Long actualDemanderId,
-                            String channel,
                             Map<String, Object> ext,
                             List<Long> attachmentIds) {
 }

@@ -69,7 +69,7 @@
 <rect x="48" y="451" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="63" y="462" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="84" y="461" font-size="13" fill="#0f172a">channel_code → demand_channel</text>
 <text x="52" y="480" font-size="13" fill="#334155">channel_user_id（渠道侧ID）</text>
 <rect x="48" y="489" width="30" height="14" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/><text x="63" y="500" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1d4ed8">FK</text><text x="84" y="499" font-size="13" fill="#0f172a">demand_user_id → OneID</text>
-<text x="52" y="518" font-size="12.5" fill="#334155">name/phone/dept（verify回源快照）</text>
+<text x="52" y="518" font-size="12.5" fill="#334155">name(必填)/phone·dept(选填)快照</text>
 <text x="52" y="537" font-size="13" fill="#334155">match_type(PHONE/WECOMID/MANUAL)</text>
 <text x="52" y="556" font-size="12" fill="#64748b">一个OneID可绑多个渠道</text>
 
@@ -87,7 +87,7 @@
 
 <!-- 域①底部说明 -->
 <rect x="40" y="600" width="480" height="78" rx="7" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
-<text x="52" y="623" font-size="12.5" fill="#1e3a8a">自动匹配优先级：手机号 > 企微userid > 人工绑定</text>
+<text x="52" y="623" font-size="12.5" fill="#1e3a8a">自动匹配优先级：企微userid > 手机号 > 人工绑定</text>
 <text x="52" y="643" font-size="12.5" fill="#1e3a8a">票据有效(含企微userid)自动建ACTIVE可直接提报；字段缺失才PENDING；重复合并</text>
 <text x="52" y="663" font-size="12.5" fill="#1e3a8a">创金零售签发一次性ticket，DH回源verify核验；不持企微密钥、不注册企微应用</text>
 
@@ -246,7 +246,7 @@
 <text x="36" y="896" font-size="15" font-weight="700" fill="#0f172a">设计约定（v1.3）</text>
 <text x="36" y="920" font-size="12.5" fill="#334155">· 需求编号：类型前缀+日期+流水，如 TECH-20260919-001</text>
 <text x="36" y="936" font-size="12.5" fill="#334155">· DemandHub 自有 OneID 用户体系，组织树管理员可维护</text>
-<text x="36" y="952" font-size="12.5" fill="#334155">· 创金零售SSO票据回源verify；手机号>企微userid匹配OneID</text>
+<text x="36" y="952" font-size="12.5" fill="#334155">· 创金零售SSO票据回源verify；企微userid>手机号匹配OneID</text>
 <text x="36" y="968" font-size="12.5" fill="#334155">· 票据有效自动建ACTIVE直接提报；字段缺失才PENDING；支持合并</text>
 <text x="36" y="984" font-size="12.5" fill="#334155">· 角色族ADMIN/EXECUTIVE/MANAGER/HANDLER×组织子树×类型范围</text>
 <text x="36" y="1000" font-size="12.5" fill="#334155">· 提报时点快照留痕，主数据以 demand_user/demand_org 为准</text>

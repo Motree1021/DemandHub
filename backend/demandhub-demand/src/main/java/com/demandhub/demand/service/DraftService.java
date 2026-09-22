@@ -1,6 +1,7 @@
 package com.demandhub.demand.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.demandhub.common.context.CurrentUser;
 import com.demandhub.common.context.UserContext;
 import com.demandhub.common.core.ErrorCode;
 import com.demandhub.common.exception.BizException;
@@ -8,6 +9,7 @@ import com.demandhub.demand.dto.DraftSaveRequest;
 import com.demandhub.demand.entity.DemandDraftEntity;
 import com.demandhub.demand.mapper.DemandDraftMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 
@@ -24,6 +26,7 @@ public class DraftService {
     }
 
     public DemandDraftEntity save(DraftSaveRequest request) {
+        CurrentUser current = UserContext.get();
         Long currentUserId = UserContext.currentUserId();
         DemandDraftEntity draft;
         if (request.id() == null) {
@@ -38,7 +41,9 @@ public class DraftService {
                 throw new BizException(ErrorCode.BIZ_ERROR, "草稿已提交为正式需求，不可再编辑");
             }
         }
-        draft.setChannel(request.channel());
+        // 来源渠道只信会话 claims（网关注入 X-Channel），不接收前端传值（P5 任务 5.5）
+        draft.setChannel(current != null && StringUtils.hasText(current.getChannel())
+                ? current.getChannel() : "WEB");
         draft.setFormPayload(request.formPayload());
         if (draft.getId() == null) {
             draftMapper.insert(draft);

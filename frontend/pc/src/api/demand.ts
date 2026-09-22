@@ -175,7 +175,7 @@ export interface SubmitRequest {
   urgency: string
   expectDeliveryAt?: string
   actualDemanderId?: number
-  channel?: string
+  /** 来源渠道由后端按会话 claims 落库，前端传值无效（P5 任务 5.5） */
   ext?: Record<string, unknown>
   attachmentIds?: number[]
 }
@@ -252,7 +252,7 @@ export interface DraftItem {
   updatedAt: string
 }
 
-export function saveDraft(data: { id?: number; channel?: string; formPayload: string }): Promise<DraftItem> {
+export function saveDraft(data: { id?: number; formPayload: string }): Promise<DraftItem> {
   return post('/demand/draft/save', data)
 }
 

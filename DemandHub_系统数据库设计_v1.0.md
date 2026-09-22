@@ -3,7 +3,7 @@
 | 项目   | 内容                                    |
 | ---- | ------------------------------------- |
 | 文档名称 | DemandHub 系统数据库设计                     |
-| 版本   | v1.3                                  |
+| 版本   | v1.4                                  |
 | DBMS | MySQL 8.0（InnoDB，utf8mb4）             |
 | 编制部门 | 财管科技产品部                               |
 | 编制日期 | 2026-09-19                            |
@@ -84,7 +84,7 @@ agent_session (Agent 对话，独立)
 demand_stat_daily (预聚合统计，独立)
 ```
 
-> 设计边界：DemandHub 拥有自有用户体系（OneID）与组织树，管理员可在后台维护；各提报渠道自行鉴权，DemandHub 经渠道服务端接口回源核验（一期为创金零售 SSO 票据 verify），经 `channel_user_mapping` 自动匹配（手机号 > 企微 userid）或人工绑定到 DemandHub OneID；DemandHub 不直接对接企微接口。
+> 设计边界：DemandHub 拥有自有用户体系（OneID）与组织树，管理员可在后台维护；各提报渠道自行鉴权，DemandHub 经渠道服务端接口回源核验（一期为创金零售 SSO 票据 verify），经 `channel_user_mapping` 自动匹配（企微 userid > 手机号）或人工绑定到 DemandHub OneID；DemandHub 不直接对接企微接口。
 
 
 
@@ -94,7 +94,7 @@ demand_stat_daily (预聚合统计，独立)
 
 ### 3.1 渠道接入、自有用户与业务角色域
 
-> **设计原则**：DemandHub 拥有自有用户体系（OneID）与组织树；一期创金零售渠道以一次性 SSO 票据回源核验身份，PC 管理端用账号密码登录；核验后经 `channel_user_mapping` 自动匹配（手机号 > 企微 userid）或人工绑定到 OneID；DemandHub 不直接对接企微接口。
+> **设计原则**：DemandHub 拥有自有用户体系（OneID）与组织树；一期创金零售渠道以一次性 SSO 票据回源核验身份，PC 管理端用账号密码登录；核验后经 `channel_user_mapping` 自动匹配（企微 userid > 手机号）或人工绑定到 OneID；DemandHub 不直接对接企微接口。
 
 #### 3.1.1 `demand_channel` 渠道注册表
 
@@ -117,8 +117,8 @@ demand_stat_daily (预聚合统计，独立)
 |---|---|---|---|
 | id | BIGINT UNSIGNED | PK, AUTO_INC | DemandHub OneID |
 | name | VARCHAR(64) | NOT NULL | 姓名 |
-| phone | VARCHAR(32) | UNIQUE | 手机号（脱敏存储，自动匹配键） |
-| wecom_userid | VARCHAR(64) | UNIQUE | 企微 userid（由创金零售 verify 回传，自动匹配键） |
+| phone | VARCHAR(32) | UNIQUE | 手机号（脱敏存储，选填，辅助匹配键） |
+| wecom_userid | VARCHAR(64) | UNIQUE | 企微 userid（verify 必填回传，首选匹配/建号主键） |
 | employee_no | VARCHAR(32) | | 工号（员工才有） |
 | email | VARCHAR(128) | | 邮箱 |
 | is_employee | TINYINT(1) | NOT NULL DEFAULT 0 | 1=员工，0=外部用户 |
@@ -131,7 +131,7 @@ demand_stat_daily (预聚合统计，独立)
 
 索引：`uk_phone(phone)`、`uk_wecom_userid(wecom_userid)`、`idx_primary_org(primary_org_id)`、`idx_status(status)`、`idx_is_employee(is_employee)`。
 
-> 新渠道用户首次核验时：手机号/企微 userid 命中已有 OneID 则直接建映射；未命中时，创金零售票据有效且带回企微 userid 的自动建 ACTIVE 员工账号（按 dept_id 经 external_dept_id 映射组织，未映射挂"未分配组织"虚拟节点，不阻塞提报）；仅票据字段缺失（无 userid 且无手机号）或外部渠道用户才建 PENDING 记录进管理员"待完善"队列。重复 OneID 执行合并，原记录置 MERGED 并迁移数据。
+> 新渠道用户首次核验时：企微 userid（必填主键）/手机号（选填）命中已有 OneID 则直接建映射；未命中时，创金零售票据有效且带回企微 userid 的自动建 ACTIVE 员工账号（手机/部门缺失不阻塞；部门按 dept_id 经 external_dept_id 映射，未映射挂“未分配组织”虚拟节点）；仅外部渠道身份不全的用户才建 PENDING 记录进管理员“待完善”队列，创金零售渠道缺必填 user_id/name 属协议错误（40005），拒绝登录且不建号。重复 OneID 执行合并，原记录置 MERGED 并迁移数据。
 
 #### 3.1.3 `demand_org` 组织节点表（管理员可 CRUD）
 
@@ -1409,3 +1409,4 @@ INSERT INTO sys\_dict(dict\_type, item\_code, item\_name, sort) VALUES
 | v1.1 | 2026-09-19 | 按评审意见修订：删除自建 sys_user/sys_org_unit/sys_user_org_rel/sys_role/sys_permission/sys_role_permission/sys_user_role_grant 七张主表，改为 demand_user_snapshot / demand_org_snapshot 两张只读镜像表 + demand_role_grant 业务角色本地授权表；ER 图、DDL、初始化数据、演进章节同步 | 财管科技产品部 
 | v1.2 | 2026-09-22 | 用户/权限模块重构：DemandHub 改为自有 OneID 用户体系与可维护组织树；新增 demand_channel 渠道注册表与 channel_user_mapping 渠道用户映射表；业务角色按需求类型细分（TECH/MATL/TRAIN × MANAGER/HANDLER），去掉 REPORTER；新用户待完善与用户合并流程 | 财管科技产品部 ||
 | v1.3 | 2026-09-22 | 嵌入方案定稿为创金零售 SSO 票据：渠道枚举去 WECOM_APP（预留 DISABLED）、一期启用 CHUANGJIN_LS；demand_user 增 login_name/password_hash/password_updated_at（PC 账密）；demand_org 增 external_dept_id；config_json 改存 SSO 校验配置；角色码注释改为角色族；票据有效用户自动 ACTIVE 建号 | 财管科技产品部 ||
+| v1.4 | 2026-09-22 | 冻结 verify 字段口径：wecom_userid 为必填首选匹配键、手机号选填辅助；匹配优先级改为企微 userid > 手机号（3.1.1/3.1.2） | 财管科技产品部 ||

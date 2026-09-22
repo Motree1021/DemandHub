@@ -45,7 +45,7 @@
           <div v-for="(att, i) in detail.attachments" :key="att.id" class="att-thumb" @click="onPreviewAttachment(att, i)">
             <img v-if="isImage(att) && attUrls[att.id]" :src="attUrls[att.id]" alt="附件" />
             <div v-else class="att-file">
-              <van-icon name="description" size="24" color="#1a3a6b" />
+              <van-icon name="description" size="24" color="#1F3A8A" />
               <span class="att-file-name">{{ att.fileName }}</span>
             </div>
           </div>
@@ -447,7 +447,7 @@ onMounted(async () => {
 
 /* 深蓝头部区 */
 .hero {
-  background: linear-gradient(135deg, #1a3a6b 0%, #245086 100%);
+  background: linear-gradient(135deg, #1F3A8A 0%, #2F56B8 100%);
   color: #fff;
   padding: 14px 16px 26px;
 }
@@ -494,7 +494,7 @@ onMounted(async () => {
 .card-title {
   font-size: 15px;
   font-weight: 600;
-  border-left: 3px solid #1a3a6b;
+  border-left: 3px solid #1F3A8A;
   padding-left: 8px;
   margin: 14px 14px 10px;
 }
@@ -556,7 +556,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   font-size: 10px;
-  color: #1a3a6b;
+  color: #1F3A8A;
   padding: 4px;
 }
 
@@ -590,7 +590,7 @@ onMounted(async () => {
 }
 
 .tl-dot.latest {
-  background: #1a3a6b;
+  background: #1F3A8A;
 }
 
 .tl-line {
@@ -642,7 +642,7 @@ onMounted(async () => {
   height: 32px;
   border-radius: 50%;
   background: #eef3fb;
-  color: #1a3a6b;
+  color: #1F3A8A;
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -682,7 +682,7 @@ onMounted(async () => {
 
 .comment-mentions {
   font-size: 11px;
-  color: #1a3a6b;
+  color: #1F3A8A;
   margin-top: 4px;
 }
 
@@ -730,7 +730,7 @@ onMounted(async () => {
   height: 32px;
   border-radius: 50%;
   background: #eef3fb;
-  color: #1a3a6b;
+  color: #1F3A8A;
   font-size: 15px;
   font-weight: 700;
   display: flex;
@@ -740,7 +740,7 @@ onMounted(async () => {
 }
 
 .mention-btn.active {
-  background: #1a3a6b;
+  background: #1F3A8A;
   color: #fff;
 }
 
@@ -760,7 +760,7 @@ onMounted(async () => {
 .mention-chip {
   font-size: 11px;
   background: #eef3fb;
-  color: #1a3a6b;
+  color: #1F3A8A;
   border-radius: 10px;
   padding: 2px 8px;
 }

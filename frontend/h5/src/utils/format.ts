@@ -11,12 +11,12 @@ export interface ColorMeta {
 /** 需求主状态展示（与后端 DemandStatus 一致，色值对齐移动端原型） */
 export const STATUS_META: Record<string, ColorMeta> = {
   DRAFT: { label: '草稿', bg: '#f3f4f6', color: '#6b7280' },
-  SUBMITTED: { label: '待受理', bg: '#eef3fb', color: '#1a3a6b' },
+  SUBMITTED: { label: '待受理', bg: '#eef3fb', color: '#1F3A8A' },
   NEED_INFO: { label: '待补充', bg: '#fef3c7', color: '#b45309' },
-  TRIAGE: { label: '待分派/待领取', bg: '#eef3fb', color: '#1a3a6b' },
+  TRIAGE: { label: '待分派/待领取', bg: '#eef3fb', color: '#1F3A8A' },
   ANALYZING: { label: '分析中', bg: '#fef3c7', color: '#b45309' },
   SOLUTION_REVIEW: { label: '方案待评审', bg: '#fef3c7', color: '#b45309' },
-  CONFIRMED: { label: '已确认/已排期', bg: '#eef3fb', color: '#1a3a6b' },
+  CONFIRMED: { label: '已确认/已排期', bg: '#eef3fb', color: '#1F3A8A' },
   IN_PROGRESS: { label: '处理中', bg: '#d1fae5', color: '#065f46' },
   ACCEPTANCE: { label: '待验收', bg: '#fef3c7', color: '#b45309' },
   DONE: { label: '已完成', bg: '#f3f4f6', color: '#6b7280' },

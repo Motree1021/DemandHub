@@ -386,7 +386,6 @@ async function onSaveDraft() {
   try {
     const saved = await saveDraft({
       id: currentDraftId.value || undefined,
-      channel: 'WEB',
       formPayload: buildDraftPayload()
     })
     currentDraftId.value = saved.id
@@ -458,7 +457,6 @@ async function onSubmit() {
       urgency: form.urgency,
       expectDeliveryAt: form.expectDeliveryAt,
       actualDemanderId: proxyMode.value ? form.actualDemanderId || undefined : undefined,
-      channel: 'WEB',
       ext: currentExt(),
       attachmentIds: attachments.value.map((a) => a.id)
     })
