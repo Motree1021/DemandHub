@@ -46,3 +46,7 @@ logs/
 
 # ===== 自测临时文件（含 token，禁止入库） =====
 .tmp-selftest/
+
+# ===== Python（e2e 脚本） =====
+__pycache__/
+*.pyc

@@ -6,7 +6,9 @@ import com.demandhub.common.exception.BizException;
 import com.demandhub.system.entity.Channel;
 import com.demandhub.system.mapper.ChannelMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,22 @@ public class ChannelSsoTicketVerifier implements TicketVerifier {
     /** 适配器注册表：channelCode → ChannelSsoClient（Spring 自动收集实现类） */
     private final Map<String, ChannelSsoClient> clients;
 
+    /**
+     * 环境变量覆盖（开发计划 §7 配置清单：test/prod 的创金零售 verify 地址与签名凭证经环境注入，
+     * 不落库、不入仓库）。三项齐备才对 CHUANGJIN_LS 生效并优先于 DB config_json；
+     * dev 缺省不设置 → 走 DB 配置（指向内置 Mock）。
+     */
+    @Value("${CHANNEL_LS_BASE_URL:}")
+    private String envBaseUrl;
+    @Value("${CHANNEL_LS_APP_KEY:}")
+    private String envAppKey;
+    @Value("${CHANNEL_LS_APP_SECRET:}")
+    private String envAppSecret;
+    @Value("${CHANNEL_LS_TICKET_TTL:0}")
+    private int envTicketTtl;
+    @Value("${CHANNEL_LS_TIMEOUT_MS:0}")
+    private int envTimeoutMs;
+
     public ChannelSsoTicketVerifier(ChannelMapper channelMapper, SecretCrypto secretCrypto,
                                     List<ChannelSsoClient> clientList) {
         this.channelMapper = channelMapper;
@@ -46,16 +64,35 @@ public class ChannelSsoTicketVerifier implements TicketVerifier {
             log.error("渠道无 SSO 适配器实现: channel={}", channelCode);
             throw new BizException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "登录服务暂时不可用，请稍后重试");
         }
-        Channel channel = channelMapper.selectOne(new LambdaQueryWrapper<Channel>()
-                .eq(Channel::getChannelCode, channelCode));
-        ChannelSsoConfig config = channel == null ? null : ChannelSsoConfig.parse(channel.getConfigJson());
+        ChannelSsoConfig config = resolveConfig(channelCode);
         if (config == null || !config.isComplete()) {
             // 配置缺失/不完整：服务侧配置问题，告警并按服务不可用降级（不暴露细节）
             log.error("渠道 SSO 配置缺失或不完整告警: channel={}", channelCode);
             throw new BizException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "登录服务暂时不可用，请稍后重试");
         }
-        // 落库密文 → 内存解密（ENC: 前缀；解密结果不出服务端、不入日志）
+        // 落库密文 → 内存解密（ENC: 前缀；env 注入明文无前缀原样通过；解密结果不出服务端、不入日志）
         config.setAppSecret(secretCrypto.decryptIfMarked(config.getAppSecret()));
         return client.verify(config, ticket);
+    }
+
+    /** env 覆盖优先于 DB config_json（仅 CHUANGJIN_LS；base_url/app_key/app_secret 三项齐备才生效） */
+    private ChannelSsoConfig resolveConfig(String channelCode) {
+        if (ChuangjinLsSsoClient.CHANNEL_CODE.equals(channelCode)
+                && StringUtils.hasText(envBaseUrl) && StringUtils.hasText(envAppKey) && StringUtils.hasText(envAppSecret)) {
+            ChannelSsoConfig config = new ChannelSsoConfig();
+            config.setSsoVerifyBaseUrl(envBaseUrl);
+            config.setAppKey(envAppKey);
+            config.setAppSecret(envAppSecret);
+            if (envTicketTtl > 0) {
+                config.setTicketTtlSeconds(envTicketTtl);
+            }
+            if (envTimeoutMs > 0) {
+                config.setTimeoutMs(envTimeoutMs);
+            }
+            return config;
+        }
+        Channel channel = channelMapper.selectOne(new LambdaQueryWrapper<Channel>()
+                .eq(Channel::getChannelCode, channelCode));
+        return channel == null ? null : ChannelSsoConfig.parse(channel.getConfigJson());
     }
 }

@@ -50,7 +50,7 @@ public class ReportExportService {
         // 数据范围快照（异步线程无登录上下文）
         DataScope scope = dataScopeService.currentScope(user);
         ReportExportExecutor.ExportScope scopeSnapshot = new ReportExportExecutor.ExportScope(
-                scope.isBypass(), scope.isNoAccess(), List.copyOf(scope.getOrgIds()), scope.isReporter(), user.getId());
+                scope.isBypass(), scope.isNoAccess(), List.copyOf(scope.unionOrgIds()), scope.isReporter(), user.getId());
 
         ReportExportTaskEntity task = new ReportExportTaskEntity();
         task.setTaskNo(nextTaskNo());

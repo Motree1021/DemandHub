@@ -1,0 +1,284 @@
+name: demandhub-test
+
+# DemandHub 测试环境编排（P6，开发计划 6.1）：中间件 + 后端 5 模块 + 前端 Nginx 同域 + 创金零售 verify 契约 Mock
+# 与 dev 栈并存：独立 compose project、独立卷、独立宿主端口，互不干扰
+# 首次构建启动：docker compose -f deploy/docker-compose.test.yml up -d --build
+# 停止：docker compose -f deploy/docker-compose.test.yml down
+# PC 端: http://host:8088/   H5 端: http://host:8088/h5/   API 入口: http://host:8088/api（同域）
+# 网关宿主直连（e2e 用）: http://host:8180/api   契约 Mock: http://host:8099
+#
+# test profile 与 dev 的关键差异：
+#   1) CHANNEL_SSO_MOCK=false —— 内置 Mock 端点不暴露，verify 回源走环境变量指向的地址
+#   2) CHANNEL_LS_* 环境变量注入渠道配置（优先于 demand_channel.config_json，见 ChannelSsoTicketVerifier）；
+#      默认指向本编排内的 contract-mock（契约级 Mock，严格校验签名）；拿到创金零售测试环境真实
+#      verify 地址/凭证后，以同名环境变量覆盖即可，无需改库、无需重建镜像
+#   3) SECRET_STORE_KEY / CHANNEL_LS_APP_SECRET 经环境注入，真实值不入仓库（下方默认值仅供本机测试）
+#
+# 一键启动（PowerShell）：
+#   docker compose -f deploy/docker-compose.test.yml up -d --build
+
+x-backend-env: &backend-env
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_DB: demandhub
+  MYSQL_USER: root
+  MYSQL_PASSWORD: demandhub123
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  ROCKETMQ_NAMESRV: rocketmq-namesrv:9876
+  JWT_SECRET: demandhub-test-secret-please-change-me
+  TZ: Asia/Shanghai
+
+services:
+  # ---------- 中间件 ----------
+  mysql:
+    image: mysql:8.0
+    container_name: demandhub-test-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: demandhub123
+      MYSQL_DATABASE: demandhub
+      TZ: Asia/Shanghai
+    ports:
+      - "3317:3306"   # dev 栈占 3307，测试库用 3317
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+      --default-time-zone=+08:00
+      --lower_case_table_names=1
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro   # 首次启动按序执行 01~07（幂等）
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pdemandhub123"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7
+    container_name: demandhub-test-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6380:6379"   # dev 栈占 6379
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-08-17T01-24-54Z
+    container_name: demandhub-test-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: demandhub
+      MINIO_ROOT_PASSWORD: demandhub123
+    ports:
+      - "9010:9000"
+      - "9011:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: demandhub-test-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      TZ: Asia/Shanghai
+    ports:
+      - "8858:8848"
+      - "9858:9848"
+    volumes:
+      - nacos-data:/home/nacos/data
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.2.0
+    container_name: demandhub-test-rocketmq-namesrv
+    restart: unless-stopped
+    command: sh mqnamesrv
+    volumes:
+      - rocketmq-namesrv-data:/home/rocketmq/logs
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.2.0
+    container_name: demandhub-test-rocketmq-broker
+    restart: unless-stopped
+    depends_on:
+      - rocketmq-namesrv
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      # 老版本 JDK8 在 cgroup v2 宿主机读取容器 metrics 会 NPE，禁用容器支持绕过
+      JAVA_OPT: "-XX:-UseContainerSupport"
+    # 命名卷首挂由 Docker 以 root 创建，rocketmq 用户无写权限，故以 root 运行
+    user: root
+    volumes:
+      - ./rocketmq/broker-prod.conf:/home/rocketmq/conf/broker.conf:ro
+      - rocketmq-broker-data:/home/rocketmq/store
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker.conf
+
+  # ---------- 创金零售 verify 契约 Mock（测试脚手架；接入真实测试环境后移除 CHANNEL_LS_BASE_URL 覆盖即可） ----------
+  contract-mock:
+    image: python:3.11-slim
+    container_name: demandhub-test-contract-mock
+    restart: unless-stopped
+    volumes:
+      - ../scripts/contract_mock_verify.py:/app/contract_mock_verify.py:ro
+    command: ["python", "/app/contract_mock_verify.py"]
+    environment:
+      APP_KEY: ${CHANNEL_LS_APP_KEY:-demandhub-test}
+      APP_SECRET: ${CHANNEL_LS_APP_SECRET:-chuangjinls-test-secret-please-change-me}
+      PORT: "8099"
+    ports:
+      - "8099:8099"   # 宿主 e2e 签票用
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8099/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ---------- 后端 5 模块 ----------
+  system:
+    image: demandhub/system:1.0.0-test
+    container_name: demandhub-test-system
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-system
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment:
+      <<: *backend-env
+      # ---- test profile（P6 核心）----
+      CHANNEL_SSO_MOCK: "false"
+      SECRET_STORE_KEY: ${SECRET_STORE_KEY:-demandhub-dev-secret-store-key-0123456789}
+      CHANNEL_LS_BASE_URL: ${CHANNEL_LS_BASE_URL:-http://contract-mock:8099}
+      CHANNEL_LS_APP_KEY: ${CHANNEL_LS_APP_KEY:-demandhub-test}
+      CHANNEL_LS_APP_SECRET: ${CHANNEL_LS_APP_SECRET:-chuangjinls-test-secret-please-change-me}
+      CHANNEL_LS_TICKET_TTL: ${CHANNEL_LS_TICKET_TTL:-60}
+      CHANNEL_LS_TIMEOUT_MS: ${CHANNEL_LS_TIMEOUT_MS:-3000}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      contract-mock:
+        condition: service_healthy
+
+  demand:
+    image: demandhub/demand:1.0.0-test
+    container_name: demandhub-test-demand
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-demand
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment:
+      <<: *backend-env
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: demandhub
+      MINIO_SECRET_KEY: demandhub123
+      MINIO_BUCKET: demandhub
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_started
+
+  notification:
+    image: demandhub/notification:1.0.0-test
+    container_name: demandhub-test-notification
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-notification
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment: *backend-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_started
+
+  agent:
+    image: demandhub/agent:1.0.0-test
+    container_name: demandhub-test-agent
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-agent
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment: *backend-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_started
+
+  gateway:
+    image: demandhub/gateway:1.0.0-test
+    container_name: demandhub-test-gateway
+    restart: unless-stopped
+    build:
+      context: ../backend
+      args:
+        MODULE: demandhub-gateway
+        REGISTRY: ${REGISTRY:-docker.io/library}
+    environment:
+      <<: *backend-env
+      SYSTEM_URI: http://system:8081
+      DEMAND_URI: http://demand:8082
+      NOTIFICATION_URI: http://notification:8083
+      AGENT_URI: http://agent:8084
+    ports:
+      - "8180:8080"   # dev 网关占 8080，测试网关宿主映射 8180（容器网络内仍 8080 供 nginx 反代）
+    depends_on:
+      - system
+      - demand
+      - notification
+      - agent
+
+  # ---------- 前端 ----------
+  frontend:
+    image: demandhub/frontend:1.0.0-test
+    container_name: demandhub-test-frontend
+    restart: unless-stopped
+    build:
+      context: ../frontend
+      args:
+        REGISTRY: ${REGISTRY:-docker.io/library}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    ports:
+      - "8088:80"    # 同域：PC / 、H5 /h5/、/api 反代 gateway（dev 前端占 80 时互不冲突）
+    depends_on:
+      - gateway
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+  nacos-data:
+  rocketmq-namesrv-data:
+  rocketmq-broker-data:
