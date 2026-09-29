@@ -33,6 +33,7 @@
         <minio.version>8.5.11</minio.version>
         <rocketmq.version>2.3.1</rocketmq.version>
         <poi.version>5.2.5</poi.version>
+        <mockwebserver.version>4.12.0</mockwebserver.version>
     </properties>
 
     <dependencyManagement>
@@ -98,6 +99,13 @@
                 <artifactId>poi-ooxml</artifactId>
                 <version>${poi.version}</version>
             </dependency>
+            <!-- 7.1 单测：MockWebServer 模拟创金零售 verify（aliyun 未同步 mockwebserver3 新坐标，用经典 artifact） -->
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>mockwebserver</artifactId>
+                <version>${mockwebserver.version}</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -108,6 +116,13 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
+                </plugin>
+                <!-- 未继承 spring-boot-starter-parent，Maven 默认 surefire 2.12.4 不支持 JUnit5
+                     （测试类被静默跳过造成假绿），显式 pin 3.x -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
                 </plugin>
             </plugins>
         </pluginManagement>

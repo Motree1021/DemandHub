@@ -131,7 +131,20 @@ services:
       args:
         MODULE: demandhub-system
         REGISTRY: ${REGISTRY:-docker.io/library}
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      # ---- 渠道 SSO 生产注入位（P7 7.3）----
+      # 内置 Mock 必须关闭，否则 /system/mock-sso/* 签票端点对外暴露（重大安全风险）
+      CHANNEL_SSO_MOCK: "false"
+      # 密钥/凭证一律经 env 注入、不落库、不入仓库；缺失即拒绝启动（:? 语法）
+      # SECRET_STORE_KEY：demand_channel.config_json 中 ENC: 密文的 AES-GCM 主密钥（轮换见运维手册）
+      SECRET_STORE_KEY: ${SECRET_STORE_KEY:?SECRET_STORE_KEY required}
+      # 创金零售 verify 三件套：齐备时优先于 demand_channel.config_json（ChannelSsoTicketVerifier.resolveConfig）
+      CHANNEL_LS_BASE_URL: ${CHANNEL_LS_BASE_URL:?CHANNEL_LS_BASE_URL required}
+      CHANNEL_LS_APP_KEY: ${CHANNEL_LS_APP_KEY:?CHANNEL_LS_APP_KEY required}
+      CHANNEL_LS_APP_SECRET: ${CHANNEL_LS_APP_SECRET:?CHANNEL_LS_APP_SECRET required}
+      CHANNEL_LS_TICKET_TTL: ${CHANNEL_LS_TICKET_TTL:-60}
+      CHANNEL_LS_TIMEOUT_MS: ${CHANNEL_LS_TIMEOUT_MS:-3000}
     depends_on:
       mysql:
         condition: service_healthy

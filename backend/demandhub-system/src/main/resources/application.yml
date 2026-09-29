@@ -50,6 +50,9 @@ demandhub:
     # sso_verify_base_url 决定回源目标（dev 指向内置 Mock，test/prod 指向创金零售真实地址），
     # test/prod 的 base_url/app_key/app_secret 由管理端/环境注入（CHANNEL_SSO_MOCK=false）
     mock: ${CHANNEL_SSO_MOCK:true}
+    # ENC: 密文主密钥（SecretCrypto）。env SECRET_STORE_KEY 无法经 relaxed binding 命中
+    # demandhub.channel-sso.secret-store-key，必须显式占位；prod compose 注入真实值（无默认）。
+    secret-store-key: ${SECRET_STORE_KEY:demandhub-dev-secret-store-key-0123456789}
 
 springdoc:
   api-docs:

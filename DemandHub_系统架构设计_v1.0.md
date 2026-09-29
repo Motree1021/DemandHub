@@ -210,16 +210,20 @@ DemandHub 后端（不持有任何企微凭证）
               │  verify 回源/回调：channel_code + channel_user_id(企微userid,必填) + 姓名(必填) + 手机(选填) + 部门(选填)
               ▼
 渠道用户匹配引擎
-   ├─ ① 企微 userid 精确匹配 demand_user（必填主键）→ 命中则建映射
-   ├─ ② 手机号匹配（选填，辅助命中）→ 命中则建映射
-   └─ ③ 未命中 → 创金零售票据(有企微userid)自动建 demand_user(ACTIVE) 可直接提报；字段缺失/外部渠道才建 PENDING → 管理员待完善队列
+   ├─ ① 既有渠道映射直接命中（该渠道身份已绑定过 OneID）
+   ├─ ② 手机号精确匹配（优先级高于企微 userid）→ 命中则建映射
+   ├─ ③ 企微 userid 匹配 → 命中则建映射
+   └─ ④ 未命中自动建号：票据带回企微 userid 建 ACTIVE 员工账号可直接提报；字段缺失才建 PENDING → 管理员待完善队列
+        （命中 MERGED 用户自动跳转目标 OneID；同手机/同企微命中不同 OneID 记 conflict_user_id 合并提示、不阻塞登录；
+         部门未映射挂外部虚拟组织 900，并回流 channel_dept_unmapped 校准清单供管理端校准）
               │
               ▼
 DemandHub 自有用户与组织
    ├─ demand_user    （OneID：姓名/企微userid(必填匹配键)/手机号(选填)/是否员工/状态/合并指向）
    ├─ demand_org     （组织树，管理员可CRUD；创金零售回流数据用于校准）
    ├─ channel_user_mapping （渠道用户ID → OneID，存回调原始快照）
-   └─ demand_role_grant    （业务角色按类型细分：TECH/MATL/TRAIN × MANAGER/HANDLER）
+   └─ demand_role_grant    （四角色族 ADMIN/EXECUTIVE/MANAGER/HANDLER × 组织子树前缀 × demand_type_scope 逗号多选，
+                             NULL=全部 ACTIVE 类型；ADMIN 无业务数据权限、EXECUTIVE 直通）
               │
               ▼
    DemandHub 自有 token（JWT 2h + refresh 8h），不依赖任何外部权限中心
@@ -306,6 +310,11 @@ DemandHub 自有用户与组织
                               └──────────┘
 ```
 
+> 上图 K8s 形态为远期目标；当前实际以 docker-compose 三形态落地：
+> - **dev**：`deploy/docker-compose.yml` 一键中间件（mysql 3307 / redis / minio / nacos / rocketmq），后端本地起，网关 8080。
+> - **test**：`deploy/docker-compose.test.yml` 共 13 容器——网关宿主映射 8180、前端 nginx 同域 8088（PC / 、H5 /h5/、/api 反代）、mysql 3317、contract-mock 8099（契约 Mock，宿主 e2e 签票用）。
+> - **prod**：`deploy/docker-compose.prod.yml` 网关 8080 + 前端 nginx 80 同域（PC / 、H5 /h5/）；system 服务 CHANNEL_SSO_MOCK=false，SECRET_STORE_KEY 与 CHANNEL_LS_* 经 env `:?` 强制注入（缺省拒绝启动）。
+
 ### 6.2 环境规划
 
 | 环境 | 用途 |
@@ -339,6 +348,8 @@ DemandHub 自有用户与组织
 | 隐私 | Agent 对话内容脱敏后再送大模型；个人信息最小化采集 |
 | 网络 | 服务不暴露公网；数据库/缓存仅内网可达；Pod NetworkPolicy 限制 |
 | 备份 | 数据库每日全备 + Binlog 增量；附件定期快照 |
+
+> 落地实现要点：JWT_SECRET 经环境变量注入（dev 默认值仅限本地）；会话存 Redis（access 2h / refresh 8h）；授权变更调 deleteSessionsByUser 仅清 access 会话（refresh 保留，前端无感续期），密码变更与用户合并调 deleteAllSessionsByUser 双清；业务服务经 UserContextFilter 只信网关注入的用户头，直连 8081/8082 返回 401、伪造头一律剥离；verify 回源带熔断——连续 3 次传输层失败开启 30s，开启期快速失败不耗票；渠道配置双轨——CHANNEL_LS_* 环境变量三件套（base_url/app_key/app_secret）齐备时优先于 demand_channel.config_json（仅 CHUANGJIN_LS）；app_secret 落库为 ENC: 密文，经 SecretCrypto AES-GCM 解密，主密钥由 SECRET_STORE_KEY 环境变量注入；CHANNEL_SSO_MOCK=true 仅 dev 暴露 /system/mock-sso/* 内置签票端点，test/prod 必须关闭。
 
 ---
 

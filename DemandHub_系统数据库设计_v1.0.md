@@ -84,7 +84,7 @@ agent_session (Agent 对话，独立)
 demand_stat_daily (预聚合统计，独立)
 ```
 
-> 设计边界：DemandHub 拥有自有用户体系（OneID）与组织树，管理员可在后台维护；各提报渠道自行鉴权，DemandHub 经渠道服务端接口回源核验（一期为创金零售 SSO 票据 verify），经 `channel_user_mapping` 自动匹配（企微 userid > 手机号）或人工绑定到 DemandHub OneID；DemandHub 不直接对接企微接口。
+> 设计边界：DemandHub 拥有自有用户体系（OneID）与组织树，管理员可在后台维护；各提报渠道自行鉴权，DemandHub 经渠道服务端接口回源核验（一期为创金零售 SSO 票据 verify），经 `channel_user_mapping` 自动匹配（既有渠道映射 → 手机号精确 > 企微 userid）或人工绑定到 DemandHub OneID；DemandHub 不直接对接企微接口。
 
 
 
@@ -94,7 +94,7 @@ demand_stat_daily (预聚合统计，独立)
 
 ### 3.1 渠道接入、自有用户与业务角色域
 
-> **设计原则**：DemandHub 拥有自有用户体系（OneID）与组织树；一期创金零售渠道以一次性 SSO 票据回源核验身份，PC 管理端用账号密码登录；核验后经 `channel_user_mapping` 自动匹配（企微 userid > 手机号）或人工绑定到 OneID；DemandHub 不直接对接企微接口。
+> **设计原则**：DemandHub 拥有自有用户体系（OneID）与组织树；一期创金零售渠道以一次性 SSO 票据回源核验身份，PC 管理端用账号密码登录；核验后经 `channel_user_mapping` 自动匹配（既有渠道映射 → 手机号精确 > 企微 userid）或人工绑定到 OneID；DemandHub 不直接对接企微接口。
 
 #### 3.1.1 `demand_channel` 渠道注册表
 
@@ -110,6 +110,8 @@ demand_stat_daily (预聚合统计，独立)
 | created_at / updated_at | | | |
 
 > 新渠道接入 = 加一行配置 + 写一个渠道适配器（票据校验/回调），不改表结构。一期仅启用 CHUANGJIN_LS（H5）与内置 WEB（PC 账密），WECOM_APP/机器人等预留 DISABLED。
+>
+> config_json 仅 CHUANGJIN_LS 使用（sso_verify_base_url / app_key / app_secret / ticket_ttl_seconds / timeout_ms）；CHANNEL_LS_* 环境变量三件套（base_url/app_key/app_secret）齐备时优先于库内配置；app_secret 落库为 ENC: 密文（SecretCrypto AES-GCM，主密钥由 SECRET_STORE_KEY 环境变量注入）。
 
 #### 3.1.2 `demand_user` DemandHub 自有用户表（OneID）
 
@@ -117,6 +119,9 @@ demand_stat_daily (预聚合统计，独立)
 |---|---|---|---|
 | id | BIGINT UNSIGNED | PK, AUTO_INC | DemandHub OneID |
 | name | VARCHAR(64) | NOT NULL | 姓名 |
+| login_name | VARCHAR(64) | UNIQUE | PC 登录账号 |
+| password_hash | VARCHAR(100) | | BCrypt 密码哈希（仅 PC 账号密码登录） |
+| password_updated_at | DATETIME(3) | | NULL = 需强制改密 |
 | phone | VARCHAR(32) | UNIQUE | 手机号（脱敏存储，选填，辅助匹配键） |
 | wecom_userid | VARCHAR(64) | UNIQUE | 企微 userid（verify 必填回传，首选匹配/建号主键） |
 | employee_no | VARCHAR(32) | | 工号（员工才有） |
@@ -129,7 +134,7 @@ demand_stat_daily (预聚合统计，独立)
 | last_login_at | DATETIME(3) | | 最近登录时间 |
 | created_at / updated_at | | | |
 
-索引：`uk_phone(phone)`、`uk_wecom_userid(wecom_userid)`、`idx_primary_org(primary_org_id)`、`idx_status(status)`、`idx_is_employee(is_employee)`。
+索引：`uk_login_name(login_name)`、`uk_phone(phone)`、`uk_wecom_userid(wecom_userid)`、`idx_primary_org(primary_org_id)`、`idx_status(status)`、`idx_is_employee(is_employee)`。
 
 > 新渠道用户首次核验时：企微 userid（必填主键）/手机号（选填）命中已有 OneID 则直接建映射；未命中时，创金零售票据有效且带回企微 userid 的自动建 ACTIVE 员工账号（手机/部门缺失不阻塞；部门按 dept_id 经 external_dept_id 映射，未映射挂“未分配组织”虚拟节点）；仅外部渠道身份不全的用户才建 PENDING 记录进管理员“待完善”队列，创金零售渠道缺必填 user_id/name 属协议错误（40005），拒绝登录且不建号。重复 OneID 执行合并，原记录置 MERGED 并迁移数据。
 
@@ -179,7 +184,7 @@ demand_stat_daily (预聚合统计，独立)
 | demand_user_id | BIGINT UNSIGNED NOT NULL | 引用 demand_user.id |
 | role_code | VARCHAR(32) NOT NULL | 见下方角色枚举 |
 | org_id | BIGINT UNSIGNED NULL | 授权组织范围（引用 demand_org.id，空 = 不限） |
-| demand_type_scope | VARCHAR(256) | 覆盖类型范围，逗号分隔；空 = 跟随角色默认 |
+| demand_type_scope | VARCHAR(256) | 需求类型集合，逗号多选（白名单 ^[A-Z0-9_]+$ 逐段校验）；NULL = 全部 ACTIVE 类型 |
 | effective_from | DATETIME(3) | 生效起 |
 | effective_to | DATETIME(3) NULL | 生效止 |
 | granted_by | BIGINT UNSIGNED | 授予人（demand_user.id） |
@@ -187,13 +192,34 @@ demand_stat_daily (预聚合统计，独立)
 
 索引：`uk_grant(demand_user_id, role_code, org_id, demand_type_scope, is_deleted)`、`idx_org(org_id)`、`idx_role(role_code)`。
 
-> 业务角色编码固定为：
-> - ADMIN（系统管理员）
-> - EXECUTIVE（需求管理者，零售线领导）
-> - TECH_MANAGER / MATL_MANAGER / TRAIN_MANAGER（科技/物料/培训需求经理）
-> - TECH_HANDLER / MATL_HANDLER / TRAIN_HANDLER（科技/物料/培训需求处理人）
+> 业务角色编码固定为四角色族（与本节 DDL 注释一致）：
+> - ADMIN（系统管理员，无业务数据权限）
+> - EXECUTIVE（需求管理者，零售线领导，数据权限直通）
+> - MANAGER（需求经理）
+> - HANDLER（需求处理人）
 >
+> 管哪类由 demand_type_scope 表达（逗号多选，NULL=全部 ACTIVE 类型），管哪片由 org_id 组织子树前缀表达。
+> uk_grant 唯一键含 is_deleted；回收授权时将 is_deleted 置为行 id（避免已删行互撞）。
 > 不设"需求提报人"角色——任何登录用户默认可提报需求。一个用户可拥有多条授权（如既是科技处理人又是物料经理）。
+
+#### 3.1.6 `channel_dept_unmapped` 渠道部门校准清单
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | BIGINT UNSIGNED | PK, AUTO_INC | |
+| channel_code | VARCHAR(32) | NOT NULL | 渠道码 |
+| dept_id | VARCHAR(32) | NOT NULL | 渠道侧部门 ID（verify 回传，demand_org.external_dept_id 未命中） |
+| dept_name | VARCHAR(128) | | 渠道回传部门名 |
+| dept_path | VARCHAR(256) | | 渠道回传部门路径 |
+| sample_channel_user_id | VARCHAR(64) | | 最近命中该部门的渠道用户 ID（回传用户排查样本） |
+| hit_count | INT | NOT NULL DEFAULT 1 | 未映射命中次数 |
+| first_seen_at / last_seen_at | DATETIME(3) | | 首次/最近回流时间 |
+
+唯一索引：`uk_channel_dept(channel_code, dept_id)`。
+
+> verify 回传 dept_id 未命中 external_dept_id 时，由 ChannelDeptCalibrateService 回流本清单（命中计数累加），用户挂外部虚拟组织 900、不阻塞登录提报；管理员在 P4 管理端据此补 external_dept_id 映射完成校准。
+>
+> 旧库迁移说明：旧表 demand_user_snapshot / demand_org_snapshot / 旧结构 demand_role_grant 已改名 *_legacy 保留一迭代（回滚用），真实 DDL 见 deploy/mysql/init/06-rebuild-user-domain.sql、07-channel-sso-p3.sql。
 
 
 
@@ -234,8 +260,8 @@ demand_stat_daily (预聚合统计，独立)
 | on\_hold                                                                      | TINYINT(1) DEFAULT 0                   | 挂起叠加态                                                                                                      |
 | hold\_reason                                                                  | VARCHAR(256)                           |                                                                                                            |
 | hold\_snapshot\_status                                                        | VARCHAR(32)                            | 挂起前主状态                                                                                                     |
-| submitter\_id                                                                 | BIGINT UNSIGNED NOT NULL, FK→sys\_user | 提报人（代办人）                                                                                                   |
-| actual\_demander\_id                                                          | BIGINT UNSIGNED, FK→sys\_user          | 实际需求人                                                                                                      |
+| submitter\_id                                                                 | BIGINT UNSIGNED NOT NULL, FK→demand\_user | 提报人（代办人）                                                                                                   |
+| actual\_demander\_id                                                          | BIGINT UNSIGNED, FK→demand\_user          | 实际需求人                                                                                                      |
 | submitter\_org\_id                                                            | BIGINT UNSIGNED                        | 提报人部门快照                                                                                                    |
 | submitter\_org\_snapshot                                                      | VARCHAR(256)                           | 提报人部门名称快照                                                                                                  |
 | channel                                                                       | VARCHAR(32)                            | WEB / CHUANGJIN\_LS / WECOM\_BOT / VOICE                                                                       |
@@ -355,6 +381,23 @@ demand_stat_daily (预聚合统计，独立)
 | created\_at  |                    |                                     |
 
 索引：`idx_biz(biz_type, biz_id)`。
+
+#### 3.2.9 `state_machine_config` 状态机配置表（支持热刷新）
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | BIGINT UNSIGNED | PK, AUTO_INC | |
+| config_key | VARCHAR(64) | UNIQUE | 配置标识，demand_type.state_machine_key 引用（DEFAULT 为兜底） |
+| config_name | VARCHAR(128) | NOT NULL | 配置名 |
+| config_json | MEDIUMTEXT | NOT NULL | 流转规则 JSON：`{"rules":[{"from","event","to","roles","remark"}]}`，即 from_status/event/to_status 三元组 + 角色门禁 |
+| status | VARCHAR(16) | NOT NULL DEFAULT 'ACTIVE' | ACTIVE / DISABLED（相当于 enabled 开关） |
+| remark | VARCHAR(512) | | |
+| created_at / updated_at | | | |
+
+唯一索引：`uk_config_key(config_key)`。
+
+> rules 中 roles 为五档角色门禁：ANY_AUTHENTICATED（任意登录用户）/ MANAGER / HANDLER / HANDLER_OR_MANAGER / EXECUTIVE_ONLY；字段回填 fieldUpdater 由业务层 Bean 提供（如分派写入处理人、验收写入评分），引擎校验通过后执行。
+> 配置热刷新：DB 配置经 StateMachineConfig.refreshDbTables 整体替换、无需重启即时生效；同 key 覆盖代码内置默认表，未配置 key 回落 DEFAULT。真实 DDL 见 deploy/mysql/init/01-schema.sql（04-schema-m7m8.sql 同构幂等）。
 
 
 
@@ -520,7 +563,7 @@ demand_stat_daily (预聚合统计，独立)
 | id                     | BIGINT UNSIGNED PK   |                         |
 | demand\_id             | BIGINT UNSIGNED NULL |                         |
 | receiver\_id           | BIGINT UNSIGNED      | 接收人                     |
-| channel                | VARCHAR(16)          | IN\_APP / WECOM         |
+| channel                | VARCHAR(16)          | IN\_SITE / WECOM       |
 | template\_code         | VARCHAR(64)          | 模板编码                    |
 | title                  | VARCHAR(256)         |                         |
 | content                | TEXT                 |                         |
@@ -1200,7 +1243,7 @@ CREATE TABLE notification (
 
 &#x20; receiver\_id   BIGINT UNSIGNED NOT NULL,
 
-&#x20; channel       VARCHAR(16) NOT NULL DEFAULT 'IN\_APP',
+&#x20; channel       VARCHAR(16) NOT NULL DEFAULT 'IN\_SITE',
 
 &#x20; template\_code VARCHAR(64) NULL,
 
@@ -1313,15 +1356,37 @@ SET FOREIGN\_KEY\_CHECKS = 1;
 
 ### 5.1 业务角色授权说明
 
-> 业务角色编码已在 demand_role_grant.role_code 中固定（ADMIN / EXECUTIVE / TECH_MANAGER / MATL_MANAGER / TRAIN_MANAGER / TECH_HANDLER / MATL_HANDLER / TRAIN_HANDLER），无需独立角色表。授权由系统管理员在 DemandHub 后台操作，非初始化数据。示例：
+> 业务角色编码已在 demand_role_grant.role_code 中固定为四角色族（ADMIN / EXECUTIVE / MANAGER / HANDLER），无需独立角色表。授权由系统管理员在 DemandHub 后台操作，非初始化数据。
 
-\-- INSERT INTO demand_role_grant(demand_user_id, role_code, org_id, granted_by) VALUES
---   ('u_admin_001', 'ADMIN',        NULL, 'u_admin_001'),
---   ('u_exec_001',   'EXECUTIVE',     NULL, 'u_admin_001'),
---   ('u_mgr_tech',   'DEMAND_MANAGER', 128, 'u_admin_001'),
---   ('u_handler_1', 'HANDLER',       128, 'u_mgr_tech'),
---   ('u_reporter_1','REPORTER',      NULL, 'u_admin_001');
-\
+种子组织树（id 100~141，真实种子见 deploy/mysql/init/06-rebuild-user-domain.sql）：
+
+```
+INSERT INTO demand_org(id, name, level, parent_id, path, org_kind, external_flag, status) VALUES
+(100, '创金合信零售业务线', 'LINE',  0,   '/100/',        'BOTH',     0, 'ACTIVE'),
+(110, '财管科技产品部',     'DEPT',  100, '/100/110/',    'BOTH',     0, 'ACTIVE'),
+(111, '科技产品一组',       'GROUP', 110, '/100/110/111/','ASSIGNER', 0, 'ACTIVE'),
+(112, '科技产品二组',       'GROUP', 110, '/100/110/112/','ASSIGNER', 0, 'ACTIVE'),
+(120, '客户陪伴服务部',     'DEPT',  100, '/100/120/',    'BOTH',     0, 'ACTIVE'),
+(121, '客户陪伴一组',       'GROUP', 120, '/100/120/121/','ASSIGNER', 0, 'ACTIVE'),
+(130, '培训开发部',         'DEPT',  100, '/100/130/',    'BOTH',     0, 'ACTIVE'),
+(131, '培训开发一组',       'GROUP', 130, '/100/130/131/','ASSIGNER', 0, 'ACTIVE'),
+(140, '零售一线营业部',     'DEPT',  100, '/100/140/',    'REPORTER', 0, 'ACTIVE'),
+(141, '营业部一组',         'GROUP', 140, '/100/140/141/','REPORTER', 0, 'ACTIVE'),
+(900, '外部/待确认',        'DEPT',  0,   '/900/',        NULL,       1, 'ACTIVE');
+```
+
+种子用户与授权（1001 admin 首个系统管理员，初始密码 Admin@123456，password_updated_at=NULL 首登强制改密；1006 无角色）：
+
+```
+INSERT INTO demand_role_grant(demand_user_id, role_code, org_id, demand_type_scope, granted_by) VALUES
+(1001, 'ADMIN',     NULL, NULL,   1001),   -- 张管理
+(1002, 'EXECUTIVE', NULL, NULL,   1001),   -- 李总
+(1003, 'MANAGER',   110,  'TECH', 1001),   -- 王经理：财管科技产品部科技需求经理
+(1004, 'HANDLER',   121,  'MATL', 1001),   -- 陈陪伴：客户陪伴一组物料处理人
+(1005, 'HANDLER',   131,  'TRAIN',1001),   -- 刘培训：培训开发一组培训处理人
+-- 1006 赵一线：无角色（默认提报人）
+(1007, 'HANDLER',   111,  'TECH', 1001);   -- 钱一线兼任科技产品一组处理人
+```
 ### 5.2 需求类型初始化
 
 
@@ -1329,11 +1394,11 @@ SET FOREIGN\_KEY\_CHECKS = 1;
 ```
 INSERT INTO demand\_type(type\_code, type\_name, default\_org\_id, state\_machine\_key, sort) VALUES
 
-('TECH',   '科技需求',  /\* 财管科技产品部 org\_id \*/ NULL, 'DEFAULT', 1),
+('TECH',   '科技需求',  111 /* 科技产品一组 */,   'DEFAULT', 1),
 
-('MATL',   '物料需求',  /\* 客户陪伴服务部 org\_id \*/ NULL, 'DEFAULT', 2),
+('MATL',   '物料需求',  121 /* 客户陪伴一组 */,   'DEFAULT', 2),
 
-('TRAIN',  '培训需求',  /\* 培训开发部 org\_id \*/     NULL, 'DEFAULT', 3);
+('TRAIN',  '培训需求',  131 /* 培训开发一组 */,   'DEFAULT', 3);
 ```
 
 ### 5.3 字典初始化

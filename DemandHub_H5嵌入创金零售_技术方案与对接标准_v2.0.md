@@ -224,7 +224,7 @@ POST\n{path}\n{X-App-Key}\n{X-Timestamp}\n{X-Nonce}\n{body 原文}
 | dept_name / dept_path | 选填 | 部门未映射时辅助校准 |
 | employee_no / email | 选填 | 后续打通工号 / 通知用 |
 
-> **必填仅 user_id（企微 ID）与 name；手机号、部门、工号、邮箱均为选填**，如受敏感信息权限限制拿不到则留空，**不阻塞登录与提报**；DemandHub 一律以 user_id（企微 userid）为建号与匹配主键，匹配优先级：企微 userid > 手机号。
+> **必填仅 user_id（企微 ID）与 name；手机号、部门、工号、邮箱均为选填**，如受敏感信息权限限制拿不到则留空，**不阻塞登录与提报**；DemandHub 以 user_id（企微 userid）为渠道映射与建号主键，OneID 匹配优先级：既有渠道映射 → 手机号精确 > 企微 userid → 自动建号；已合并（MERGED）用户自动跳转目标 OneID。
 
 **错误响应**
 
@@ -290,7 +290,7 @@ POST {ls\_base\_url}/openapi/demandhub/notify/send
 
 * 收到 ticket 后由 DemandHub 后端回源 verify，通过后签发 DemandHub 自有 JWT（access 2h、refresh 8h，无感续期）；
 
-* 同一员工多次进入自动识别为同一用户（按企微 userid > 手机号匹配 OneID）；
+* 同一员工多次进入自动识别为同一用户（按 既有渠道映射 → 手机号精确 > 企微 userid 匹配 OneID，未命中自动建号；已合并 MERGED 用户自动跳转目标 OneID）；
 
 * 首次进入的在职员工**自动开通**（verify 返回必填 user_id、name 即视为贵司在职人员），无需管理员预先建号，可立即提报；手机/部门等选填字段缺失不阻塞，仅在管理员后台标记“资料待补全”；缺必填 user_id/name 按 40005 拒绝登录。
 
@@ -401,4 +401,4 @@ POST {ls\_base\_url}/openapi/demandhub/notify/send
 | ---- | ---------- | ------------------------------------------------------------------------------------- |
 | v1.0 | 2026-09-22 | 初稿：路由跳转 + DemandHub 独立企微应用 OAuth                                                      |
 | v2.0 | 2026-09-22 | 改为渠道 SSO 票据模式：DemandHub 不注册企微应用；新增 ticket/verify 接口标准、签名规范、错误码、异常态、二期代发通知、AC-07/08    |
-| v2.1 | 2026-09-22 | 细化身份传递：明确跳转 URL 只带 ticket、不得带明文身份；身份字段仅经 verify 响应体返回；**冻结字段口径：user_id（企微ID）、name 必填，手机/部门/工号/邮箱选填，匹配优先级企微 userid > 手机号**；补充渠道识别与来源落库链路（4.4） |
+| v2.1 | 2026-09-22 | 细化身份传递：明确跳转 URL 只带 ticket、不得带明文身份；身份字段仅经 verify 响应体返回；**冻结字段口径：user_id（企微ID）、name 必填，手机/部门/工号/邮箱选填，匹配优先级为 既有渠道映射 → 手机号精确 > 企微 userid → 自动建号（历史口径曾为 userid 优先）**；补充渠道识别与来源落库链路（4.4） |

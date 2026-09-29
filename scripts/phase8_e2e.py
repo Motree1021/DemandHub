@@ -69,10 +69,14 @@ def upload(token, biz_type, biz_id, filename, content: bytes):
         return e.code, json.loads(e.read().decode("utf-8", errors="replace"))
 
 
-def login(user_id):
-    status, body = req("GET", f"/system/auth/callback?code=mock-{user_id}")
-    assert status == 200 and body["code"] == 0, f"login {user_id} failed: {body}"
-    return body["data"]["accessToken"]
+def login(channel_user_id):
+    """P2 重构后登录链路：mock-sso 签票（60s 一次性）→ channel-sso 核销换 JWT"""
+    s, b = req("POST", "/system/mock-sso/ticket", body={"channelUserId": channel_user_id})
+    assert s == 200 and b["code"] == 0, f"签票失败 {channel_user_id}: {b}"
+    ticket = b["data"]["ticket"]
+    s, b = req("GET", f"/system/auth/channel-sso?channel=chuangjinls&ticket={ticket}")
+    assert s == 200 and b["code"] == 0, f"login {channel_user_id} failed: {b}"
+    return b["data"]["accessToken"]
 
 
 def must_ok(step, status, body):
@@ -125,14 +129,18 @@ def main():
     cur = conn.cursor()
 
     print("== 登录 ==")
-    exec_t = login("u_exec_001")        # 李总 EXECUTIVE（跨组织）
-    mgr_t = login("u_mgr_tech")         # 王经理 DEMAND_MANAGER@110
-    reporter1_t = login("u_reporter_1") # 赵一线 REPORTER
-    reporter2_t = login("u_reporter_2") # 钱一线 REPORTER + HANDLER@111（科技处理人）
-    handler_a_t = login("u_handler_a1") # 陈陪伴 HANDLER@121
-    handler_b_t = login("u_handler_b1") # 刘培训 HANDLER@131
+    # 熔断预热：若前序套件（如 phase3 熔断用例）残留开启态，等 31s 自愈后再登
+    try:
+        login("wq_u_reporter_1")
+    except AssertionError:
+        print(".. 检测到熔断残留，等待 31s 恢复")
+        time.sleep(31)
+        login("wq_u_reporter_1")
+    mgr_t = login("wq_u_mgr_tech")         # 1003 王经理 MANAGER@110 TECH
+    reporter1_t = login("wq_u_reporter_1") # 1006 赵一线（无角色，提报人）
+    reporter2_t = login("wq_u_reporter_2") # 1007 钱一线 HANDLER@111（科技处理人）
 
-    TECH_HANDLER_ID = 1007  # u_reporter_2（seed 授权 HANDLER@111 科技产品一组）
+    TECH_HANDLER_ID = 1007  # 钱一线（seed 授权 HANDLER@111 科技产品一组）
 
     # =====================================================
     # CP1 科技需求全流程（10 节点）
@@ -222,26 +230,46 @@ def main():
     # CP2 物料/培训需求主干：提报→受理→关闭
     # =====================================================
     print("\n== CP2 物料/培训主干 ==")
-    for type_code, handler_t, name in (("MATL", handler_a_t, "物料"), ("TRAIN", handler_b_t, "培训")):
-        ext = {"materialSubtype": "折页", "usageScenario": "路演", "quantity": 5000,
-               "expectedArrivalAt": "2026-10-01T00:00:00"} if type_code == "MATL" else {
-            "trainingSubtype": "从业资格", "traineeObject": "新员工", "traineeCount": 12,
-            "expectedCompleteAt": "2026-11-30T00:00:00"}
-        status, body = req("POST", "/demand/demand/submit", reporter1_t, {
-            "title": f"E2E{name}-{uuid.uuid4().hex[:6]}", "demandTypeCode": type_code,
-            "content": f"E2E {name}需求主干验证", "urgency": "NORMAL", "ext": ext})
-        must_ok(f"{name}提报", status, body)
-        mid = body["data"]["id"]
-        report(f"{name}提报编号前缀", body["data"]["demandNo"].startswith(type_code + "-"),
-               body["data"]["demandNo"])
-        # 受理：121/131 非 mgr_tech 管辖，走 EXECUTIVE（李总全线）
-        status, body = req("POST", f"/demand/triage/{mid}/accept", exec_t, {"comment": "受理"})
-        must_ok(f"{name}受理", status, body)
-        expect_status(exec_t, mid, "TRIAGE", f"{name}受理")
-        status, body = req("POST", f"/demand/triage/{mid}/close", exec_t, {"reason": "E2E 主干验证关闭"})
-        must_ok(f"{name}关闭", status, body)
-        expect_status(exec_t, mid, "CLOSED", f"{name}关闭")
-        report(f"  通知:CLOSE({name})", wait_notification("CLOSE", mid) > 0)
+    # P4 后受理/关闭接口 @RequireRole("MANAGER")，EXECUTIVE 不再可行；
+    # 121/131 非王经理(1003) 管辖 → admin 临时授权 MANAGER×120×MATL / MANAGER×130×TRAIN
+    # （120/130 物化路径前缀覆盖 121/131），用完回收，避免残留影响 phase4 矩阵断言。
+    s, b = req("POST", "/system/auth/login", body={"loginName": "admin", "password": "Admin@123456"})
+    must_ok("admin 账密登录", s, b)
+    admin_t = b["data"]["accessToken"]
+    grant_ids = []
+    try:
+        for scope, org_id in (("MATL", 120), ("TRAIN", 130)):
+            s, b = req("POST", "/system/grant", admin_t,
+                       {"demandUserId": 1003, "roleCode": "MANAGER", "orgId": org_id,
+                        "demandTypeScope": scope})
+            must_ok(f"临时授权({scope})", s, b)
+            grant_ids.append(b["data"])
+        mgr_t = login("wq_u_mgr_tech")  # 授权后重新登录取新 claims
+
+        for type_code, name in (("MATL", "物料"), ("TRAIN", "培训")):
+            ext = {"materialSubtype": "折页", "usageScenario": "路演", "quantity": 5000,
+                   "expectedArrivalAt": "2026-10-01T00:00:00"} if type_code == "MATL" else {
+                "trainingSubtype": "从业资格", "traineeObject": "新员工", "traineeCount": 12,
+                "expectedCompleteAt": "2026-11-30T00:00:00"}
+            status, body = req("POST", "/demand/demand/submit", reporter1_t, {
+                "title": f"E2E{name}-{uuid.uuid4().hex[:6]}", "demandTypeCode": type_code,
+                "content": f"E2E {name}需求主干验证", "urgency": "NORMAL", "ext": ext})
+            must_ok(f"{name}提报", status, body)
+            mid = body["data"]["id"]
+            report(f"{name}提报编号前缀", body["data"]["demandNo"].startswith(type_code + "-"),
+                   body["data"]["demandNo"])
+            status, body = req("POST", f"/demand/triage/{mid}/accept", mgr_t, {"comment": "受理"})
+            must_ok(f"{name}受理", status, body)
+            expect_status(mgr_t, mid, "TRIAGE", f"{name}受理")
+            status, body = req("POST", f"/demand/triage/{mid}/close", mgr_t, {"reason": "E2E 主干验证关闭"})
+            must_ok(f"{name}关闭", status, body)
+            expect_status(mgr_t, mid, "CLOSED", f"{name}关闭")
+            report(f"  通知:CLOSE({name})", wait_notification("CLOSE", mid) > 0)
+    finally:
+        for gid in grant_ids:
+            req("DELETE", f"/system/grant/{gid}", admin_t)
+        # 授权/回收会 deleteSessionsByUser 使旧 access 会话失效，重新登录供 CP3/CP4 使用
+        mgr_t = login("wq_u_mgr_tech")
 
     # =====================================================
     # CP3 挂起/恢复全流程
