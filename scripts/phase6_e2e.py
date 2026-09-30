@@ -160,7 +160,7 @@ d1 = (b.get("data") or {}).get("id")
 db_ch1 = db("SELECT channel FROM demand WHERE id=%s", (d1,), fetch=True)[0][0] if d1 else None
 report("1.4 提报落库CHUANGJIN_LS", s == 200 and b["code"] == 0 and db_ch1 == "CHUANGJIN_LS", f"db={db_ch1}")
 
-# ADMIN 按设计无业务数据权限(noAccess)，来源筛选用 EXECUTIVE(1002，种子映射 wq_u_exec_001)
+# ADMIN 已放行全部业务操作与数据范围（P12 产品决策），此处沿用 EXECUTIVE(1002，种子映射 wq_u_exec_001) 验证业务角色视角
 exec_tok, _ = sso_token("wq_u_exec_001")
 s, b = req("GET", "/demand/demand/page?channel=CHUANGJIN_LS&size=100", token=exec_tok)
 titles = [r.get("title") for r in ((b.get("data") or {}).get("records") or [])]

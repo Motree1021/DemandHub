@@ -105,15 +105,13 @@ class DataScopeServiceTest {
     }
 
     @Test
-    void adminOnly_reporterOnlyNoBusinessScope() {
+    void adminOnly_bypassesAllFiltering() {
+        // 产品决策：ADMIN 超级用户放行全部业务操作与数据范围（与 EXECUTIVE 同构直通）
         when(grantMapper.selectList(any())).thenReturn(List.of(grant("ADMIN", null, null)));
 
         DataScope scope = dataScopeService.currentScope(user());
 
-        assertFalse(scope.isBypass());
-        assertTrue(scope.isReporter());
-        assertTrue(scope.getOrgIdsByType().isEmpty());
-        assertEquals(1003L, scope.getUserId());
+        assertTrue(scope.isBypass());
     }
 
     @Test

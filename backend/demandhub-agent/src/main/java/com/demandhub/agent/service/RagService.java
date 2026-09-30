@@ -6,6 +6,7 @@ import com.demandhub.agent.entity.KnowledgeDocEntity;
 import com.demandhub.agent.entity.ReviewView;
 import com.demandhub.agent.entity.SolutionRowEntity;
 import com.demandhub.agent.llm.LlmClient;
+import com.demandhub.agent.llm.LlmUnavailableException;
 import com.demandhub.agent.llm.MockEmbedding;
 import com.demandhub.agent.mapper.AgentDemandViewMapper;
 import com.demandhub.agent.mapper.KnowledgeDocMapper;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * RAG 知识库（FR-M9-03 / 架构 4.7）：
@@ -59,7 +61,14 @@ public class RagService {
         if (demand == null) {
             return List.of();
         }
-        double[] queryVec = llmClient.embed(demand.getTitle() + "\n" + (demand.getContent() == null ? "" : demand.getContent()));
+        final double[] queryVec;
+        try {
+            queryVec = llmClient.embed(demand.getTitle() + "\n" + (demand.getContent() == null ? "" : demand.getContent()));
+        } catch (LlmUnavailableException e) {
+            // embedding 平台不可用：相似推荐降级为空，不影响处理主流程
+            log.warn("[RAG] embedding 不可用，相似推荐跳过, demandId={}", demandId);
+            return List.of();
+        }
         List<KnowledgeDocEntity> docs = knowledgeDocMapper.selectList(new LambdaQueryWrapper<KnowledgeDocEntity>()
                 .eq(KnowledgeDocEntity::getStatus, "ACTIVE")
                 .ne(KnowledgeDocEntity::getDemandId, demandId));
@@ -142,10 +151,35 @@ public class RagService {
         doc.setTitle(demand.getTitle());
         doc.setDemandTypeCode(demand.getDemandTypeCode());
         doc.setContent(content.toString());
-        doc.setEmbedding(MockEmbedding.toJson(llmClient.embed(content.toString())));
+        try {
+            doc.setEmbedding(MockEmbedding.toJson(llmClient.embed(content.toString())));
+        } catch (LlmUnavailableException e) {
+            // embedding 平台不可用：本次向量化跳过（可由 /rag/reembed-all 或 /rag/vectorize 补偿）
+            log.warn("[RAG] embedding 不可用，向量化跳过, demandId={}", demandId);
+            return;
+        }
         doc.setStatus("ACTIVE");
         knowledgeDocMapper.insert(doc);
         log.info("[RAG] 需求 {} 已向量化入库（{} 字）", demand.getDemandNo(), content.length());
+    }
+
+    /** 重建全部知识向量（切换 embedding 模型/维度后执行；逐篇容错，失败计数不中断） */
+    public Map<String, Object> reembedAll() {
+        List<KnowledgeDocEntity> docs = knowledgeDocMapper.selectList(null);
+        int success = 0;
+        int failed = 0;
+        for (KnowledgeDocEntity doc : docs) {
+            try {
+                doc.setEmbedding(MockEmbedding.toJson(llmClient.embed(doc.getContent())));
+                knowledgeDocMapper.updateById(doc);
+                success++;
+            } catch (Exception e) {
+                failed++;
+                log.warn("[RAG] 重建向量失败, docId={}, reason={}", doc.getId(), e.getMessage());
+            }
+        }
+        log.info("[RAG] 向量重建完成：total={}, success={}, failed={}", docs.size(), success, failed);
+        return Map.of("total", docs.size(), "success", success, "failed", failed);
     }
 
     /** 知识库规模（健康检查/自测用） */

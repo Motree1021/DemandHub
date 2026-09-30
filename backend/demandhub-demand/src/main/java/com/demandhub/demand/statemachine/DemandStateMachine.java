@@ -130,7 +130,8 @@ public class DemandStateMachine {
         DemandStatus from = held ? DemandStatus.ON_HOLD : DemandStatus.valueOf(demand.getStatus());
         try {
             TransitionRule rule = findRule(demand, from, event);
-            return rule.roles().isEmpty() || operator.getRoles().stream().anyMatch(rule.roles()::contains);
+            return rule.roles().isEmpty() || operator.isAdmin()
+                    || operator.getRoles().stream().anyMatch(rule.roles()::contains);
         } catch (BizException e) {
             return false;
         }
@@ -153,6 +154,10 @@ public class DemandStateMachine {
 
     private void checkRole(TransitionRule rule, CurrentUser operator, DemandEvent event) {
         if (rule.roles().isEmpty()) {
+            return;
+        }
+        // ADMIN 超级用户直通：放行全部业务操作
+        if (operator.getRoles() != null && operator.getRoles().contains("ADMIN")) {
             return;
         }
         boolean ok = operator.getRoles() != null && operator.getRoles().stream().anyMatch(rule.roles()::contains);

@@ -33,6 +33,10 @@ public class RequireRoleAspect {
         if (UserContext.get() == null) {
             throw new BizException(ErrorCode.UNAUTHORIZED);
         }
+        // ADMIN 超级用户直通：放行全部业务操作
+        if (UserContext.get().isAdmin()) {
+            return;
+        }
         boolean ok = Arrays.stream(requireRole.value()).anyMatch(UserContext::hasRole);
         if (!ok) {
             throw new BizException(ErrorCode.FORBIDDEN);

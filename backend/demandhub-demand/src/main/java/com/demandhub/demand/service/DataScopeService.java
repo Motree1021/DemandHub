@@ -92,14 +92,17 @@ public class DataScopeService {
         if (roles.contains("EXECUTIVE")) {
             return DataScope.bypass();
         }
+        // ADMIN 超级用户：全线直通（产品决策：放行全部业务操作与数据范围）
+        if (roles.contains("ADMIN")) {
+            return DataScope.bypass();
+        }
 
         DataScope scope = new DataScope();
         scope.setUserId(user.getId());
         // 角色族版（D1）：不设提报人角色，任何登录用户均可看自己提报的需求
         scope.setReporter(true);
 
-        // 仅系统管理员/无业务角色：不参与业务流，仅提报人范围
-        roles.remove("ADMIN");
+        // 无业务角色：不参与业务流，仅提报人范围
         if (roles.isEmpty()) {
             return scope;
         }

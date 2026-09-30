@@ -46,7 +46,14 @@ public class OrgScopeService {
      * 双重命中：MANAGER 授权的类型集合含 typeCode 且组织子树覆盖 assigneeOrgId。
      */
     public boolean canManage(CurrentUser user, Long assigneeOrgId, String typeCode) {
-        if (user == null || !user.hasRole("MANAGER")) {
+        if (user == null) {
+            return false;
+        }
+        // ADMIN 超级用户直通：放行全部业务操作
+        if (user.isAdmin()) {
+            return true;
+        }
+        if (!user.hasRole("MANAGER")) {
             return false;
         }
         DataScope scope = dataScopeService.currentScope(user);
@@ -64,7 +71,14 @@ public class OrgScopeService {
      * 当前用户是否可作为处理人领取指定承接组织、指定类型需求（HANDLER 授权双重命中）。
      */
     public boolean canHandle(CurrentUser user, Long assigneeOrgId, String typeCode) {
-        if (user == null || !user.hasRole("HANDLER") || assigneeOrgId == null || typeCode == null) {
+        if (user == null || assigneeOrgId == null || typeCode == null) {
+            return false;
+        }
+        // ADMIN 超级用户直通：放行全部业务操作
+        if (user.isAdmin()) {
+            return true;
+        }
+        if (!user.hasRole("HANDLER")) {
             return false;
         }
         DataScope scope = dataScopeService.currentScope(user);

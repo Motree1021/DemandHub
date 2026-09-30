@@ -61,17 +61,22 @@ public final class MockEmbedding {
         return sb.append(']').toString();
     }
 
+    /**
+     * JSON 数组 → 向量（维度动态，由数组长度决定）。
+     * Mock 128 维与真实平台（如豆包 2048 维）向量共存：余弦要求等长，跨维度比较得 0 分，
+     * 切换 embedding 模型后须调 /agent/admin/rag/reembed-all 重灌存量向量。
+     */
     public static double[] fromJson(String json) {
-        double[] vec = new double[DIM];
         if (json == null || json.length() < 2) {
-            return vec;
+            return new double[0];
         }
         String body = json.substring(1, json.length() - 1);
         if (body.isBlank()) {
-            return vec;
+            return new double[0];
         }
         String[] parts = body.split(",");
-        for (int i = 0; i < Math.min(parts.length, DIM); i++) {
+        double[] vec = new double[parts.length];
+        for (int i = 0; i < parts.length; i++) {
             try {
                 vec[i] = Double.parseDouble(parts[i].trim());
             } catch (NumberFormatException ignored) {

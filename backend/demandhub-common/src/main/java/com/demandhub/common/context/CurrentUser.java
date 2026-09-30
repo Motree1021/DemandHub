@@ -27,4 +27,9 @@ public class CurrentUser implements Serializable {
     public boolean hasRole(String role) {
         return roles != null && roles.contains(role);
     }
+
+    /** 超级管理员：按产品决策放行全部业务操作与数据范围 */
+    public boolean isAdmin() {
+        return hasRole("ADMIN");
+    }
 }

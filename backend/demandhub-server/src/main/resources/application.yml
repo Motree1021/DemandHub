@@ -56,6 +56,10 @@ demandhub:
   channel-sso:
     mock: ${CHANNEL_SSO_MOCK:true}
     secret-store-key: ${SECRET_STORE_KEY:demandhub-dev-secret-store-key-0123456789}
+  integration:
+    llm:
+      # 大模型接入：true=内置 Mock（默认，本地/测试确定性）；false=火山方舟真实模型（需注入 LLM_API_KEY）
+      mock: ${DEMANDHUB_INTEGRATION_LLM_MOCK:true}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
     access-key: ${MINIO_ACCESS_KEY:demandhub}
@@ -74,6 +78,21 @@ demandhub:
       mock-enabled: true
       chunk-size: 6
       think-delay-ms: 150
+      # 火山方舟（OpenAI 兼容协议）：chat 走 JSON mode，embedding 独立模型；密钥经 env 注入不入仓库
+      ark:
+        base-url: ${ARK_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
+        api-key: ${LLM_API_KEY:}
+        chat-model: ${LLM_CHAT_MODEL:ep-20260930122836-rv2gw}
+        embedding-model: ${LLM_EMBEDDING_MODEL:ep-20260930123423-mq6hq}
+        # vision 类 embedding 走 /embeddings/multimodal（input 类型化部件、data 为对象）；标准文本 embedding 改 false
+        embedding-multimodal: ${LLM_EMBEDDING_MULTIMODAL:true}
+        connect-timeout-ms: 3000
+        # V4-Pro 为推理模型，长上下文需 30s+，放宽到 90s
+        read-timeout-ms: 90000
+        max-tokens: 2000
+        temperature: 0.3
+        failure-threshold: 3
+        failure-cooldown-ms: 60000
 
 springdoc:
   api-docs:

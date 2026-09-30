@@ -21,12 +21,13 @@
             <el-form-item label="需求标题" prop="title" :class="{ 'ai-flash': aiFlash.has('title') }">
               <el-input v-model="form.title" maxlength="100" show-word-limit placeholder="一句话概括你的需求，如：代销看板增加机构持仓维度" />
             </el-form-item>
-            <el-form-item prop="content" :class="{ 'ai-flash': aiFlash.has('content') }">
-              <template #label>
-                需求描述
-                <el-button link type="primary" size="small" style="margin-left: 6px" @click="insertContentTemplate">插入模板</el-button>
-              </template>
-              <el-input v-model="form.content" type="textarea" :rows="5" maxlength="2000" show-word-limit placeholder="请描述业务背景、使用场景、期望效果……可点左上方「插入模板」按 现状痛点/期望效果 两段式填写" />
+            <el-form-item label="需求描述" prop="content" :class="{ 'ai-flash': aiFlash.has('content') }">
+              <div class="content-editor">
+                <div class="content-toolbar">
+                  <el-button link type="primary" size="small" @click="insertContentTemplate">插入模板</el-button>
+                </div>
+                <el-input v-model="form.content" type="textarea" :rows="5" maxlength="2000" show-word-limit placeholder="请描述现状痛点与期望效果……可点右上方「插入模板」按两段式填写；使用场景（谁·什么时候·做什么）请在下方「业务场景」一句话写清" />
+              </div>
             </el-form-item>
             <el-row :gutter="12">
               <el-col :span="12">
@@ -743,6 +744,17 @@ watch(
 
 .type-tabs {
   margin-bottom: 8px;
+}
+
+/* 需求描述编辑器：插入模板按钮置于输入框右上方，避免挤占表单标签换行 */
+.content-editor {
+  width: 100%;
+}
+
+.content-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 2px;
 }
 
 .muted {

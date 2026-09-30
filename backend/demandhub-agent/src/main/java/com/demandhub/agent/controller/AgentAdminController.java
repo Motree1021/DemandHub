@@ -83,4 +83,10 @@ public class AgentAdminController {
         ragService.vectorizeDoneDemand(demandId);
         return Result.ok();
     }
+
+    @Operation(summary = "重建全部知识向量（切换 embedding 模型/维度后执行，逐篇容错）")
+    @PostMapping("/rag/reembed-all")
+    public Result<Map<String, Object>> reembedAll() {
+        return Result.ok(ragService.reembedAll());
+    }
 }

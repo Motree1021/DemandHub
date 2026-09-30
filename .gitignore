@@ -50,3 +50,5 @@ logs/
 # ===== Python（e2e 脚本） =====
 __pycache__/
 *.pyc
+
+h5pub-0.1.0-universal/
