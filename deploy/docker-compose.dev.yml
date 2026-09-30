@@ -1,0 +1,28 @@
+name: demandhub-python-dev
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DEMANDHUB_DEV_DB_PASSWORD:-local-test-only-password}
+      MYSQL_DATABASE: demandhub
+      TZ: Asia/Shanghai
+    ports: ["127.0.0.1:3308:3306"]
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--lower-case-table-names=1"]
+    volumes:
+      - demandhub-python-mysql:/var/lib/mysql
+      - ../server/tests/init-test-db.sql:/docker-entrypoint-initdb.d/01-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h localhost -u root --silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+  contract-mock:
+    build:
+      context: ../server/tests
+      dockerfile: Dockerfile.contract-mock
+    environment:
+      APP_KEY: demandhub-dev
+      APP_SECRET: local-mock-only-secret
+    ports: ["127.0.0.1:8099:8099"]
+volumes:
+  demandhub-python-mysql:

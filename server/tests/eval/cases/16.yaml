@@ -1,0 +1,27 @@
+name: 物料手改保护
+type: MATL
+turns:
+- user: 标题写作「银行客户活动折页」。物料子类写「宣传折页」，数量100份。
+  form_before:
+    title: null
+    demandTypeCode: MATL
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 银行客户活动折页
+      ext.materialSubtype: 宣传折页
+      ext.quantity: 100
+    elements_status:
+      demandTypeCode: OK
+- user: 我在表单中已经把数量改为120了，使用场景补充为「银行客户产品讲解活动」。
+  expect:
+    structured_contains:
+      ext.usageScenario: 银行客户产品讲解活动
+    elements_status:
+      demandTypeCode: OK
+    final_contains:
+      ext.quantity: 120
+  user_patch:
+    ext.quantity: 120

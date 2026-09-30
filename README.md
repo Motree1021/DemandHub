@@ -1,6 +1,12 @@
 # DemandHub 需求管理系统
 
-创金合信基金零售业务线需求管理系统（科技/物料/培训需求全流程管理）。
+创金合信基金零售业务线需求管理系统。当前 Python MVP 只做科技、物料、培训需求的收集、完善和整理记录。
+
+## 当前 Python MVP
+
+新后端在 `server/`，移动端在 `frontend/h5/`。启动、环境变量、测试及镜像说明见 [server/README.md](server/README.md)，本轮完成情况和外部验收边界见 [Python MVP 验收记录](DemandHub_Python_MVP_验收记录.md)。H5 使用 hash 路由和 `/demandhub-api`，开发端口为 5174；在 `frontend/h5/` 执行 `npm ci`、`npm run dev` 即可连接本地 8000 后端。
+
+Java、PC 和旧部署保留作移植参考，后续真正上线并稳定至少三个工作日后再清理。下文为旧 Java 版本说明；新版请按上述入口运行。
 
 ## 仓库结构
 

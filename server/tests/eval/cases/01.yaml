@@ -1,0 +1,23 @@
+name: 业务场景缺角色
+type: TECH
+turns:
+- user: 标题写作「第一版机构持仓报表」。业务场景是「每天晨会前查看机构持仓」，这属于数据报表需求。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 第一版机构持仓报表
+      ext.techSubtype: DATA_RPT
+      ext.businessScenario: 每天晨会前查看机构持仓
+    elements_status:
+      businessScenario: VAGUE
+- user: 业务场景补充为「机构业务部客户经理每天晨会前查看各机构持仓」。
+  expect:
+    structured_contains:
+      ext.businessScenario: 机构业务部客户经理每天晨会前查看各机构持仓
+    elements_status:
+      businessScenario: OK

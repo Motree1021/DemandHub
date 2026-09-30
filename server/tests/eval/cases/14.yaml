@@ -1,0 +1,23 @@
+name: 物料数量修正
+type: MATL
+turns:
+- user: 标题写作「银行网点宣传页」。数量是100份，物料子类写「产品折页」，使用场景是银行网点活动。
+  form_before:
+    title: null
+    demandTypeCode: MATL
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 银行网点宣传页
+      ext.quantity: 100
+      ext.materialSubtype: 产品折页
+    elements_status:
+      demandTypeCode: OK
+- user: 数量纠正为150份。
+  expect:
+    structured_contains:
+      ext.quantity: 150
+    elements_status:
+      demandTypeCode: OK

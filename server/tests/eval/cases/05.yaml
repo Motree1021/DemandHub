@@ -1,0 +1,23 @@
+name: 验收对账
+type: TECH
+turns:
+- user: 标题写作「持仓核对报表」。子类是数据报表，验收标准是「连续一周与核心系统对账误差为0」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 持仓核对报表
+      ext.techSubtype: DATA_RPT
+      ext.acceptanceCriteria: 连续一周与核心系统对账误差为0
+    elements_status:
+      acceptanceCriteria: OK
+- user: 验收标准改为「导出的Excel字段和页面一致」。
+  expect:
+    structured_contains:
+      ext.acceptanceCriteria: 导出的Excel字段和页面一致
+    elements_status:
+      acceptanceCriteria: OK

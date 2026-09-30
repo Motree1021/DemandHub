@@ -1,0 +1,23 @@
+name: 开发权限
+type: TECH
+turns:
+- user: 标题写作「机构查询看板」。子类是系统开发，角色与权限写「全员可查，仅主管可导出」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 机构查询看板
+      ext.techSubtype: SYS_DEV
+      ext.devPermission: 全员可查，仅主管可导出
+    elements_status:
+      techSubtype: OK
+- user: 性能与安全要求写「查询3秒内返回，客户信息脱敏」。
+  expect:
+    structured_contains:
+      ext.devQuality: 查询3秒内返回，客户信息脱敏
+    elements_status:
+      techSubtype: OK

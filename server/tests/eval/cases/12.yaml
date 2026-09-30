@@ -1,0 +1,23 @@
+name: 未知验收补齐
+type: TECH
+turns:
+- user: 标题写作「日报字段补充」。子类是数据报表，涉及的数据来源是「代销系统交易库」。还不知道验收标准，不要编造。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 日报字段补充
+      ext.techSubtype: DATA_RPT
+      ext.dataSource: 代销系统交易库
+    elements_status:
+      acceptanceCriteria: MISSING
+- user: 现在确认验收标准是「3秒内查询完成」。
+  expect:
+    structured_contains:
+      ext.acceptanceCriteria: 3秒内查询完成
+    elements_status:
+      acceptanceCriteria: OK

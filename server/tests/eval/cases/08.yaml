@@ -1,0 +1,24 @@
+name: 子类修正
+type: TECH
+turns:
+- user: 标题写作「CRM风险同步」。这是数据报表需求，数据来源是「核心系统持仓」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: CRM风险同步
+      ext.techSubtype: DATA_RPT
+      ext.dataSource: 核心系统持仓
+    elements_status:
+      techSubtype: OK
+- user: 纠正一下子类是系统集成，对接系统是「CRM」。
+  expect:
+    structured_contains:
+      ext.techSubtype: SYS_INT
+      ext.intTargetSystem: CRM
+    elements_status:
+      techSubtype: OK

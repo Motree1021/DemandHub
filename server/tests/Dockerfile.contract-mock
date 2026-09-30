@@ -1,0 +1,5 @@
+FROM python:3.12-slim
+WORKDIR /mock
+COPY contract_mock.py ./contract_mock.py
+EXPOSE 8099
+CMD ["python", "contract_mock.py"]

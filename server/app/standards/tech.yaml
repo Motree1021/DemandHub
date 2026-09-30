@@ -1,0 +1,204 @@
+type: TECH
+name: 科技需求
+version: '1'
+glossary:
+- 代销系统：面向银行/券商等代销渠道的销售与结算系统
+- 晨会：一线部门每个交易日 8:30 前的例会
+elements:
+- key: title
+  label: 需求标题
+  kind: text
+  required: true
+  ok_when: 一句话，2~60 字，能看出要解决什么问题
+  rule:
+    min_len: 2
+    max_len: 60
+- key: demandTypeCode
+  label: 需求类型
+  kind: enum
+  required: true
+  options:
+    TECH: 科技需求
+    MATL: 物料需求
+    TRAIN: 培训需求
+- key: content
+  label: 需求描述
+  kind: text
+  required: true
+  ok_when: ≥10 字，含业务背景与期望效果
+  rule:
+    min_len: 10
+  vague_hint: 描述过短，缺业务背景与期望效果
+- key: techSubtype
+  label: 需求子类
+  kind: enum
+  path: ext.techSubtype
+  options:
+    SYS_DEV: 系统开发
+    DATA_RPT: 数据报表
+    SYS_INT: 系统集成
+    OPS_OPT: 运维优化
+    OTHER: 其他
+  ask_l1: 为了把需求记录清楚，这个科技需求更接近哪一类？
+- key: businessScenario
+  label: 业务场景
+  kind: text
+  path: ext.businessScenario
+  ok_when: 含角色 + 时机/频率 + 任务，≥15 字，无歧义词
+  rule:
+    min_len: 15
+    any_of:
+    - 每天
+    - 每周
+    - 每月
+    - 每次
+    - 当
+    - 时
+    - 晨会
+    - 月底
+    - 季
+    - 客户经理
+    - 理财经理
+    - 专员
+    - 机构
+    - 营业部
+    - 部门
+    - 经理
+    - 同事
+  vague_hint: 看不出谁在用、什么时候用
+  ask_missing: 再说说使用场景吧：谁（角色）、在什么时间/频率、用它来做什么？比如「机构业务部客户经理，每天晨会前查各机构持仓」。
+  ask_l1: 记下了。不过「{snippet}」还有点概括——能再具体说说哪些人、在什么时机用吗？
+  ask_l2: 可以这样写：「作为__（角色），在__（时间/频率），需要__（做什么）」。示例：作为机构业务部专员，每周一早上，需要汇总各渠道销量。
+- key: acceptanceCriteria
+  label: 验收标准
+  kind: text
+  path: ext.acceptanceCriteria
+  ok_when: 含可量化指标（数字/时间/误差/通过率）或明确检查项
+  rule:
+    any_of_regex:
+    - \d
+    - 误差
+    - 对账
+    - 通过率
+    - 准确率
+    - 检查
+    - 为准
+    - 一致
+  vague_hint: 缺可量化的验收指标
+  ask_missing: 怎样算这个需求做完了？给一个可检查的标准，比如「连续一周与核心系统对账误差为0」。
+  ask_l1: 「{snippet}」还不太可检验——能加个量化指标吗？比如时间、准确率或覆盖范围。
+  ask_l2: 参考句式：「当__时，系统应__；检查项：①__②__」。
+- key: valueImpact
+  label: 价值与影响
+  kind: text
+  path: ext.valueImpact
+  ok_when: 含量化事实（多少人/多少时间/不做的后果）
+  rule:
+    any_of_regex:
+    - \d
+    - 不做
+    - 否则
+    - 影响
+    - 风险
+  vague_hint: 缺量化事实（人数/时长/后果）
+  ask_missing: 这个需求不做的话有什么影响？量化一下，比如「20多个客户经理每人每天花40分钟手工整理」。
+  ask_l1: 再具体一点点：大概影响多少人或几个部门？每次能省多少时间？
+  ask_l2: 参考句式：「影响__人/__个部门，每次节省约__分钟；不做会__」。
+follow_up_order:
+- techSubtype
+- businessScenario
+- acceptanceCriteria
+- valueImpact
+max_attempts: 2
+vague_words:
+- 尽快
+- 好用
+- 方便
+- 优化一下
+- 越快越好
+- 体验
+- 满意
+- 顺便
+skip_phrases:
+- 不知道
+- 跳过
+- 后续补充
+- 再说吧
+- 以后再说
+- 不清楚
+- 先这样
+optional_fields:
+- key: relatedSystem
+  label: 关联系统
+  path: ext.relatedSystem
+  kind: enum
+  options:
+    代销系统: 代销系统
+    直销系统: 直销系统
+    估值系统: 估值系统
+    CRM: CRM
+    数据中心: 数据中心
+    其他: 其他
+- key: relatedModule
+  label: 关联模块
+  path: ext.relatedModule
+  kind: text
+subtype_fields:
+  SYS_DEV:
+  - key: devFeatures
+    label: 涉及功能/流程
+    placeholder: 如：代销看板-机构持仓页签，涉及查询与导出流程
+  - key: devPermission
+    label: 角色与权限
+    placeholder: 如：机构业务部全员可查，仅主管可导出
+  - key: devQuality
+    label: 性能/安全
+    placeholder: 如：查询3秒内返回；客户敏感信息需脱敏
+  DATA_RPT:
+  - key: dataDimensions
+    label: 维度与口径
+    placeholder: 如：按机构汇总前一交易日持仓，与核心系统口径一致
+  - key: dataSource
+    label: 数据来源
+    placeholder: 如：代销系统交易库 + 核心系统持仓
+  - key: refreshFrequency
+    label: 刷新频率
+    placeholder: 如：每个交易日早8:00前刷新
+  - key: exportRequirement
+    label: 导出要求
+    placeholder: 如：支持导出Excel，字段与页面一致
+  SYS_INT:
+  - key: intTargetSystem
+    label: 对接系统
+    placeholder: 如：与CRM双向对接
+  - key: intDataFlow
+    label: 流向与触发
+    placeholder: 如：客户风险等级由CRM实时推送
+  - key: intTimeliness
+    label: 时效要求
+    placeholder: 如：数据延迟不超过5分钟
+  - key: intException
+    label: 异常处理
+    placeholder: 如：同步失败自动重试并通知运维
+  OPS_OPT:
+  - key: opsProblem
+    label: 问题现象
+    placeholder: 如：月末批量导出Excel等待约10分钟，经常超时
+  - key: opsScope
+    label: 影响范围
+    placeholder: 如：全渠道客户经理，每月初集中使用
+  - key: opsTarget
+    label: 期望目标
+    placeholder: 如：导出1分钟内完成
+common_fields:
+- key: urgency
+  label: 紧急程度
+  kind: enum
+  options:
+    NORMAL: 普通
+    URGENT: 紧急
+    CRITICAL: 特急
+  default: NORMAL
+- key: expectDeliveryAt
+  label: 期望交付时间
+  kind: date

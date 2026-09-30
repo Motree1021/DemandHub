@@ -1,0 +1,24 @@
+name: 培训日期
+type: TRAIN
+turns:
+- user: 标题写作「规范销售培训」。培训子类是「合规培训」，培训人数15人，期望完成时间2026-11-05。
+  form_before:
+    title: null
+    demandTypeCode: TRAIN
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 规范销售培训
+      ext.trainingSubtype: 合规培训
+      ext.traineeCount: 15
+      ext.expectedCompleteAt: '2026-11-05'
+    elements_status:
+      demandTypeCode: OK
+- user: 期望完成时间调整为2026-11-06。
+  expect:
+    structured_contains:
+      ext.expectedCompleteAt: '2026-11-06'
+    elements_status:
+      demandTypeCode: OK

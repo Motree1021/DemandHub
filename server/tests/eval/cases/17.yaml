@@ -1,0 +1,24 @@
+name: 培训对象
+type: TRAIN
+turns:
+- user: 标题写作「渠道产品培训」。培训子类写「产品培训」，培训对象写「银行渠道新员工」，培训人数20人。
+  form_before:
+    title: null
+    demandTypeCode: TRAIN
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 渠道产品培训
+      ext.trainingSubtype: 产品培训
+      ext.traineeObject: 银行渠道新员工
+      ext.traineeCount: 20
+    elements_status:
+      demandTypeCode: OK
+- user: 培训人数调整为30人。
+  expect:
+    structured_contains:
+      ext.traineeCount: 30
+    elements_status:
+      demandTypeCode: OK

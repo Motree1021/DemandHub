@@ -1,0 +1,23 @@
+name: 价值量化
+type: TECH
+turns:
+- user: 标题写作「销量汇总报表」。子类是数据报表，价值与影响为「20名客户经理每天节省40分钟」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 销量汇总报表
+      ext.techSubtype: DATA_RPT
+      ext.valueImpact: 20名客户经理每天节省40分钟
+    elements_status:
+      valueImpact: OK
+- user: 价值与影响改为「影响3个部门，每周节省5小时」。
+  expect:
+    structured_contains:
+      ext.valueImpact: 影响3个部门，每周节省5小时
+    elements_status:
+      valueImpact: OK

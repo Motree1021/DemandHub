@@ -1,0 +1,23 @@
+name: 业务场景过短
+type: TECH
+turns:
+- user: 标题写作「日报入口改造」。业务场景先写「看报表」，子类是系统开发。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 日报入口改造
+      ext.techSubtype: SYS_DEV
+      ext.businessScenario: 看报表
+    elements_status:
+      businessScenario: VAGUE
+- user: 业务场景完善为「机构业务部客户经理每天早上查询渠道报表」。
+  expect:
+    structured_contains:
+      ext.businessScenario: 机构业务部客户经理每天早上查询渠道报表
+    elements_status:
+      businessScenario: OK

@@ -1,0 +1,24 @@
+name: 语音容错
+type: TECH
+turns:
+- user: 标题写作「晨会机构持仓日报」。那个子类就是数据报表，数据来源呀是「核心系统持仓」，业务场景就是「客户经理每天晨会前查看机构持仓」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 晨会机构持仓日报
+      ext.techSubtype: DATA_RPT
+      ext.dataSource: 核心系统持仓
+      ext.businessScenario: 客户经理每天晨会前查看机构持仓
+    elements_status:
+      businessScenario: OK
+- user: 验收标准嘛就写「每天8:30前可查，与核心系统一致」。
+  expect:
+    structured_contains:
+      ext.acceptanceCriteria: 每天8:30前可查，与核心系统一致
+    elements_status:
+      acceptanceCriteria: OK

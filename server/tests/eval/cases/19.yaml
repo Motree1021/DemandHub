@@ -1,0 +1,28 @@
+name: 用户清空保护
+type: TRAIN
+turns:
+- user: 标题写作「银行员工技能培训」。培训子类写「技能培训」，培训对象写「银行客户经理」，培训人数30人。
+  form_before:
+    title: null
+    demandTypeCode: TRAIN
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 银行员工技能培训
+      ext.trainingSubtype: 技能培训
+      ext.traineeObject: 银行客户经理
+      ext.traineeCount: 30
+    elements_status:
+      demandTypeCode: OK
+- user: 培训对象我在表单里清空了，暂时未定；培训人数改为40人。
+  expect:
+    structured_contains:
+      ext.traineeCount: 40
+    elements_status:
+      demandTypeCode: OK
+    final_contains:
+      ext.traineeObject: null
+  user_patch:
+    ext.traineeObject: null
