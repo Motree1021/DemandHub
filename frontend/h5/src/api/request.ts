@@ -17,6 +17,15 @@ export function bearerHeaders(): Record<string, string> {
   const token = localStorage.getItem(TOKEN_KEY)
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
+/** 迟到的旧账号401或无Bearer入口响应，不能删除后来登录的新账号JWT。 */
+function expireRequestSession(config?: AxiosRequestConfig) {
+  const headers = config?.headers
+  const authorization = headers instanceof axios.AxiosHeaders
+    ? headers.get('Authorization')
+    : headers?.Authorization || headers?.authorization
+  const currentToken = localStorage.getItem(TOKEN_KEY)
+  if (currentToken && authorization === `Bearer ${currentToken}`) expireSession()
+}
 const service = axios.create({ baseURL: API_BASE, timeout: 30000 })
 service.interceptors.request.use(config => {
   Object.assign(config.headers, bearerHeaders())
@@ -25,13 +34,13 @@ service.interceptors.request.use(config => {
 service.interceptors.response.use(response => {
   const res = response.data as Result
   if (res.code === 0) return res.data as never
-  if (res.code === 401) expireSession()
+  if (res.code === 401) expireRequestSession(response.config)
   if (!response.config.silent && res.code !== 401) showToast(res.message || '请求失败')
   return Promise.reject(new ApiError(res.code, res.message || '请求失败'))
 }, error => {
   const code = error.response?.data?.code || error.response?.status || -1
   const message = error.response?.data?.message || error.message || '网络异常'
-  if (code === 401) expireSession()
+  if (code === 401) expireRequestSession(error.config)
   if (!error.config?.silent && code !== 401) showToast(message)
   return Promise.reject(new ApiError(code, message))
 })

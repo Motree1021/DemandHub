@@ -19,6 +19,24 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-access-lo
 
 健康检查路径 `/demandhub-api/health`：DB正常200，异常503。公开路由使用实际前缀，Kong应保留路径（strip_path=false）。开发OpenAPI路径 `/demandhub-api/openapi.json`，生产禁用。
 
+## 宿主参数测试联调
+
+`CHANNEL_ENTRY_AUTH_MODE` 默认 `ticket`，现有 `/auth/channel-sso` 票据链路保留。仅在独立测试环境设置以下组合，才注册 `POST /demandhub-api/auth/channel-parameters`：
+
+```env
+APP_ENV=test
+CHANNEL_ENTRY_AUTH_MODE=trusted_parameters
+AUTH_DEV_LOGIN=false
+```
+
+`trusted_parameters` 在 dev/prod，或与 `AUTH_DEV_LOGIN=true` 同时使用时，启动校验直接拒绝。默认模式和生产环境中的参数入口返回404；此模式不需要开发登录。
+
+请求JSON固定为 `userid`（必填，最多64字）、`authToken`（必填，最多4096字）、`userName`（必填，最多64字）、`department`（可省略/null，最多128字）。userid、userName去除两侧空格且不得为空；authToken仅检查非空和长度，**完全不验证宿主Token的真实性**。该模式仅用于测试联调，身份直接信任传入userid，不能作为正式宿主认证方案。
+
+userid对应稳定用户身份，重复登录更新姓名/部门；停用账号仍拒绝登录。管理员只按 `ADMIN_WECOM_USERIDS` 中的账号标识判断，姓名、部门和宿主Token不授予权限。登录返回现有 `accessToken/tokenType/expiresIn/user`，其中accessToken为DemandHub自行签发的Bearer JWT。
+
+宿主Token不传入持久化或JWT，不存储、不散列、不回显，不写入日志。参数DTO隐藏Token的repr和错误输入，校验/系统错误不回显请求值。测试与文档均使用合成Token，不需读取真实服务配置。
+
 ## 验证
 
 ```sh
