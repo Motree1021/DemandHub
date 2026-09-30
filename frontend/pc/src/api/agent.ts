@@ -1,4 +1,4 @@
-import { get, post } from './request'
+import { get, post, API_BASE } from './request'
 
 /** Agent 会话 */
 export interface AgentSession {
@@ -57,6 +57,14 @@ export interface GuideResult {
   ready: boolean
 }
 
+/** P10：要素质量状态（rubric 四态） */
+export interface ElementStatus {
+  key: string
+  status: 'OK' | 'VAGUE' | 'MISSING' | 'SKIP'
+  note: string
+  attempts: number
+}
+
 /** 一次性对话（非流式，调试用） */
 export function guideChat(sessionId: number, message: string, formContext?: Record<string, unknown>): Promise<GuideResult> {
   return post('/agent/guide/chat', { sessionId, message, formContext })
@@ -80,11 +88,17 @@ export async function guideChatStream(
   formContext: Record<string, unknown> | undefined,
   handlers: {
     onDelta: (delta: string) => void
-    onStructured: (payload: { structured: GuideStructured; missing: string[]; ready: boolean }) => void
+    onStructured: (payload: {
+      structured: GuideStructured
+      missing: string[]
+      ready: boolean
+      elements?: ElementStatus[]
+      quickReplies?: string[]
+    }) => void
   }
 ): Promise<void> {
   const token = localStorage.getItem('demandhub_token')
-  const resp = await fetch('/api/agent/guide/chat/stream', {
+  const resp = await fetch(`${API_BASE}/agent/guide/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -96,7 +110,7 @@ export async function guideChatStream(
   if (!resp.ok || !contentType.includes('text/event-stream')) {
     const data = (await resp.json().catch(() => null)) as { code?: number; message?: string } | null
     if (resp.status === 401 || data?.code === 401) {
-      window.location.href = '/login'
+      window.location.href = `${import.meta.env.BASE_URL}login`
       throw new AgentUnavailableError(401, '登录已过期')
     }
     throw new AgentUnavailableError(data?.code ?? -1, data?.message || 'AI 服务暂不可用，请稍后再试')
@@ -135,7 +149,13 @@ export async function guideChatStream(
         }
       } else if (currentEvent === 'structured') {
         try {
-          handlers.onStructured(JSON.parse(dataStr) as { structured: GuideStructured; missing: string[]; ready: boolean })
+          handlers.onStructured(JSON.parse(dataStr) as {
+            structured: GuideStructured
+            missing: string[]
+            ready: boolean
+            elements?: ElementStatus[]
+            quickReplies?: string[]
+          })
         } catch {
           /* 忽略解析失败的结构化事件 */
         }

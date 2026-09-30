@@ -15,7 +15,7 @@ import java.util.Map;
  * 脚手架自检接口：验证服务启动、统一返回体、接口文档
  */
 @Tag(name = "自检", description = "脚手架健康检查接口")
-@RestController
+@RestController("systemPingController")
 @RequestMapping("/system/ping")
 public class PingController {
 

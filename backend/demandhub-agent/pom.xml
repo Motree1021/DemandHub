@@ -48,6 +48,8 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.demandhub.agent.AgentApplication</mainClass>
+                    <!-- exec 分类：fat jar 命名为 *-exec.jar，主产物保持瘦 jar 供 demandhub-server 依赖 -->
+                    <classifier>exec</classifier>
                 </configuration>
                 <executions>
                     <execution>

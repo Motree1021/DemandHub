@@ -5,7 +5,7 @@ import com.demandhub.notification.entity.UserSnapshotView;
 import com.demandhub.notification.integration.wecom.WecomMessageClient;
 import com.demandhub.notification.integration.wecom.WecomPushException;
 import com.demandhub.notification.mapper.NotificationMapper;
-import com.demandhub.notification.mapper.UserSnapshotViewMapper;
+import com.demandhub.notification.mapper.NotificationUserSnapshotViewMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
@@ -27,12 +27,12 @@ public class WecomPushConsumer implements RocketMQListener<String> {
     private static final int MAX_ATTEMPTS = 5;
 
     private final NotificationMapper notificationMapper;
-    private final UserSnapshotViewMapper userSnapshotMapper;
+    private final NotificationUserSnapshotViewMapper userSnapshotMapper;
     private final WecomMessageClient wecomMessageClient;
     private final WecomPushProducer wecomPushProducer;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public WecomPushConsumer(NotificationMapper notificationMapper, UserSnapshotViewMapper userSnapshotMapper,
+    public WecomPushConsumer(NotificationMapper notificationMapper, NotificationUserSnapshotViewMapper userSnapshotMapper,
                              WecomMessageClient wecomMessageClient, WecomPushProducer wecomPushProducer) {
         this.notificationMapper = notificationMapper;
         this.userSnapshotMapper = userSnapshotMapper;

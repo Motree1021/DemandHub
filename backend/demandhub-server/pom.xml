@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.demandhub</groupId>
+        <artifactId>demandhub-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>demandhub-server</artifactId>
+    <name>demandhub-server</name>
+    <description>单体装配服务（H5 Publish 部署）：合并 system/demand/notification/agent 四业务模块 + 网关鉴权</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.demandhub</groupId>
+            <artifactId>demandhub-system</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.demandhub</groupId>
+            <artifactId>demandhub-demand</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.demandhub</groupId>
+            <artifactId>demandhub-notification</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.demandhub</groupId>
+            <artifactId>demandhub-agent</artifactId>
+        </dependency>
+        <dependency>
+            <!-- AuthFilter（Servlet 版）Redis 会话校验 -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>demandhub-server</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.demandhub.server.ServerApplication</mainClass>
+                    <!-- 与业务模块一致的 exec 分类：backend/Dockerfile 统一拷贝 *-exec.jar -->
+                    <classifier>exec</classifier>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

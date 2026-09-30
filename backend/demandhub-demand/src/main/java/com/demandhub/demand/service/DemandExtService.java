@@ -42,6 +42,7 @@ public class DemandExtService {
             case "TECH" -> {
                 DemandExtTechEntity e = new DemandExtTechEntity();
                 e.setDemandId(demandId);
+                e.setTechSubtype(asString(ext.get("techSubtype")));
                 e.setRelatedSystem(asString(ext.get("relatedSystem")));
                 e.setRelatedModule(asString(ext.get("relatedModule")));
                 e.setBusinessScenario(asString(ext.get("businessScenario")));
@@ -85,6 +86,7 @@ public class DemandExtService {
                     writeExt(demandId, typeCode, ext);
                     return;
                 }
+                if (ext.containsKey("techSubtype")) e.setTechSubtype(asString(ext.get("techSubtype")));
                 if (ext.containsKey("relatedSystem")) e.setRelatedSystem(asString(ext.get("relatedSystem")));
                 if (ext.containsKey("relatedModule")) e.setRelatedModule(asString(ext.get("relatedModule")));
                 if (ext.containsKey("businessScenario")) e.setBusinessScenario(asString(ext.get("businessScenario")));

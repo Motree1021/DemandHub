@@ -7,7 +7,7 @@ import com.demandhub.agent.entity.ReviewView;
 import com.demandhub.agent.entity.SolutionRowEntity;
 import com.demandhub.agent.llm.LlmClient;
 import com.demandhub.agent.llm.MockEmbedding;
-import com.demandhub.agent.mapper.DemandViewMapper;
+import com.demandhub.agent.mapper.AgentDemandViewMapper;
 import com.demandhub.agent.mapper.KnowledgeDocMapper;
 import com.demandhub.agent.mapper.ReviewViewMapper;
 import com.demandhub.agent.mapper.SolutionRowMapper;
@@ -31,12 +31,12 @@ public class RagService {
     private static final double SCORE_THRESHOLD = 0.08;
 
     private final KnowledgeDocMapper knowledgeDocMapper;
-    private final DemandViewMapper demandViewMapper;
+    private final AgentDemandViewMapper demandViewMapper;
     private final SolutionRowMapper solutionRowMapper;
     private final ReviewViewMapper reviewViewMapper;
     private final LlmClient llmClient;
 
-    public RagService(KnowledgeDocMapper knowledgeDocMapper, DemandViewMapper demandViewMapper,
+    public RagService(KnowledgeDocMapper knowledgeDocMapper, AgentDemandViewMapper demandViewMapper,
                       SolutionRowMapper solutionRowMapper, ReviewViewMapper reviewViewMapper,
                       LlmClient llmClient) {
         this.knowledgeDocMapper = knowledgeDocMapper;

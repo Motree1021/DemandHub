@@ -125,6 +125,7 @@ export function fmtSize(bytes: number | null | undefined): string {
 
 /** 扩展字段中文标签（详情页按类型渲染） */
 export const EXT_FIELD_LABELS: Record<string, string> = {
+  techSubtype: '需求子类',
   relatedSystem: '关联系统',
   relatedModule: '关联模块',
   businessScenario: '业务场景',

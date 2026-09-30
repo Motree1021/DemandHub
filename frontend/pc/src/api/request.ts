@@ -14,8 +14,11 @@ export interface Result<T = unknown> {
 const TOKEN_KEY = 'demandhub_token'
 const REFRESH_KEY = 'demandhub_refresh_token'
 
+/** API 前缀：本地/同域 nginx 为 '/api'，H5 Publish TEST(Kong 路径前缀)经 VITE_API_BASE 注入 */
+export const API_BASE: string = import.meta.env.VITE_API_BASE || '/api'
+
 const service: AxiosInstance = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   timeout: 30000
 })
 
@@ -42,7 +45,7 @@ async function tryRefresh(): Promise<boolean> {
   }
   try {
     const resp = await axios.post<Result<{ accessToken: string; refreshToken: string }>>(
-      '/api/system/auth/refresh',
+      `${API_BASE}/system/auth/refresh`,
       { refreshToken: refreshTokenValue }
     )
     if (resp.data.code === 0) {
@@ -59,8 +62,9 @@ async function tryRefresh(): Promise<boolean> {
 function toLogin() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(REFRESH_KEY)
-  if (window.location.pathname !== '/login') {
-    window.location.href = '/login'
+  if (!window.location.pathname.endsWith('/login')) {
+    // BASE_URL 感知：H5 Publish TEST 部署在 /demandhub-frontend/ 前缀下
+    window.location.href = `${import.meta.env.BASE_URL}login`
   }
 }
 
@@ -89,7 +93,21 @@ service.interceptors.response.use(
     ElMessage.error(res.message || '请求失败')
     return Promise.reject(new Error(res.message))
   },
-  (error) => {
+  async (error) => {
+    // 网关 AuthFilter 返回真 HTTP 401：同样先刷新令牌重发，失败再跳登录
+    const status = error.response?.status
+    const config = error.config as (AxiosRequestConfig & { __retried401?: boolean }) | undefined
+    if (status === 401 && config && !config.__retried401) {
+      refreshing = refreshing || tryRefresh().finally(() => {
+        refreshing = null
+      })
+      if (await refreshing) {
+        config.__retried401 = true
+        return service.request(config)
+      }
+      toLogin()
+      return Promise.reject(error)
+    }
     const msg = error.response?.data?.message || error.message || '网络异常'
     ElMessage.error(msg)
     return Promise.reject(error)

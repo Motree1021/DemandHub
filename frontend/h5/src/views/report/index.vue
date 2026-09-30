@@ -28,7 +28,7 @@
 
     <!-- 公共字段 -->
     <div class="form-card">
-      <van-field v-model="form.title" label="需求标题" required maxlength="100" placeholder="一句话描述你要解决的问题">
+      <van-field v-model="form.title" label="需求标题" required maxlength="100" placeholder="一句话描述你要解决的问题" :class="{ 'ai-flash': aiFlash.has('title') }">
         <template #button>
           <van-icon name="volume-o" size="22" color="#1F3A8A" @click="onVoicePlaceholder" />
         </template>
@@ -41,8 +41,14 @@
         rows="4"
         maxlength="2000"
         show-word-limit
-        placeholder="请描述业务背景、使用场景、期望效果……"
-      />
+        placeholder="请描述业务背景、使用场景、期望效果……可点「插入模板」按 现状痛点/期望效果 两段式填写"
+        :class="{ 'ai-flash': aiFlash.has('content') }"
+      >
+        <template #label>
+          需求描述
+          <span class="tpl-link" @click="insertContentTemplate">插入模板</span>
+        </template>
+      </van-field>
       <van-field label="紧急程度" required>
         <template #input>
           <div class="urgency-tags">
@@ -67,13 +73,95 @@
       />
     </div>
 
+    <!-- AI 提报助手入口（P10：统一输入管线——随口说/整段粘贴/语音转文字都可） -->
+    <div class="ai-entry" @click="aiVisible = true">
+      <van-icon name="chat-o" size="18" color="#1F3A8A" />
+      <span>AI 帮我完善：随口说 / 粘贴一大段 / 语音输入，自动整理成表单</span>
+    </div>
+
     <!-- 科技需求扩展字段 -->
     <div v-if="form.demandTypeCode === 'TECH'" class="form-card">
       <div class="ext-title">科技需求信息</div>
-      <van-field v-model="ext.relatedSystem" label="关联系统" placeholder="如：代销系统" />
-      <van-field v-model="ext.relatedModule" label="关联模块" placeholder="如：数据看板" />
-      <van-field v-model="ext.businessScenario" label="业务场景" type="textarea" rows="3" placeholder="什么人在什么场景下使用，解决什么问题" />
-      <van-field v-model="ext.acceptanceCriteria" label="验收标准" type="textarea" rows="3" placeholder="怎样算完成，可量化的验收条件" />
+      <van-field
+        :model-value="techSubtypeName"
+        label="需求子类"
+        readonly
+        is-link
+        placeholder="选择后出现针对性补充项（选填）"
+        :class="{ 'ai-flash': aiFlash.has('techSubtype') }"
+        @click="subtypeSheetVisible = true"
+      />
+      <van-field
+        v-model="ext.relatedSystem"
+        label="关联系统"
+        placeholder="选择或输入系统名称"
+        :class="{ 'ai-flash': aiFlash.has('relatedSystem') }"
+      >
+        <template #button>
+          <van-icon name="arrow-down" size="18" color="#1F3A8A" @click="systemSheetVisible = true" />
+        </template>
+      </van-field>
+      <van-field v-model="ext.relatedModule" label="关联模块" placeholder="如：数据看板" :class="{ 'ai-flash': aiFlash.has('relatedModule') }" />
+      <van-field
+        v-model="ext.businessScenario"
+        label="业务场景"
+        type="textarea"
+        rows="3"
+        placeholder="作为__（角色），在__（时间/频率），需要__（做什么）。示例：机构业务部客户经理，每天晨会前查各机构持仓"
+        :class="{ 'ai-flash': aiFlash.has('businessScenario') }"
+      />
+      <van-field
+        v-model="ext.acceptanceCriteria"
+        label="验收标准"
+        type="textarea"
+        rows="3"
+        placeholder="当__时，系统应__；检查项：①__②__。示例：连续一周与核心系统对账误差为0"
+        :class="{ 'ai-flash': aiFlash.has('acceptanceCriteria') }"
+      />
+
+      <!-- 选填补充区：价值与影响 + 子类差异要素（P10 需求启发：渐进披露降低填写负担） -->
+      <van-collapse v-model="extCollapse" class="ext-collapse">
+        <van-collapse-item title="补充信息（选填 · 写得越具体受理越快）" name="more">
+          <van-field
+            v-model="ext.valueImpact"
+            label="价值与影响"
+            type="textarea"
+            rows="2"
+            placeholder="影响多少人/部门？每次能省多少时间？不做会怎样？示例：20多名客户经理每人每天节省约40分钟手工整理"
+            :class="{ 'ai-flash': aiFlash.has('valueImpact') }"
+          />
+
+          <!-- 系统开发 -->
+          <template v-if="ext.techSubtype === 'SYS_DEV'">
+            <van-field v-model="ext.devFeatures" label="涉及功能/流程" placeholder="如：代销看板-机构持仓页签，涉及查询与导出流程" :class="{ 'ai-flash': aiFlash.has('devFeatures') }" />
+            <van-field v-model="ext.devPermission" label="角色与权限" placeholder="如：机构业务部全员可查，仅主管可导出" :class="{ 'ai-flash': aiFlash.has('devPermission') }" />
+            <van-field v-model="ext.devQuality" label="性能/安全" placeholder="如：查询3秒内返回；客户敏感信息需脱敏" :class="{ 'ai-flash': aiFlash.has('devQuality') }" />
+          </template>
+
+          <!-- 数据报表 -->
+          <template v-else-if="ext.techSubtype === 'DATA_RPT'">
+            <van-field v-model="ext.dataDimensions" label="维度与口径" placeholder="如：按机构汇总前一交易日持仓（市值/份额），与核心系统口径一致" :class="{ 'ai-flash': aiFlash.has('dataDimensions') }" />
+            <van-field v-model="ext.dataSource" label="数据来源" placeholder="如：代销系统交易库 + 核心系统持仓" :class="{ 'ai-flash': aiFlash.has('dataSource') }" />
+            <van-field v-model="ext.refreshFrequency" label="刷新频率" placeholder="如：每个交易日早8:00前刷新" :class="{ 'ai-flash': aiFlash.has('refreshFrequency') }" />
+            <van-field v-model="ext.exportRequirement" label="导出要求" placeholder="如：支持导出Excel，字段与页面一致" :class="{ 'ai-flash': aiFlash.has('exportRequirement') }" />
+          </template>
+
+          <!-- 系统集成 -->
+          <template v-else-if="ext.techSubtype === 'SYS_INT'">
+            <van-field v-model="ext.intTargetSystem" label="对接系统" placeholder="如：与CRM双向对接" :class="{ 'ai-flash': aiFlash.has('intTargetSystem') }" />
+            <van-field v-model="ext.intDataFlow" label="流向与触发" placeholder="如：客户风险等级由CRM实时推送" :class="{ 'ai-flash': aiFlash.has('intDataFlow') }" />
+            <van-field v-model="ext.intTimeliness" label="时效要求" placeholder="如：数据延迟不超过5分钟" :class="{ 'ai-flash': aiFlash.has('intTimeliness') }" />
+            <van-field v-model="ext.intException" label="异常处理" placeholder="如：同步失败自动重试并通知运维" :class="{ 'ai-flash': aiFlash.has('intException') }" />
+          </template>
+
+          <!-- 运维优化 -->
+          <template v-else-if="ext.techSubtype === 'OPS_OPT'">
+            <van-field v-model="ext.opsProblem" label="问题现象" placeholder="如：月末批量导出Excel等待约10分钟，经常超时" :class="{ 'ai-flash': aiFlash.has('opsProblem') }" />
+            <van-field v-model="ext.opsScope" label="影响范围" placeholder="如：全渠道客户经理，每月初集中使用" :class="{ 'ai-flash': aiFlash.has('opsScope') }" />
+            <van-field v-model="ext.opsTarget" label="期望目标" placeholder="如：导出1分钟内完成" :class="{ 'ai-flash': aiFlash.has('opsTarget') }" />
+          </template>
+        </van-collapse-item>
+      </van-collapse>
     </div>
 
     <!-- 物料需求扩展字段 -->
@@ -180,6 +268,25 @@
       @select="onTypeSelect"
     />
 
+    <!-- 需求子类 ActionSheet -->
+    <van-action-sheet
+      v-model:show="subtypeSheetVisible"
+      :actions="subtypeActions"
+      cancel-text="取消"
+      @select="onSubtypeSelect"
+    />
+
+    <!-- 关联系统 ActionSheet -->
+    <van-action-sheet
+      v-model:show="systemSheetVisible"
+      :actions="systemActions"
+      cancel-text="取消"
+      @select="onSystemSelect"
+    />
+
+    <!-- AI 提报助手抽屉 -->
+    <agent-guide-sheet v-model:show="aiVisible" :form-context="agentFormContext" @fill="onAgentFill" />
+
     <!-- 日期选择 -->
     <van-calendar
       v-model:show="calendarVisible"
@@ -213,11 +320,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showSuccessToast, showConfirmDialog, showImagePreview, type UploaderFileListItem } from 'vant'
 import AppLayout from '@/components/AppLayout.vue'
 import UserPicker from '@/components/UserPicker.vue'
+import AgentGuideSheet from '@/components/AgentGuideSheet.vue'
+import type { GuideStructured } from '@/api/agent'
 import {
   listDictItems,
   saveDraft,
@@ -242,10 +351,26 @@ const userStore = useUserStore()
 const BUILTIN = ['TECH', 'MATL', 'TRAIN']
 
 interface ExtForm {
+  techSubtype?: string
   relatedSystem?: string
   relatedModule?: string
   businessScenario?: string
   acceptanceCriteria?: string
+  valueImpact?: string
+  devFeatures?: string
+  devPermission?: string
+  devQuality?: string
+  dataDimensions?: string
+  dataSource?: string
+  refreshFrequency?: string
+  exportRequirement?: string
+  intTargetSystem?: string
+  intDataFlow?: string
+  intTimeliness?: string
+  intException?: string
+  opsProblem?: string
+  opsScope?: string
+  opsTarget?: string
   materialSubtype?: string
   usageScenario?: string
   quantity?: number
@@ -274,7 +399,16 @@ const draftVisible = ref(false)
 const currentDraftId = ref<number | null>(null)
 const typeList = ref<DemandTypeItem[]>([])
 const urgencyOptions = ref<DictItem[]>([])
+const techSubtypeOptions = ref<DictItem[]>([])
+const relatedSystemOptions = ref<DictItem[]>([])
 const typeSheetVisible = ref(false)
+const subtypeSheetVisible = ref(false)
+const systemSheetVisible = ref(false)
+const extCollapse = ref<string[]>([])
+const aiVisible = ref(false)
+/** AI 回填字段高亮（1.8s 后消失）：key 为表单字段键/ext 键 */
+const aiFlash = ref<Set<string>>(new Set())
+let flashTimer: number | undefined
 const calendarVisible = ref(false)
 const calendarField = ref<'expectDeliveryAt' | 'expectedArrivalAt' | 'expectedCompleteAt'>('expectDeliveryAt')
 const uploaderFiles = ref<UploaderFileListItem[]>([])
@@ -303,6 +437,32 @@ const typeActions = computed(() =>
   }))
 )
 
+/** 需求子类展示名（存 itemCode，展示 itemName） */
+const techSubtypeName = computed(
+  () => techSubtypeOptions.value.find((s) => s.itemCode === ext.techSubtype)?.itemName || ''
+)
+
+const subtypeActions = computed(() =>
+  techSubtypeOptions.value.map((s) => ({
+    name: s.itemName,
+    value: s.itemCode,
+    color: s.itemCode === ext.techSubtype ? '#1F3A8A' : undefined
+  }))
+)
+
+/** 关联系统选项：存中文名（与历史自由文本/详情展示兼容） */
+const systemActions = computed(() => relatedSystemOptions.value.map((s) => ({ name: s.itemName })))
+
+/** Agent 表单上下文快照（后端合并时用户手填优先，AI 不覆盖非空字段） */
+const agentFormContext = computed<Record<string, unknown>>(() => ({
+  title: form.title || undefined,
+  demandTypeCode: form.demandTypeCode || undefined,
+  content: form.content || undefined,
+  urgency: form.urgency || undefined,
+  expectDeliveryAt: form.expectDeliveryAt || undefined,
+  ext: Object.keys(currentExt()).length ? currentExt() : undefined
+}))
+
 const calendarDefault = computed(() => {
   const map: Record<string, string | undefined> = {
     expectDeliveryAt: form.expectDeliveryAt,
@@ -323,6 +483,7 @@ function onTypeSelect(action: { value?: string }) {
     form.demandTypeCode = action.value
     // 切换类型清空扩展字段，避免串字段
     Object.keys(ext).forEach((k) => delete (ext as Record<string, unknown>)[k])
+    extCollapse.value = []
     // stepper 无空态，给数字字段默认值保证「所见即所交」
     if (action.value === 'MATL') {
       ext.quantity = 1
@@ -331,6 +492,116 @@ function onTypeSelect(action: { value?: string }) {
     }
   }
   typeSheetVisible.value = false
+}
+
+function onSubtypeSelect(action: { value?: string }) {
+  if (action.value) {
+    ext.techSubtype = action.value
+  }
+  subtypeSheetVisible.value = false
+}
+
+function onSystemSelect(action: { name: string }) {
+  ext.relatedSystem = action.name
+  systemSheetVisible.value = false
+}
+
+/** 需求描述两段式模板（现状痛点/期望效果），仅在空白时插入避免覆盖用户内容 */
+function insertContentTemplate() {
+  if (form.content.trim()) {
+    showToast('已有内容，可直接在原文上按「现状痛点/期望效果」补充')
+    return
+  }
+  form.content = '【现状痛点】\n\n\n【期望效果】\n'
+}
+
+/** AI 结构化回填：类型先切换（清扩展字段），再逐项应用；用户可继续编辑 */
+function onAgentFill(fields: GuideStructured) {
+  if (fields.demandTypeCode && typeList.value.some((t) => t.typeCode === fields.demandTypeCode)) {
+    if (form.demandTypeCode !== fields.demandTypeCode) {
+      form.demandTypeCode = fields.demandTypeCode
+      Object.keys(ext).forEach((k) => delete (ext as Record<string, unknown>)[k])
+      extCollapse.value = []
+    }
+  }
+  const filled: string[] = []
+  if (fields.title) {
+    form.title = fields.title
+    filled.push('title')
+  }
+  if (fields.content) {
+    form.content = fields.content
+    filled.push('content')
+  }
+  if (fields.urgency) {
+    form.urgency = fields.urgency
+    filled.push('urgency')
+  }
+  if (fields.expectDeliveryAt) {
+    form.expectDeliveryAt = fields.expectDeliveryAt
+    filled.push('expectDeliveryAt')
+  }
+  if (fields.ext) {
+    Object.assign(ext, fields.ext)
+    filled.push(...Object.keys(fields.ext))
+    // AI 回填了子类/补充要素时展开折叠区，让用户看见
+    if (fields.ext.techSubtype || filled.some((k) => k === 'valueImpact')) {
+      extCollapse.value = ['more']
+    }
+  }
+  flashFields(filled)
+}
+
+/** AI 回填字段高亮反馈：1.8s 闪烁后自动消失 */
+function flashFields(keys: string[]) {
+  if (!keys.length) {
+    return
+  }
+  aiFlash.value = new Set(keys)
+  window.clearTimeout(flashTimer)
+  flashTimer = window.setTimeout(() => {
+    aiFlash.value = new Set()
+  }, 1800)
+}
+
+/** 子类差异要素 → 提交时拼装进需求描述的固定段落（混合存储：关键字段加列，其余模板化） */
+const EXTRA_SECTIONS: Record<string, [string, keyof ExtForm][]> = {
+  SYS_DEV: [
+    ['涉及功能/流程', 'devFeatures'],
+    ['使用角色与权限', 'devPermission'],
+    ['性能/安全要求', 'devQuality']
+  ],
+  DATA_RPT: [
+    ['数据维度与口径', 'dataDimensions'],
+    ['数据来源系统', 'dataSource'],
+    ['使用/刷新频率', 'refreshFrequency'],
+    ['导出要求', 'exportRequirement']
+  ],
+  SYS_INT: [
+    ['对接系统', 'intTargetSystem'],
+    ['数据流向与触发', 'intDataFlow'],
+    ['时效要求', 'intTimeliness'],
+    ['异常处理期望', 'intException']
+  ],
+  OPS_OPT: [
+    ['问题现象', 'opsProblem'],
+    ['影响范围', 'opsScope'],
+    ['期望目标', 'opsTarget']
+  ]
+}
+
+function buildContent(): string {
+  let content = form.content.trim()
+  const sections: [string, unknown][] = [['价值与影响', ext.valueImpact]]
+  for (const [label, key] of EXTRA_SECTIONS[ext.techSubtype || ''] || []) {
+    sections.push([label, ext[key]])
+  }
+  for (const [label, v] of sections) {
+    if (v !== undefined && v !== null && String(v).trim()) {
+      content += `\n\n【${label}】\n${String(v).trim()}`
+    }
+  }
+  return content
 }
 
 function onVoicePlaceholder() {
@@ -519,7 +790,7 @@ async function onSubmit() {
     const demand = await submitDemand({
       draftId: currentDraftId.value || undefined,
       title: form.title.trim(),
-      content: form.content,
+      content: form.demandTypeCode === 'TECH' ? buildContent() : form.content,
       demandTypeCode: form.demandTypeCode,
       urgency: form.urgency,
       expectDeliveryAt: form.expectDeliveryAt,
@@ -540,8 +811,20 @@ onMounted(async () => {
     form.demandTypeCode = typeList.value[0].typeCode
   }
   urgencyOptions.value = await listDictItems('URGENCY')
+  techSubtypeOptions.value = await listDictItems('TECH_SUBTYPE')
+  relatedSystemOptions.value = await listDictItems('RELATED_SYSTEM')
   loadDrafts()
 })
+
+// 选中子类后展开补充区，露出针对性差异要素
+watch(
+  () => ext.techSubtype,
+  (v) => {
+    if (v && form.demandTypeCode === 'TECH' && !extCollapse.value.length) {
+      extCollapse.value = ['more']
+    }
+  }
+)
 </script>
 
 <style scoped>
@@ -621,6 +904,59 @@ onMounted(async () => {
 .ext-notice {
   margin: 12px 12px 0;
   border-radius: 10px;
+}
+
+/* AI 提报助手入口 */
+.ai-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 12px 0;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #eef3fb 0%, #e3ecfa 100%);
+  border: 1px dashed #7c9ad4;
+  border-radius: 12px;
+  font-size: 13px;
+  color: #1F3A8A;
+}
+
+.ai-entry:active {
+  background: #e3ecfa;
+}
+
+/* 需求描述「插入模板」链接 */
+.tpl-link {
+  color: #1F3A8A;
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+/* 选填补充区折叠 */
+.ext-collapse {
+  margin: 4px 0 8px;
+}
+
+.ext-collapse :deep(.van-collapse-item__title) {
+  color: #1F3A8A;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.ext-collapse :deep(.van-collapse-item__content) {
+  padding: 0;
+}
+
+/* AI 回填字段高亮闪烁（1.8s） */
+.ai-flash {
+  animation: ai-flash-bg 0.6s ease-in-out 3;
+  border-radius: 6px;
+}
+
+@keyframes ai-flash-bg {
+  50% {
+    background-color: #e8f7e9;
+  }
 }
 
 /* 紧急程度标签选择 */

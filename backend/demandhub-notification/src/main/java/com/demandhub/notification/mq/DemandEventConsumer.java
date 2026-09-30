@@ -1,7 +1,7 @@
 package com.demandhub.notification.mq;
 
 import com.demandhub.notification.entity.UserSnapshotView;
-import com.demandhub.notification.mapper.UserSnapshotViewMapper;
+import com.demandhub.notification.mapper.NotificationUserSnapshotViewMapper;
 import com.demandhub.notification.service.NotificationService;
 import com.demandhub.notification.service.NotifyTypes;
 import com.demandhub.notification.service.RecipientResolver;
@@ -47,11 +47,11 @@ public class DemandEventConsumer implements RocketMQListener<String> {
 
     private final RecipientResolver recipientResolver;
     private final NotificationService notificationService;
-    private final UserSnapshotViewMapper userSnapshotMapper;
+    private final NotificationUserSnapshotViewMapper userSnapshotMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public DemandEventConsumer(RecipientResolver recipientResolver, NotificationService notificationService,
-                               UserSnapshotViewMapper userSnapshotMapper) {
+                               NotificationUserSnapshotViewMapper userSnapshotMapper) {
         this.recipientResolver = recipientResolver;
         this.notificationService = notificationService;
         this.userSnapshotMapper = userSnapshotMapper;

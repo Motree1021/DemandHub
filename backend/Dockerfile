@@ -17,6 +17,7 @@ COPY demandhub-demand ./demandhub-demand
 COPY demandhub-notification ./demandhub-notification
 COPY demandhub-agent ./demandhub-agent
 COPY demandhub-gateway ./demandhub-gateway
+COPY demandhub-server ./demandhub-server
 ARG MODULE
 # 挂载 .m2 缓存：5 个模块共用依赖，本机多次构建显著提速
 RUN --mount=type=cache,target=/root/.m2 mvn -q -DskipTests install -pl ${MODULE} -am
@@ -24,6 +25,6 @@ RUN --mount=type=cache,target=/root/.m2 mvn -q -DskipTests install -pl ${MODULE}
 FROM ${REGISTRY}/eclipse-temurin:17-jre
 ARG MODULE
 WORKDIR /app
-COPY --from=build /build/${MODULE}/target/${MODULE}.jar /app/app.jar
+COPY --from=build /build/${MODULE}/target/${MODULE}-exec.jar /app/app.jar
 ENV TZ=Asia/Shanghai
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

@@ -54,14 +54,43 @@ public class AgentGuideService {
             throw new BizException(ErrorCode.PARAM_INVALID, "会话已关闭，请新建会话");
         }
         List<String> history = new ArrayList<>();
+        List<GuideChatResult.ElementStatus> prevElements = new ArrayList<>();
         for (AgentMessageEntity m : sessionService.messages(sessionId)) {
             history.add(m.getRole() + ": " + m.getContent());
+            // 取最后一条助手消息的结构化 payload 中的要素状态（追问阶梯计次/SKIP 粘性）
+            if ("ASSISTANT".equals(m.getRole()) && m.getStructuredPayload() != null) {
+                prevElements = parseElements(m.getStructuredPayload());
+            }
         }
         String prompt = promptTemplateService.render("SUBMIT_GUIDE", Map.of());
-        GuideChatResult result = llmClient.chatSubmitGuide(prompt, history, userMessage.trim(), formContext);
+        GuideChatResult result = llmClient.chatSubmitGuide(prompt, history, userMessage.trim(), formContext, prevElements);
         sessionService.appendMessage(sessionId, "USER", userMessage.trim(), null);
         sessionService.appendMessage(sessionId, "ASSISTANT", result.reply(), toJson(result));
         return result;
+    }
+
+    /** 从助手消息结构化 payload 还原上一轮要素状态（解析失败 → 空清单，不影响主流程） */
+    @SuppressWarnings("unchecked")
+    private List<GuideChatResult.ElementStatus> parseElements(String structuredPayload) {
+        List<GuideChatResult.ElementStatus> elements = new ArrayList<>();
+        try {
+            Map<String, Object> payload = objectMapper.readValue(structuredPayload, Map.class);
+            Object raw = payload.get("elements");
+            if (raw instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> map) {
+                        elements.add(new GuideChatResult.ElementStatus(
+                                String.valueOf(map.get("key")),
+                                String.valueOf(map.get("status")),
+                                map.get("note") == null ? "" : String.valueOf(map.get("note")),
+                                map.get("attempts") instanceof Number n ? n.intValue() : 0));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 忽略：历史 payload 无 elements（旧消息）或格式异常
+        }
+        return elements;
     }
 
     private String toJson(GuideChatResult result) {
@@ -72,7 +101,9 @@ public class AgentGuideService {
             return objectMapper.writeValueAsString(Map.of(
                     "structured", result.structured(),
                     "missing", result.missing(),
-                    "ready", result.ready()));
+                    "ready", result.ready(),
+                    "elements", result.elements() == null ? List.of() : result.elements(),
+                    "quickReplies", result.quickReplies() == null ? List.of() : result.quickReplies()));
         } catch (Exception e) {
             return null;
         }

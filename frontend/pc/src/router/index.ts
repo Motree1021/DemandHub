@@ -23,19 +23,43 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'demand/report',
         name: 'DemandReport',
-        component: () => import('@/views/placeholder/index.vue'),
+        component: () => import('@/views/demand/report.vue'),
         meta: { title: '需求提报' }
       },
       {
         path: 'demand/list',
         name: 'DemandList',
-        component: () => import('@/views/placeholder/index.vue'),
+        component: () => import('@/views/demand/list.vue'),
         meta: { title: '需求列表' }
+      },
+      {
+        path: 'demand/detail/:id',
+        name: 'DemandDetail',
+        component: () => import('@/views/demand/detail.vue'),
+        meta: { title: '需求详情' }
+      },
+      {
+        path: 'board',
+        name: 'Board',
+        component: () => import('@/views/board/index.vue'),
+        meta: { title: '经营看板', roles: ['EXECUTIVE', 'MANAGER'] }
+      },
+      {
+        path: 'workbench/manager',
+        name: 'ManagerWorkbench',
+        component: () => import('@/views/workbench/manager.vue'),
+        meta: { title: '经理工作台', roles: ['MANAGER', 'EXECUTIVE', 'ADMIN'] }
+      },
+      {
+        path: 'workbench/handler',
+        name: 'HandlerWorkbench',
+        component: () => import('@/views/workbench/handler.vue'),
+        meta: { title: '处理人工作台', roles: ['HANDLER'] }
       },
       {
         path: 'notification',
         name: 'Notification',
-        component: () => import('@/views/placeholder/index.vue'),
+        component: () => import('@/views/notification/index.vue'),
         meta: { title: '通知中心' }
       },
       {
@@ -43,13 +67,61 @@ const routes: RouteRecordRaw[] = [
         name: 'RoleGrant',
         component: () => import('@/views/system/grant.vue'),
         meta: { title: '角色授权管理', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/user',
+        name: 'UserManage',
+        component: () => import('@/views/system/user.vue'),
+        meta: { title: '用户管理', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/org',
+        name: 'OrgManage',
+        component: () => import('@/views/system/org.vue'),
+        meta: { title: '组织管理', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/channel',
+        name: 'ChannelManage',
+        component: () => import('@/views/system/channel.vue'),
+        meta: { title: '渠道管理', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/types',
+        name: 'DemandTypes',
+        component: () => import('@/views/system/types.vue'),
+        meta: { title: '需求类型字典', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/state-machines',
+        name: 'StateMachines',
+        component: () => import('@/views/system/state-machines.vue'),
+        meta: { title: '状态机配置', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/templates',
+        name: 'NotifyTemplates',
+        component: () => import('@/views/system/templates.vue'),
+        meta: { title: '通知模板', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/dicts',
+        name: 'SysDicts',
+        component: () => import('@/views/system/dicts.vue'),
+        meta: { title: '通用字典', roles: ['ADMIN'] }
+      },
+      {
+        path: 'system/sla',
+        name: 'SlaConfigs',
+        component: () => import('@/views/system/sla.vue'),
+        meta: { title: 'SLA 配置', roles: ['ADMIN'] }
       }
     ]
   }
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
 
@@ -60,8 +132,7 @@ router.beforeEach(async (to, _from, next) => {
   const userStore = useUserStore()
 
   if (to.meta.public) {
-    // 企微回调（/login?code=xxx）即使是已登录态也放行，由登录页完成换账号登录
-    if (userStore.isLoggedIn && to.path === '/login' && !to.query.code) {
+    if (userStore.isLoggedIn && to.path === '/login') {
       return next('/')
     }
     return next()

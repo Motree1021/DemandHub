@@ -19,6 +19,9 @@ public class DemandExtTechEntity implements Serializable {
 
     private Long demandId;
 
+    /** 需求子类（TECH_SUBTYPE 字典：SYS_DEV/DATA_RPT/SYS_INT/OPS_OPT/OTHER） */
+    private String techSubtype;
+
     private String relatedSystem;
 
     private String relatedModule;

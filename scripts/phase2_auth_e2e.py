@@ -7,6 +7,7 @@
 运行前提：中间件栈 + gateway:8080 + system:8081 已启动（联调走网关）。
 """
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -14,8 +15,10 @@ import urllib.error
 
 import pymysql
 
-BASE = "http://localhost:8080/api"
-DIRECT = "http://localhost:8081/system"
+BASE = os.environ.get("E2E_BASE", "http://localhost:8080/api")
+# 微服务形态：直连 8081 验证业务服务只信网关头；单体形态（E2E_MONOLITH=1）：等价于无 token 访问单体
+DIRECT = os.environ.get("E2E_DIRECT", "http://localhost:8081/system")
+MONOLITH = os.environ.get("E2E_MONOLITH") == "1"
 MYSQL = {"host": "localhost", "port": 3307, "user": "root", "password": "demandhub123", "database": "demandhub"}
 SEED_HASH = "$2b$10$l8x3YuZxjnhAEHHQSnL5oeHe7fmlC8AlyvYdYrWi0qSPYViSVaa0y"  # Admin@123456
 
@@ -217,8 +220,10 @@ report("4.2 伪造头被剥离(仍以 token 为准)", s == 200 and me.get("id") 
        f"id={me.get('id')} channel={me.get('channel')}")
 
 # 直连 8081 不带网关注入身份 → UserContext 为空 → 未授权（业务服务只信网关头，伪造头直连可绕过属既有信任模型，由网络隔离兜底）
+# 单体形态：无独立业务端口可直连，等价验证"无 token 访问被 AuthFilter 拦截（真 401）"
 s, b = req("GET", "/auth/me", base=DIRECT)
-report("4.3 绕过网关直连 8081(无身份头) → 未授权", s == 200 and b.get("code") == 401,
+report("4.3 绕过网关直连 8081(无身份头) → 未授权",
+       (s == 401) if MONOLITH else (s == 200 and b.get("code") == 401),
        f"status={s} code={b.get('code')}")
 
 # 越权 403：经理(非ADMIN)调管理接口

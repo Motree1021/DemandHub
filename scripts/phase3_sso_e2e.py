@@ -13,6 +13,7 @@
 import hashlib
 import hmac
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -20,8 +21,9 @@ import urllib.error
 
 import pymysql
 
-BASE = "http://localhost:8080/api"
-DIRECT = "http://localhost:8081/system"
+BASE = os.environ.get("E2E_BASE", "http://localhost:8080/api")
+# 微服务形态直连 8081；单体形态经 E2E_DIRECT 指向单体（含 context-path /api + /system 前缀）
+DIRECT = os.environ.get("E2E_DIRECT", "http://localhost:8081/system")
 VERIFY_PATH = "/openapi/demandhub/sso/verify"
 MOCK_VERIFY_URL = DIRECT + "/mock-sso" + VERIFY_PATH
 MYSQL = {"host": "localhost", "port": 3307, "user": "root", "password": "demandhub123", "database": "demandhub"}

@@ -164,10 +164,12 @@ import {
   resumeDemand,
   submitAcceptance,
   previewAttachmentUrl,
+  listDictItems,
   type DemandDetail,
   type TransitionLog,
   type CommentItem,
-  type AttachmentItem
+  type AttachmentItem,
+  type DictItem
 } from '@/api/demand'
 import { listAllUsers, type UserSnapshotVO } from '@/api/directory'
 import {
@@ -192,6 +194,7 @@ const detail = ref<DemandDetail | null>(null)
 const transitions = ref<TransitionLog[]>([])
 const comments = ref<CommentItem[]>([])
 const allUsers = ref<UserSnapshotVO[]>([])
+const subtypeOptions = ref<DictItem[]>([])
 const attUrls = ref<Record<number, string>>({})
 const collapseActive = ref(['base'])
 const commentInput = ref('')
@@ -268,6 +271,10 @@ const extEntries = computed(() => {
 
 function extValue(key: string): string {
   const v = (detail.value!.ext as Record<string, unknown>)[key]
+  if (key === 'techSubtype') {
+    // 子类存字典 itemCode，展示 itemName；未命中（历史/自定义）原样展示
+    return subtypeOptions.value.find((s) => s.itemCode === v)?.itemName || String(v)
+  }
   if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) {
     return fmtDate(v)
   }
@@ -433,7 +440,9 @@ async function reload() {
 }
 
 onMounted(async () => {
-  allUsers.value = await listAllUsers()
+  const [users, subtypes] = await Promise.all([listAllUsers(), listDictItems('TECH_SUBTYPE')])
+  allUsers.value = users
+  subtypeOptions.value = subtypes
   await reload()
 })
 </script>

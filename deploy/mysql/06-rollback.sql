@@ -35,3 +35,11 @@ SET @sql := IF((SELECT COUNT(*) FROM information_schema.TABLES
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- ---------- 3) P10 科技需求要素回滚（08-tech-subtype-p10.sql 的逆操作） ----------
+SET @sql := IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA='demandhub' AND TABLE_NAME='demand_ext_tech' AND COLUMN_NAME='tech_subtype') > 0,
+               'ALTER TABLE demand_ext_tech DROP COLUMN tech_subtype', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+DELETE FROM sys_dict WHERE dict_type IN ('TECH_SUBTYPE','RELATED_SYSTEM');
+-- SUBMIT_GUIDE 提示词为配置数据，回滚后不还原旧文案（不影响功能）

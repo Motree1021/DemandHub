@@ -1,0 +1,97 @@
+# 单体装配配置：四业务模块 application.yml 的并集（键位经盘点互斥）
+# context-path=/api：对外路径与微服务形态（网关 StripPrefix=1）完全一致，nginx/vite/e2e 零改动
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: demandhub-server
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3307}/${MYSQL_DB:demandhub}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:demandhub123}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  mvc:
+    throw-exception-if-no-handler-found: true
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+  servlet:
+    multipart:
+      # 取四模块最大值（demand 附件上传）
+      max-file-size: 50MB
+      max-request-size: 120MB
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
+  producer:
+    group: demandhub-server-producer
+    send-message-timeout: 5000
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+    db-config:
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+demandhub:
+  auth:
+    # 原网关 AuthFilter 与 system 共用同一密钥；生产环境经环境变量 JWT_SECRET 注入
+    jwt-secret: ${JWT_SECRET:demandhub-dev-secret-key-0123456789abcdef}
+    access-ttl-hours: ${JWT_ACCESS_TTL_HOURS:2}
+    refresh-ttl-hours: ${JWT_REFRESH_TTL_HOURS:8}
+    login-max-failures: ${LOGIN_MAX_FAILURES:5}
+    login-lock-minutes: ${LOGIN_LOCK_MINUTES:15}
+  channel-sso:
+    mock: ${CHANNEL_SSO_MOCK:true}
+    secret-store-key: ${SECRET_STORE_KEY:demandhub-dev-secret-store-key-0123456789}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:demandhub}
+    secret-key: ${MINIO_SECRET_KEY:demandhub123}
+    bucket: ${MINIO_BUCKET:demandhub}
+  sla:
+    scan-interval-ms: 30000
+  stat:
+    refresh-cron: 0 */5 * * * ?
+  notification:
+    link-prefix: /demand/detail/
+  wecom:
+    mock-mode: OK
+  agent:
+    llm:
+      mock-enabled: true
+      chunk-size: 6
+      think-delay-ms: 150
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+  default-flat-param-object: true
+  packages-to-scan:
+    - com.demandhub.system.controller
+    - com.demandhub.demand.controller
+    - com.demandhub.notification.controller
+    - com.demandhub.agent.controller
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+logging:
+  level:
+    com.demandhub: debug

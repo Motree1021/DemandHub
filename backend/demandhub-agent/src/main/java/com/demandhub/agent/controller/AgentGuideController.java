@@ -82,7 +82,9 @@ public class AgentGuideController {
             emitter.send(SseEmitter.event().name("structured").data(Map.of(
                     "structured", result.structured() == null ? Map.of() : result.structured(),
                     "missing", result.missing() == null ? java.util.List.of() : result.missing(),
-                    "ready", result.ready())));
+                    "ready", result.ready(),
+                    "elements", result.elements() == null ? java.util.List.of() : result.elements(),
+                    "quickReplies", result.quickReplies() == null ? java.util.List.of() : result.quickReplies())));
             emitter.send(SseEmitter.event().name("done").data(""));
             emitter.complete();
         } catch (Exception e) {

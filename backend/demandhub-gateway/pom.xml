@@ -55,6 +55,8 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.demandhub.gateway.GatewayApplication</mainClass>
+                    <!-- exec 分类：与业务模块保持一致的产物命名（Dockerfile 统一拷贝 *-exec.jar） -->
+                    <classifier>exec</classifier>
                 </configuration>
                 <executions>
                     <execution>

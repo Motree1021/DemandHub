@@ -53,7 +53,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory('/h5/'),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
 

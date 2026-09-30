@@ -75,6 +75,7 @@ export interface DemandListItem {
 
 /** 科技扩展 */
 export interface ExtTech {
+  techSubtype?: string
   relatedSystem?: string
   relatedModule?: string
   businessScenario?: string

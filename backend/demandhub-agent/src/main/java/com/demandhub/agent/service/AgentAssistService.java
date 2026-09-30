@@ -8,7 +8,7 @@ import com.demandhub.agent.entity.KnowledgeDocEntity;
 import com.demandhub.agent.entity.SolutionRowEntity;
 import com.demandhub.agent.llm.LlmClient;
 import com.demandhub.agent.mapper.AgentDraftMapper;
-import com.demandhub.agent.mapper.DemandViewMapper;
+import com.demandhub.agent.mapper.AgentDemandViewMapper;
 import com.demandhub.agent.mapper.SolutionRowMapper;
 import com.demandhub.common.context.CurrentUser;
 import com.demandhub.common.context.UserContext;
@@ -40,13 +40,13 @@ public class AgentAssistService {
     private final RagService ragService;
     private final LlmClient llmClient;
     private final AgentDraftMapper draftMapper;
-    private final DemandViewMapper demandViewMapper;
+    private final AgentDemandViewMapper demandViewMapper;
     private final SolutionRowMapper solutionRowMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public AgentAssistService(AgentSessionService sessionService, PromptTemplateService promptTemplateService,
                               RagService ragService, LlmClient llmClient, AgentDraftMapper draftMapper,
-                              DemandViewMapper demandViewMapper, SolutionRowMapper solutionRowMapper) {
+                              AgentDemandViewMapper demandViewMapper, SolutionRowMapper solutionRowMapper) {
         this.sessionService = sessionService;
         this.promptTemplateService = promptTemplateService;
         this.ragService = ragService;

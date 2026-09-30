@@ -204,10 +204,10 @@ idx = open(idx_path, encoding="utf-8").read() if os.path.exists(idx_path) else "
 report("5.1 H5构建产物引用/h5/前缀", "/h5/assets/" in idx, idx_path)
 
 vite_cfg = open(os.path.join(H5_DIR, "vite.config.ts"), encoding="utf-8").read()
-report("5.2 vite base='/h5/'", "base: '/h5/'" in vite_cfg, "")
+report("5.2 vite base='/h5/'", "VITE_BASE || '/h5/'" in vite_cfg, "")
 
 router_src = open(os.path.join(H5_DIR, "src", "router", "index.ts"), encoding="utf-8").read()
-report("5.3 路由base=/h5/", "createWebHistory('/h5/')" in router_src, "")
+report("5.3 路由base=/h5/", "createWebHistory(import.meta.env.BASE_URL)" in router_src, "")
 
 nginx = open(NGINX_CONF, encoding="utf-8").read()
 report("5.4 nginx同域/h5/分流且无81端口", "location /h5/" in nginx and "listen 81" not in nginx, "")

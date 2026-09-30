@@ -23,9 +23,10 @@ public interface LlmClient {
      * @param history        会话历史（按时间升序）
      * @param userMessage    本轮用户输入
      * @param formContext    前端当前表单字段快照（用户手填 + 已回填）
+     * @param prevElements   上一轮要素质量状态（P10：追问阶梯计次/SKIP 粘性；首轮为空）
      */
     GuideChatResult chatSubmitGuide(String renderedPrompt, List<String> history, String userMessage,
-                                    Map<String, Object> formContext);
+                                    Map<String, Object> formContext, List<GuideChatResult.ElementStatus> prevElements);
 
     /** 处理辅助：生成调研问题清单（FR-M9-02） */
     List<String> generateQuestions(String renderedPrompt, DemandView demand, List<KnowledgeDocEntity> similarDocs);

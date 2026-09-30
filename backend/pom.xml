@@ -18,6 +18,7 @@
         <module>demandhub-notification</module>
         <module>demandhub-agent</module>
         <module>demandhub-gateway</module>
+        <module>demandhub-server</module>
     </modules>
 
     <properties>
@@ -82,6 +83,26 @@
             <dependency>
                 <groupId>com.demandhub</groupId>
                 <artifactId>demandhub-common</artifactId>
+                <version>1.0.0</version>
+            </dependency>
+            <dependency>
+                <groupId>com.demandhub</groupId>
+                <artifactId>demandhub-system</artifactId>
+                <version>1.0.0</version>
+            </dependency>
+            <dependency>
+                <groupId>com.demandhub</groupId>
+                <artifactId>demandhub-demand</artifactId>
+                <version>1.0.0</version>
+            </dependency>
+            <dependency>
+                <groupId>com.demandhub</groupId>
+                <artifactId>demandhub-notification</artifactId>
+                <version>1.0.0</version>
+            </dependency>
+            <dependency>
+                <groupId>com.demandhub</groupId>
+                <artifactId>demandhub-agent</artifactId>
                 <version>1.0.0</version>
             </dependency>
             <dependency>

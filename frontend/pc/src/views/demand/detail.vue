@@ -54,6 +54,7 @@
               <el-descriptions-item label="需求类型">{{ typeLabel(detail.demand.demandTypeCode, detail.typeName) }}</el-descriptions-item>
               <el-descriptions-item label="期望交付">{{ fmtDate(detail.demand.expectDeliveryAt) }}</el-descriptions-item>
               <template v-if="detail.demand.demandTypeCode === 'TECH' && detail.ext">
+                <el-descriptions-item label="需求子类">{{ subtypeName }}</el-descriptions-item>
                 <el-descriptions-item label="关联系统">{{ detail.ext.relatedSystem || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="关联模块">{{ detail.ext.relatedModule || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="业务场景" :span="2">{{ detail.ext.businessScenario || '-' }}</el-descriptions-item>
@@ -558,6 +559,7 @@ import {
   pageDemands,
   downloadAttachment,
   previewAttachmentUrl,
+  listDictItems,
   type DemandDetail,
   type TransitionLog,
   type SolutionItem,
@@ -567,7 +569,8 @@ import {
   type EffortSummary,
   type RelationItem,
   type AttachmentItem,
-  type DemandListItem
+  type DemandListItem,
+  type DictItem
 } from '@/api/demand'
 import { listAllUsers, listActiveTypes, type UserSnapshotVO, type DemandTypeItem } from '@/api/directory'
 import { useUserStore } from '@/store/modules/user'
@@ -604,6 +607,16 @@ const relations = ref<RelationItem[]>([])
 const relatedDemands = ref<Map<number, DemandListItem>>(new Map())
 const allUsers = ref<UserSnapshotVO[]>([])
 const typeList = ref<DemandTypeItem[]>([])
+const subtypeOptions = ref<DictItem[]>([])
+
+/** 需求子类展示名（存 itemCode，展示 itemName；未命中原样展示） */
+const subtypeName = computed(() => {
+  const code = detail.value?.ext?.techSubtype
+  if (!code) {
+    return '-'
+  }
+  return subtypeOptions.value.find((s) => s.itemCode === code)?.itemName || String(code)
+})
 const activeSolutionTab = ref('')
 const commentInput = ref('')
 const mentionIds = ref<number[]>([])
@@ -1036,9 +1049,10 @@ function onDownload(att: AttachmentItem) {
 }
 
 onMounted(async () => {
-  const [users, types] = await Promise.all([listAllUsers(), listActiveTypes()])
+  const [users, types, subtypes] = await Promise.all([listAllUsers(), listActiveTypes(), listDictItems('TECH_SUBTYPE')])
   allUsers.value = users
   typeList.value = types
+  subtypeOptions.value = subtypes
   await loadAll()
 })
 </script>

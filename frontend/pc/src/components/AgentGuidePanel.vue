@@ -21,13 +21,34 @@
 
     <!-- 消息区 -->
     <div ref="msgBoxRef" class="msg-box">
-      <el-empty v-if="!messages.length" description="用一句话描述你的需求，我来帮你整理成规范表单" :image-size="60" />
+      <template v-if="!messages.length">
+        <el-empty description="随口说、粘贴一大段文字都行，我来帮你整理成规范表单" :image-size="60" />
+        <!-- 快捷开场（消除冷启动障碍） -->
+        <div v-if="!unavailable" class="starter-chips">
+          <span v-for="c in STARTERS" :key="c" class="chip" @click="onQuickSend(c)">{{ c }}</span>
+        </div>
+      </template>
       <div v-for="(m, i) in messages" :key="i" class="msg-row" :class="m.role.toLowerCase()">
         <div class="msg-bubble">
           <span v-html="fmtContent(m.content)" />
           <span v-if="m.streaming" class="cursor">▍</span>
         </div>
       </div>
+    </div>
+
+    <!-- 要素完备度清单（P10：三态 rubric 可视化） -->
+    <div v-if="elements.length" class="elements-box">
+      <div class="elements-title">信息完备度（{{ okCount }}/{{ elements.length }}）</div>
+      <div class="elements-list">
+        <span v-for="e in elements" :key="e.key" class="element-item" :class="e.status.toLowerCase()" :title="e.note">
+          <el-icon v-if="e.status === 'OK'"><CircleCheckFilled /></el-icon>
+          <el-icon v-else-if="e.status === 'VAGUE'"><WarningFilled /></el-icon>
+          <el-icon v-else-if="e.status === 'SKIP'"><RemoveFilled /></el-icon>
+          <el-icon v-else><QuestionFilled /></el-icon>
+          {{ elementLabel(e.key) }}
+        </span>
+      </div>
+      <div v-if="readyFlag" class="ready-tip">信息已齐，确认表单无误后即可提交</div>
     </div>
 
     <!-- 结构化回填提示 -->
@@ -39,26 +60,32 @@
       </span>
     </div>
 
+    <!-- 快捷回复（选项类问题 / L3 逃生门） -->
+    <div v-if="quickReplies.length && !sending" class="quick-chips">
+      <span v-for="q in quickReplies" :key="q" class="chip" @click="onQuickSend(q)">{{ q }}</span>
+    </div>
+
     <!-- 输入区 -->
     <div class="input-row">
       <el-input
         v-model="input"
         type="textarea"
-        :rows="2"
+        :autosize="{ minRows: 2, maxRows: 6 }"
         resize="none"
-        :placeholder="unavailable ? 'AI 服务暂不可用' : '如：我想要个数据报表'"
+        :placeholder="unavailable ? 'AI 服务暂不可用' : '随口说或粘贴一大段；手机上可用输入法语音输入'"
         :disabled="sending || unavailable"
         @keydown.enter.exact.prevent="onSend"
       />
       <el-button type="primary" :loading="sending" :disabled="!input.trim() || unavailable" @click="onSend">发送</el-button>
     </div>
-    <div class="muted tip">Enter 发送；AI 抽取的字段会自动回填，最终以你手动编辑为准</div>
+    <div class="muted tip">Enter 发送，Shift+Enter 换行；你已填写的内容不会被 AI 覆盖，最终以手动编辑为准</div>
   </el-card>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { CircleCheckFilled, QuestionFilled, RemoveFilled, WarningFilled } from '@element-plus/icons-vue'
 import {
   createAgentSession,
   listAgentSessions,
@@ -66,6 +93,7 @@ import {
   guideChatStream,
   AgentUnavailableError,
   type AgentSession,
+  type ElementStatus,
   type GuideStructured
 } from '@/api/agent'
 
@@ -86,6 +114,9 @@ interface UiMessage {
   streaming?: boolean
 }
 
+/** 快捷开场短语（冷启动引导：高手整段/新手随口/语音都可） */
+const STARTERS = ['我要做个报表', '系统不好用想优化', '要和其他系统对接']
+
 const session = ref<AgentSession | null>(null)
 const messages = ref<UiMessage[]>([])
 const input = ref('')
@@ -93,6 +124,9 @@ const sending = ref(false)
 const unavailable = ref(false)
 const lastStructured = ref<GuideStructured | null>(null)
 const lastMissing = ref<string[]>([])
+const elements = ref<ElementStatus[]>([])
+const quickReplies = ref<string[]>([])
+const readyFlag = ref(false)
 const msgBoxRef = ref<HTMLElement>()
 
 const FIELD_LABELS: Record<string, string> = {
@@ -104,6 +138,16 @@ const FIELD_LABELS: Record<string, string> = {
   ext: '扩展字段'
 }
 
+/** 要素键中文名（rubric 清单展示） */
+const ELEMENT_LABELS: Record<string, string> = {
+  title: '标题',
+  content: '需求描述',
+  techSubtype: '需求子类',
+  businessScenario: '业务场景',
+  acceptanceCriteria: '验收标准',
+  valueImpact: '价值与影响'
+}
+
 const filledFields = computed(() =>
   Object.keys(lastStructured.value || {})
     .filter((k) => (lastStructured.value as Record<string, unknown>)[k] !== undefined)
@@ -113,6 +157,12 @@ const filledFields = computed(() =>
 const missingLabel = computed(() =>
   lastMissing.value.length ? lastMissing.value.map((m) => FIELD_LABELS[m] || m).join('、') : ''
 )
+
+const okCount = computed(() => elements.value.filter((e) => e.status === 'OK').length)
+
+function elementLabel(key: string): string {
+  return ELEMENT_LABELS[key] || key
+}
 
 function fmtContent(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
@@ -131,6 +181,15 @@ async function ensureSession(firstMessage: string): Promise<AgentSession> {
   return session.value
 }
 
+/** 快捷短语/选项 chips：等同用户输入直接发送 */
+function onQuickSend(text: string) {
+  if (sending.value || unavailable.value) {
+    return
+  }
+  input.value = text
+  onSend()
+}
+
 async function onSend() {
   const text = input.value.trim()
   if (!text || sending.value) {
@@ -141,6 +200,7 @@ async function onSend() {
     const s = await ensureSession(text)
     messages.value.push({ role: 'USER', content: text })
     input.value = ''
+    quickReplies.value = []
     const assistant: UiMessage = { role: 'ASSISTANT', content: '', streaming: true }
     messages.value.push(assistant)
     scrollToBottom()
@@ -155,6 +215,9 @@ async function onSend() {
           lastMissing.value = payload.missing || []
           emit('fill', payload.structured)
         }
+        elements.value = payload.elements || []
+        quickReplies.value = payload.quickReplies || []
+        readyFlag.value = payload.ready && (payload.elements || []).every((e) => e.status === 'OK' || e.status === 'SKIP')
       }
     })
     assistant.streaming = false
@@ -177,6 +240,9 @@ async function onNewSession() {
   messages.value = []
   lastStructured.value = null
   lastMissing.value = []
+  elements.value = []
+  quickReplies.value = []
+  readyFlag.value = false
   unavailable.value = false
 }
 
@@ -258,6 +324,78 @@ onMounted(async () => {
   padding: 6px 8px;
   font-size: 12px;
   margin-bottom: 10px;
+}
+
+/* 要素完备度清单（三态） */
+.elements-box {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.elements-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--el-text-color-regular);
+}
+
+.elements-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.element-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--el-text-color-secondary);
+}
+
+.element-item.ok {
+  color: var(--el-color-success);
+}
+
+.element-item.vague {
+  color: var(--el-color-warning);
+}
+
+.element-item.skip {
+  color: var(--el-text-color-disabled);
+}
+
+.ready-tip {
+  margin-top: 6px;
+  color: var(--el-color-success);
+}
+
+/* 快捷开场 / 快捷回复 chips */
+.starter-chips,
+.quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 8px 10px;
+}
+
+.quick-chips {
+  padding: 0 0 8px;
+}
+
+.chip {
+  border: 1px solid var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chip:hover {
+  background: var(--el-color-primary-light-9);
 }
 
 .input-row {

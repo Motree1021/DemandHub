@@ -3,8 +3,8 @@ package com.demandhub.notification.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demandhub.notification.entity.OrgSnapshotView;
 import com.demandhub.notification.entity.RoleGrantView;
-import com.demandhub.notification.mapper.OrgSnapshotViewMapper;
-import com.demandhub.notification.mapper.RoleGrantViewMapper;
+import com.demandhub.notification.mapper.NotificationOrgSnapshotViewMapper;
+import com.demandhub.notification.mapper.NotificationRoleGrantViewMapper;
 import com.demandhub.notification.mq.DemandEventMessage;
 import org.springframework.stereotype.Service;
 
@@ -26,10 +26,10 @@ import java.util.stream.Collectors;
 @Service
 public class RecipientResolver {
 
-    private final RoleGrantViewMapper roleGrantMapper;
-    private final OrgSnapshotViewMapper orgSnapshotMapper;
+    private final NotificationRoleGrantViewMapper roleGrantMapper;
+    private final NotificationOrgSnapshotViewMapper orgSnapshotMapper;
 
-    public RecipientResolver(RoleGrantViewMapper roleGrantMapper, OrgSnapshotViewMapper orgSnapshotMapper) {
+    public RecipientResolver(NotificationRoleGrantViewMapper roleGrantMapper, NotificationOrgSnapshotViewMapper orgSnapshotMapper) {
         this.roleGrantMapper = roleGrantMapper;
         this.orgSnapshotMapper = orgSnapshotMapper;
     }

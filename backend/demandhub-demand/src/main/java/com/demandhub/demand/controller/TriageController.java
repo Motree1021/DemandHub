@@ -42,7 +42,8 @@ public class TriageController {
     }
 
     @Operation(summary = "待受理队列（本类型本组织 SUBMITTED，分页+筛选+排序）")
-    @RequireRole({"MANAGER", "EXECUTIVE"})
+    // 工作台 isManagerLike 含 ADMIN，查看类接口放行 ADMIN；受理/分派等操作仍仅 MANAGER
+    @RequireRole({"MANAGER", "EXECUTIVE", "ADMIN"})
     @GetMapping("/queue")
     public Result<Page<DemandEntity>> queue(@RequestParam(defaultValue = "1") long current,
                                             @RequestParam(defaultValue = "10") long size,
@@ -53,7 +54,7 @@ public class TriageController {
     }
 
     @Operation(summary = "待受理计数（工作台首屏角标）")
-    @RequireRole({"MANAGER", "EXECUTIVE"})
+    @RequireRole({"MANAGER", "EXECUTIVE", "ADMIN"})
     @GetMapping("/queue/count")
     public Result<Long> queueCount(@RequestParam(required = false) String urgency,
                                    @RequestParam(required = false) String demandTypeCode) {
@@ -61,7 +62,7 @@ public class TriageController {
     }
 
     @Operation(summary = "需求池（本类型本组织 TRIAGE，按紧急程度+提交时间）")
-    @RequireRole({"MANAGER", "HANDLER", "EXECUTIVE"})
+    @RequireRole({"MANAGER", "HANDLER", "EXECUTIVE", "ADMIN"})
     @GetMapping("/pool")
     public Result<Page<DemandEntity>> pool(@RequestParam(defaultValue = "1") long current,
                                            @RequestParam(defaultValue = "10") long size,

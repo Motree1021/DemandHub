@@ -21,8 +21,11 @@ export interface Result<T = unknown> {
 const TOKEN_KEY = 'demandhub_h5_token'
 const REFRESH_KEY = 'demandhub_h5_refresh_token'
 
+/** API 前缀：本地/同域 nginx 为 '/api'，H5 Publish TEST(Kong 路径前缀)经 VITE_API_BASE 注入 */
+export const API_BASE: string = import.meta.env.VITE_API_BASE || '/api'
+
 const service: AxiosInstance = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   timeout: 30000
 })
 
@@ -46,7 +49,7 @@ async function tryRefresh(): Promise<boolean> {
   }
   try {
     const resp = await axios.post<Result<{ accessToken: string; refreshToken: string }>>(
-      '/api/system/auth/refresh',
+      `${API_BASE}/system/auth/refresh`,
       { refreshToken: refreshTokenValue }
     )
     if (resp.data.code === 0) {
@@ -92,7 +95,23 @@ service.interceptors.response.use(
     }
     return Promise.reject(new Error(res.message))
   },
-  (error) => {
+  async (error) => {
+    // 网关 AuthFilter 返回真 HTTP 401：同样先刷新令牌重发，失败再重新授权
+    const status = error.response?.status
+    const config = error.config as (AxiosRequestConfig & { __retried401?: boolean }) | undefined
+    if (status === 401 && config && !config.__retried401) {
+      refreshing = refreshing || tryRefresh().finally(() => {
+        refreshing = null
+      })
+      if (await refreshing) {
+        config.__retried401 = true
+        return service.request(config)
+      }
+      clearSession()
+      // 会话失效：重新走静默授权（重新加载当前页，路由守卫会引导授权）
+      window.location.reload()
+      return Promise.reject(error)
+    }
     if (!error.config?.silent) {
       showToast(error.response?.data?.message || error.message || '网络异常')
     }
