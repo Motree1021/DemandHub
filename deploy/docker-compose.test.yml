@@ -230,7 +230,14 @@ services:
       args:
         MODULE: demandhub-agent
         REGISTRY: ${REGISTRY:-docker.io/library}
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      # LLM 模式：默认 Mock（e2e 确定性）；页面验证真实模型时以 shell 环境注入
+      #   DEMANDHUB_INTEGRATION_LLM_MOCK=false + LLM_API_KEY（密钥不入仓库）
+      DEMANDHUB_INTEGRATION_LLM_MOCK: ${DEMANDHUB_INTEGRATION_LLM_MOCK:-true}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-ep-20260930122836-rv2gw}
+      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL:-ep-20260930123423-mq6hq}
     depends_on:
       mysql:
         condition: service_healthy
