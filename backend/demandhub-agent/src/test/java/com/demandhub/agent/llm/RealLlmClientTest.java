@@ -35,7 +35,7 @@ class RealLlmClientTest {
         client = new RealLlmClient(new LlmSwitch(true),
                 server.url("").toString().replaceAll("/$", ""),
                 "ark-test-key", "chat-model-ep", "embed-model-ep", false,
-                1000, 3000, 2000, 0.3, 3, 200);
+                1000, 3000, 2000, 0.3, "enabled", 3, 200);
     }
 
     @AfterEach
@@ -181,7 +181,7 @@ class RealLlmClientTest {
         RealLlmClient mm = new RealLlmClient(new LlmSwitch(true),
                 server.url("").toString().replaceAll("/$", ""),
                 "ark-test-key", "chat-model-ep", "embed-model-ep", true,
-                1000, 3000, 2000, 0.3, 3, 200);
+                1000, 3000, 2000, 0.3, "enabled", 3, 200);
         // 多模态接口：data 为对象（非数组）
         server.enqueue(new MockResponse().setResponseCode(200)
                 .addHeader("Content-Type", "application/json")
@@ -200,11 +200,37 @@ class RealLlmClientTest {
     @Test
     void unavailableWhenSwitchOffOrKeyBlank() {
         RealLlmClient off = new RealLlmClient(new LlmSwitch(false),
-                "http://localhost", "key", "c", "e", false, 100, 100, 100, 0.3, 3, 100);
+                "http://localhost", "key", "c", "e", false, 100, 100, 100, 0.3, "enabled", 3, 100);
         assertFalse(off.available());
 
         RealLlmClient noKey = new RealLlmClient(new LlmSwitch(true),
-                "http://localhost", "", "c", "e", false, 100, 100, 100, 0.3, 3, 100);
+                "http://localhost", "", "c", "e", false, 100, 100, 100, 0.3, "enabled", 3, 100);
         assertFalse(noKey.available());
+    }
+
+    @Test
+    void chatThinkingDisabled_sendsThinkingParam() throws InterruptedException {
+        RealLlmClient noThink = new RealLlmClient(new LlmSwitch(true),
+                server.url("").toString().replaceAll("/$", ""),
+                "ark-test-key", "chat-model-ep", "embed-model-ep", false,
+                1000, 3000, 2000, 0.3, "disabled", 3, 200);
+        enqueueChat("{\"reply\":\"嗯\",\"structured\":{},\"missing\":[],\"ready\":false,"
+                + "\"elements\":[],\"quickReplies\":[]}");
+
+        noThink.chatSubmitGuide("p", List.of(), "随便说说", Map.of(), List.of());
+
+        RecordedRequest req = server.takeRequest(1, TimeUnit.SECONDS);
+        assertTrue(req.getBody().readUtf8().contains("\"thinking\":{\"type\":\"disabled\"}"));
+    }
+
+    @Test
+    void chatThinkingEnabled_omitsThinkingParam() throws InterruptedException {
+        enqueueChat("{\"reply\":\"嗯\",\"structured\":{},\"missing\":[],\"ready\":false,"
+                + "\"elements\":[],\"quickReplies\":[]}");
+
+        client.chatSubmitGuide("p", List.of(), "随便说说", Map.of(), List.of());
+
+        RecordedRequest req = server.takeRequest(1, TimeUnit.SECONDS);
+        assertFalse(req.getBody().readUtf8().contains("\"thinking\""));
     }
 }

@@ -47,6 +47,8 @@ public class RealLlmClient implements LlmClient {
     private final boolean embeddingMultimodal;
     private final int maxTokens;
     private final double temperature;
+    /** true=请求带 thinking=disabled 关闭模型思考（要素抽取等轻推理场景可降 60%+ 时延）；默认 false 保持模型原生行为 */
+    private final boolean thinkingDisabled;
     private final int failureThreshold;
     private final long failureCooldownMs;
 
@@ -63,6 +65,7 @@ public class RealLlmClient implements LlmClient {
                          @Value("${demandhub.agent.llm.ark.read-timeout-ms:30000}") int readTimeoutMs,
                          @Value("${demandhub.agent.llm.ark.max-tokens:2000}") int maxTokens,
                          @Value("${demandhub.agent.llm.ark.temperature:0.3}") double temperature,
+                         @Value("${demandhub.agent.llm.ark.thinking:enabled}") String thinking,
                          @Value("${demandhub.agent.llm.ark.failure-threshold:3}") int failureThreshold,
                          @Value("${demandhub.agent.llm.ark.failure-cooldown-ms:60000}") long failureCooldownMs) {
         this.llmSwitch = llmSwitch;
@@ -72,6 +75,7 @@ public class RealLlmClient implements LlmClient {
         this.embeddingMultimodal = embeddingMultimodal;
         this.maxTokens = maxTokens;
         this.temperature = temperature;
+        this.thinkingDisabled = "disabled".equalsIgnoreCase(thinking);
         this.failureThreshold = failureThreshold;
         this.failureCooldownMs = failureCooldownMs;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -246,6 +250,9 @@ public class RealLlmClient implements LlmClient {
         payload.put("temperature", temperature);
         payload.put("max_tokens", maxTokens);
         payload.put("response_format", Map.of("type", "json_object"));
+        if (thinkingDisabled) {
+            payload.put("thinking", Map.of("type", "disabled"));
+        }
         String raw = "";
         try {
             raw = postForRawBody("/chat/completions", payload);

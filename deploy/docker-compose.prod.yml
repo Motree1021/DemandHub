@@ -211,6 +211,8 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
       LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-ep-20260930122836-rv2gw}
       LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL:-ep-20260930123423-mq6hq}
+      # 模型思考开关（V4.1-Flash 起支持 disabled 降时延）；默认 enabled 保持模型原生行为
+      LLM_CHAT_THINKING: ${LLM_CHAT_THINKING:-enabled}
     depends_on:
       mysql:
         condition: service_healthy

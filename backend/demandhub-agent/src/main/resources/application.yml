@@ -46,6 +46,8 @@ demandhub:
         read-timeout-ms: 90000
         max-tokens: 2000
         temperature: 0.3
+        # 模型思考开关：enabled 默认（原生行为）；disabled 请求带 thinking=disabled（要素抽取等轻推理场景显著降时延，V4.1-Flash 起支持）
+        thinking: ${LLM_CHAT_THINKING:enabled}
         failure-threshold: 3
         failure-cooldown-ms: 60000
 

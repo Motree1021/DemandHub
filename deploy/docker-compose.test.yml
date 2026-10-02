@@ -238,6 +238,7 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-ep-20260930122836-rv2gw}
       LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL:-ep-20260930123423-mq6hq}
+      LLM_CHAT_THINKING: ${LLM_CHAT_THINKING:-enabled}
     depends_on:
       mysql:
         condition: service_healthy
