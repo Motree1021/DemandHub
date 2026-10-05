@@ -1,0 +1,23 @@
+name: 价值抽象
+type: TECH
+turns:
+- user: 标题写作「持仓数据整理」。子类是数据报表，价值与影响先填「比较方便」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 持仓数据整理
+      ext.techSubtype: DATA_RPT
+      ext.valueImpact: 比较方便
+    elements_status:
+      valueImpact: VAGUE
+- user: 价值与影响改为「不做会有客户持仓错报风险」。
+  expect:
+    structured_contains:
+      ext.valueImpact: 不做会有客户持仓错报风险
+    elements_status:
+      valueImpact: OK

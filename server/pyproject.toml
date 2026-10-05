@@ -1,0 +1,23 @@
+[project]
+name = "demandhub-server"
+version = "0.1.0"
+description = "DemandHub V1 需求收集服务"
+requires-python = ">=3.12,<3.13"
+dependencies = ["fastapi", "uvicorn[standard]", "sqlalchemy[asyncio]", "asyncmy", "pymysql", "alembic", "pydantic-settings", "pyjwt", "httpx", "openai", "pyyaml", "openpyxl"]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "respx", "ruff"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+asyncio_default_fixture_loop_scope = "function"
+addopts = '-m "not eval"'
+markers = ["eval: 真实模型评测，默认不运行"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

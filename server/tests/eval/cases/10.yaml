@@ -1,0 +1,23 @@
+name: 运维导出
+type: TECH
+turns:
+- user: 标题写作「月末批量导出优化」。子类是运维优化，问题现象写「月末导出等待10分钟经常超时」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 月末批量导出优化
+      ext.techSubtype: OPS_OPT
+      ext.opsProblem: 月末导出等待10分钟经常超时
+    elements_status:
+      techSubtype: OK
+- user: 期望目标写「导出1分钟内完成」。
+  expect:
+    structured_contains:
+      ext.opsTarget: 导出1分钟内完成
+    elements_status:
+      techSubtype: OK

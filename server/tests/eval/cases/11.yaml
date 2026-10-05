@@ -1,0 +1,23 @@
+name: 系统集成异常
+type: TECH
+turns:
+- user: 标题写作「风险等级同步」。子类是系统集成，流向与触发写「CRM实时推送风险等级」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 风险等级同步
+      ext.techSubtype: SYS_INT
+      ext.intDataFlow: CRM实时推送风险等级
+    elements_status:
+      techSubtype: OK
+- user: 异常处理写「同步失败自动重试并通知运维」。
+  expect:
+    structured_contains:
+      ext.intException: 同步失败自动重试并通知运维
+    elements_status:
+      techSubtype: OK

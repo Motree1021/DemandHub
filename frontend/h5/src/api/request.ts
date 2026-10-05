@@ -1,138 +1,81 @@
 import axios from 'axios'
-import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
+import type { AxiosRequestConfig } from 'axios'
 import { showToast } from 'vant'
 
-/** 自定义配置：silent=true 时业务错误不弹 toast（用于探测接口后本地兜底的场景） */
-declare module 'axios' {
-  interface AxiosRequestConfig {
-    silent?: boolean
-  }
+declare module 'axios' { interface AxiosRequestConfig { silent?: boolean } }
+export interface Result<T = unknown> { code: number; message: string; data: T }
+export const TOKEN_KEY = 'demandhub_h5_token'
+export const API_BASE: string = import.meta.env.VITE_API_BASE || '/demandhub-api'
+export class ApiError extends Error {
+  constructor(public code: number, message: string) { super(message); this.name = 'ApiError' }
 }
-
-/**
- * 后端统一返回体结构
- */
-export interface Result<T = unknown> {
-  code: number
-  message: string
-  data: T
-}
-
-const TOKEN_KEY = 'demandhub_h5_token'
-const REFRESH_KEY = 'demandhub_h5_refresh_token'
-
-/** API 前缀：本地/同域 nginx 为 '/api'，H5 Publish TEST(Kong 路径前缀)经 VITE_API_BASE 注入 */
-export const API_BASE: string = import.meta.env.VITE_API_BASE || '/api'
-
-const service: AxiosInstance = axios.create({
-  baseURL: API_BASE,
-  timeout: 30000
-})
-
-service.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem(TOKEN_KEY)
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => Promise.reject(error)
-)
-
-let refreshing: Promise<boolean> | null = null
-
-async function tryRefresh(): Promise<boolean> {
-  const refreshTokenValue = localStorage.getItem(REFRESH_KEY)
-  if (!refreshTokenValue) {
-    return false
-  }
-  try {
-    const resp = await axios.post<Result<{ accessToken: string; refreshToken: string }>>(
-      `${API_BASE}/system/auth/refresh`,
-      { refreshToken: refreshTokenValue }
-    )
-    if (resp.data.code === 0) {
-      localStorage.setItem(TOKEN_KEY, resp.data.data.accessToken)
-      localStorage.setItem(REFRESH_KEY, resp.data.data.refreshToken)
-      return true
-    }
-  } catch {
-    // 刷新失败，视为会话失效
-  }
-  return false
-}
-
-function clearSession() {
+export function expireSession() {
   localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(REFRESH_KEY)
+  window.dispatchEvent(new Event('demandhub:unauthorized'))
 }
-
-service.interceptors.response.use(
-  async (response: AxiosResponse<Result>) => {
-    // blob 响应（附件下载/预览）直接透传，不走统一返回体解析
-    if (response.config.responseType === 'blob') {
-      return response as never
-    }
-    const res = response.data
-    if (res.code === 0) {
-      return res.data as never
-    }
-    if (res.code === 401) {
-      refreshing = refreshing || tryRefresh().finally(() => {
-        refreshing = null
-      })
-      if (await refreshing) {
-        return service.request(response.config) as never
-      }
-      clearSession()
-      // 会话失效：重新走静默授权（重新加载当前页，路由守卫会引导授权）
-      window.location.reload()
-      return Promise.reject(new Error(res.message))
-    }
-    if (!response.config.silent) {
-      showToast(res.message || '请求失败')
-    }
-    return Promise.reject(new Error(res.message))
-  },
-  async (error) => {
-    // 网关 AuthFilter 返回真 HTTP 401：同样先刷新令牌重发，失败再重新授权
-    const status = error.response?.status
-    const config = error.config as (AxiosRequestConfig & { __retried401?: boolean }) | undefined
-    if (status === 401 && config && !config.__retried401) {
-      refreshing = refreshing || tryRefresh().finally(() => {
-        refreshing = null
-      })
-      if (await refreshing) {
-        config.__retried401 = true
-        return service.request(config)
-      }
-      clearSession()
-      // 会话失效：重新走静默授权（重新加载当前页，路由守卫会引导授权）
-      window.location.reload()
-      return Promise.reject(error)
-    }
-    if (!error.config?.silent) {
-      showToast(error.response?.data?.message || error.message || '网络异常')
-    }
-    return Promise.reject(error)
-  }
-)
-
-export function get<T = unknown>(url: string, params?: object, config?: AxiosRequestConfig): Promise<T> {
+export function bearerHeaders(): Record<string, string> {
+  const token = localStorage.getItem(TOKEN_KEY)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+/** 迟到的旧账号401或无Bearer入口响应，不能删除后来登录的新账号JWT。 */
+function expireRequestSession(config?: AxiosRequestConfig) {
+  const headers = config?.headers
+  const authorization = headers instanceof axios.AxiosHeaders
+    ? headers.get('Authorization')
+    : headers?.Authorization || headers?.authorization
+  const currentToken = localStorage.getItem(TOKEN_KEY)
+  if (currentToken && authorization === `Bearer ${currentToken}`) expireSession()
+}
+const service = axios.create({ baseURL: API_BASE, timeout: 30000 })
+service.interceptors.request.use(config => {
+  Object.assign(config.headers, bearerHeaders())
+  return config
+})
+service.interceptors.response.use(response => {
+  const res = response.data as Result
+  if (res.code === 0) return res.data as never
+  if (res.code === 401) expireRequestSession(response.config)
+  if (!response.config.silent && res.code !== 401) showToast(res.message || '请求失败')
+  return Promise.reject(new ApiError(res.code, res.message || '请求失败'))
+}, error => {
+  const code = error.response?.data?.code || error.response?.status || -1
+  const message = error.response?.data?.message || error.message || '网络异常'
+  if (code === 401) expireRequestSession(error.config)
+  if (!error.config?.silent && code !== 401) showToast(message)
+  return Promise.reject(new ApiError(code, message))
+})
+export function get<T>(url: string, params?: object, config?: AxiosRequestConfig): Promise<T> {
   return service.get(url, { ...config, params }) as unknown as Promise<T>
 }
-
-export function post<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+export function post<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
   return service.post(url, data, config) as unknown as Promise<T>
 }
-
-export function put<T = unknown>(url: string, data?: unknown): Promise<T> {
+export function put<T>(url: string, data?: unknown): Promise<T> {
   return service.put(url, data) as unknown as Promise<T>
 }
 
-export function del<T = unknown>(url: string): Promise<T> {
-  return service.delete(url) as unknown as Promise<T>
+/** 文件下载同样携带 Bearer，并识别 HTTP 200 的业务错误。 */
+export async function downloadFile(path: string, fallbackName: string, params?: Record<string, string>) {
+  const query = new URLSearchParams(params).toString()
+  const response = await fetch(`${API_BASE}${path}${query ? `?${query}` : ''}`, { headers: bearerHeaders() })
+  const contentType = response.headers.get('content-type') || ''
+  if (!response.ok || contentType.includes('json')) {
+    const result = await response.json().catch(() => null) as Result | null
+    const code = result?.code || response.status
+    if (code === 401) expireSession()
+    throw new ApiError(code, result?.message || '下载失败')
+  }
+  const blob = await response.blob()
+  const disposition = response.headers.get('content-disposition') || ''
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  let filename = fallbackName
+  try { filename = encoded ? decodeURIComponent(encoded) : plain || fallbackName } catch { /* 使用安全回退名 */ }
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename.replace(/[\/\\]/g, '_')
+  document.body.append(anchor)
+  try { anchor.click() } finally { anchor.remove(); setTimeout(() => URL.revokeObjectURL(objectUrl), 1000) }
 }
-
 export default service

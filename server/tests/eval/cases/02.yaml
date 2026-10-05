@@ -1,0 +1,23 @@
+name: 业务场景完整
+type: TECH
+turns:
+- user: 标题写作「机构业务查询报表」。业务场景是「机构业务部客户经理每天晨会前查看各机构持仓」，子类是数据报表。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 机构业务查询报表
+      ext.techSubtype: DATA_RPT
+      ext.businessScenario: 机构业务部客户经理每天晨会前查看各机构持仓
+    elements_status:
+      businessScenario: OK
+- user: 业务场景改为「营业部专员每周一汇总各渠道基金销量」。
+  expect:
+    structured_contains:
+      ext.businessScenario: 营业部专员每周一汇总各渠道基金销量
+    elements_status:
+      businessScenario: OK

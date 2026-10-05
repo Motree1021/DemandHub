@@ -1,0 +1,24 @@
+name: 默认科技改物料
+type: TECH
+turns:
+- user: 标题写作「银行活动宣传折页」。纠正默认类型，这是物料需求，数量为100份，物料子类为「宣传折页」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 银行活动宣传折页
+      demandTypeCode: MATL
+      ext.quantity: 100
+      ext.materialSubtype: 宣传折页
+    elements_status:
+      demandTypeCode: OK
+- user: 数量改为200份。
+  expect:
+    structured_contains:
+      ext.quantity: 200
+    elements_status:
+      demandTypeCode: OK

@@ -1,0 +1,24 @@
+name: 物料日期
+type: MATL
+turns:
+- user: 标题写作「渠道活动海报」。物料子类写「海报」，数量20份，期望到货时间2026-11-01。
+  form_before:
+    title: null
+    demandTypeCode: MATL
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 渠道活动海报
+      ext.materialSubtype: 海报
+      ext.quantity: 20
+      ext.expectedArrivalAt: '2026-11-01'
+    elements_status:
+      demandTypeCode: OK
+- user: 期望到货时间改为2026-11-02。
+  expect:
+    structured_contains:
+      ext.expectedArrivalAt: '2026-11-02'
+    elements_status:
+      demandTypeCode: OK

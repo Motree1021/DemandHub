@@ -1,476 +1,128 @@
 <template>
-  <van-popup
-    :show="show"
-    position="bottom"
-    round
-    :style="{ height: '85%' }"
-    @update:show="emit('update:show', $event)"
-    @open="onOpen"
-  >
+  <van-popup :show="show" position="bottom" round :style="{ height: '86%' }" @update:show="emit('update:show', $event)" @open="onOpen">
     <div class="guide-sheet">
-      <!-- 头部 -->
-      <div class="sheet-header">
-        <span class="sheet-title">AI 提报助手</span>
-        <span v-if="session" class="new-session" @click="onNewSession">新会话</span>
-        <van-icon name="cross" size="18" color="#999" @click="emit('update:show', false)" />
-      </div>
-
-      <!-- 降级提示：大模型不可用时显示，主流程（手动填写提交）不受影响 -->
-      <van-notice-bar
-        v-if="unavailable"
-        left-icon="warning-o"
-        text="AI 服务暂不可用，请手动填写表单提交"
-        class="unavailable-bar"
-      />
-
-      <!-- 消息区 -->
-      <div ref="msgBoxRef" class="msg-box">
-        <template v-if="!messages.length">
-          <div class="empty-tip">随口说、粘贴一大段文字都行（可用输入法语音输入），我来帮你整理成规范表单</div>
-          <!-- 快捷开场（消除冷启动障碍） -->
-          <div v-if="!unavailable" class="chips">
-            <span v-for="c in STARTERS" :key="c" class="chip" @click="onQuickSend(c)">{{ c }}</span>
-          </div>
+      <div class="sheet-header"><strong>AI 提报助手</strong><van-icon name="cross" size="20" @click="emit('update:show', false)" /></div>
+      <van-notice-bar v-if="unavailable" text="AI 暂不可用，仍可关闭助手后手动填写和提交" left-icon="warning-o" />
+      <div ref="msgBox" class="msg-box">
+        <p v-if="!messages.length && !sending" class="empty-tip">随口说、粘一大段、输入法语音输入都行。AI 会整理当前草稿，并一次追问一个缺口。</p>
+        <div v-for="message in messages" :key="message.id" class="msg-row" :class="message.role.toLowerCase()"><div class="msg-bubble">{{ message.content }}</div></div>
+        <template v-if="sending">
+          <div class="msg-row user"><div class="msg-bubble">{{ pending?.message }}</div></div>
+          <div class="msg-row assistant"><div class="msg-bubble">{{ partialReply || (thinking ? '正在思考和整理…' : '正在处理…') }}</div></div>
         </template>
-        <div v-for="(m, i) in messages" :key="i" class="msg-row" :class="m.role.toLowerCase()">
-          <div class="msg-bubble">
-            <span v-html="fmtContent(m.content)" />
-            <span v-if="m.streaming" class="cursor">▍</span>
-          </div>
-        </div>
+        <p v-if="failure" class="failure">{{ failure }}<br>原输入与请求已保留。可重试恢复已保存结果。</p>
       </div>
-
-      <!-- 要素完备度清单（P10：三态 rubric 可视化） -->
-      <div v-if="elements.length" class="elements-box">
-        <div class="elements-title">信息完备度（{{ okCount }}/{{ elements.length }}）</div>
-        <div class="elements-list">
-          <span v-for="e in elements" :key="e.key" class="element-item" :class="e.status.toLowerCase()" :title="e.note">
-            <van-icon v-if="e.status === 'OK'" name="checked" />
-            <van-icon v-else-if="e.status === 'VAGUE'" name="warning" />
-            <van-icon v-else-if="e.status === 'SKIP'" name="minus" />
-            <van-icon v-else name="circle" />
-            {{ elementLabel(e.key) }}
-          </span>
-        </div>
-        <div v-if="readyFlag" class="ready-tip">信息已齐，关闭后确认表单无误即可提交</div>
+      <div v-if="latest" class="summary">
+        <span>{{ latest.canSubmit ? '必填与格式已满足，可确认表单后提交' : '请补充必填或修正格式后提交' }}</span>
+        <small v-if="!latest.qualityComplete">信息仍有质量缺口，跳过的内容会标记为待后续补充。</small>
+        <small v-if="latest.guidanceComplete && !latest.qualityComplete">本轮引导已结束，可继续手动完善。</small>
       </div>
-
-      <!-- 结构化回填提示 -->
-      <div v-if="lastStructured" class="fill-tip">
-        <van-icon name="checked" color="#16a34a" />
-        <span>
-          已自动回填 {{ filledFields.join('、') }} 到表单，可直接编辑修改
-          <template v-if="missingLabel">；还缺：{{ missingLabel }}</template>
-        </span>
-      </div>
-
-      <!-- 快捷回复（选项类问题 / L3 逃生门） -->
-      <div v-if="quickReplies.length && !sending" class="chips quick">
-        <span v-for="q in quickReplies" :key="q" class="chip" @click="onQuickSend(q)">{{ q }}</span>
-      </div>
-
-      <!-- 输入区 -->
+      <div v-if="latest?.quickReplies.length && !sending" class="chips"><button v-for="reply in latest.quickReplies" :key="reply" @click="quickSend(reply)">{{ reply }}</button></div>
+      <van-button v-if="pending && !sending" size="small" plain type="primary" @click="retry">重试上一条</van-button>
       <div class="input-row">
-        <van-field
-          v-model="input"
-          type="textarea"
-          rows="2"
-          autosize
-          :placeholder="unavailable ? 'AI 服务暂不可用' : '随口说或粘贴一大段'"
-          :disabled="sending || unavailable"
-          class="input-field"
-        />
-        <van-button
-          type="primary"
-          size="small"
-          :loading="sending"
-          :disabled="!input.trim() || unavailable"
-          class="send-btn"
-          @click="onSend"
-        >发送</van-button>
+        <van-field v-model="input" type="textarea" rows="2" autosize :disabled="sending" placeholder="随口说或粘贴一大段" />
+        <van-button type="primary" :loading="sending" :disabled="!input.trim() || unavailable" @click="send">发送</van-button>
       </div>
-      <div class="tip">你已填写的内容不会被 AI 覆盖，最终以手动编辑为准</div>
+      <small class="tip">发送前会保存表单；你明确手改的内容由服务端保护。最终提交内容以表单为准。</small>
     </div>
   </van-popup>
 </template>
-
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
-import { showToast } from 'vant'
-import {
-  createAgentSession,
-  listAgentSessions,
-  agentSessionMessages,
-  guideChatStream,
-  AgentUnavailableError,
-  type AgentSession,
-  type ElementStatus,
-  type GuideStructured
-} from '@/api/agent'
-
-interface Props {
-  show: boolean
-  /** 当前表单快照（用户手填优先，AI 不覆盖非空字段） */
-  formContext: Record<string, unknown>
-}
-
-const props = defineProps<Props>()
-const emit = defineEmits<{
-  (e: 'update:show', v: boolean): void
-  /** 结构化字段回填（父组件应用到表单，用户可再编辑） */
-  (e: 'fill', fields: GuideStructured): void
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { agentSessionMessages, guideChatStream, StreamError, type GuidePayload, type GuideRequest } from '@/api/agent'
+import type { AgentMessage } from '@/api/demand'
+import { canApplyRevision } from '@/utils/form'
+const props = defineProps<{
+  show: boolean; demandId: number | null; sessionId: number | null; revision: number
+  prepare: () => Promise<{ demandId: number; sessionId: number; revision: number }>
 }>()
-
-interface UiMessage {
-  role: 'USER' | 'ASSISTANT'
-  content: string
-  streaming?: boolean
-}
-
-/** 快捷开场短语（冷启动引导：高手整段/新手随口/语音都可） */
-const STARTERS = ['我要做个报表', '系统不好用想优化', '要和其他系统对接']
-
-const session = ref<AgentSession | null>(null)
-const messages = ref<UiMessage[]>([])
-const input = ref('')
-const sending = ref(false)
-const unavailable = ref(false)
-const lastStructured = ref<GuideStructured | null>(null)
-const lastMissing = ref<string[]>([])
-const elements = ref<ElementStatus[]>([])
-const quickReplies = ref<string[]>([])
-const readyFlag = ref(false)
-const msgBoxRef = ref<HTMLElement>()
-let historyLoaded = false
-
-const FIELD_LABELS: Record<string, string> = {
-  title: '标题',
-  demandTypeCode: '类型',
-  content: '描述',
-  urgency: '紧急程度',
-  expectDeliveryAt: '期望交付',
-  ext: '扩展字段'
-}
-
-/** 要素键中文名（rubric 清单展示） */
-const ELEMENT_LABELS: Record<string, string> = {
-  title: '标题',
-  content: '需求描述',
-  techSubtype: '需求子类',
-  businessScenario: '业务场景',
-  acceptanceCriteria: '验收标准',
-  valueImpact: '价值与影响'
-}
-
-const filledFields = computed(() =>
-  Object.keys(lastStructured.value || {})
-    .filter((k) => (lastStructured.value as Record<string, unknown>)[k] !== undefined)
-    .map((k) => FIELD_LABELS[k] || k)
-)
-
-const missingLabel = computed(() =>
-  lastMissing.value.length ? lastMissing.value.map((m) => FIELD_LABELS[m] || m).join('、') : ''
-)
-
-const okCount = computed(() => elements.value.filter((e) => e.status === 'OK').length)
-
-function elementLabel(key: string): string {
-  return ELEMENT_LABELS[key] || key
-}
-
-function fmtContent(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
-}
-
-async function scrollToBottom() {
-  await nextTick()
-  msgBoxRef.value?.scrollTo({ top: msgBoxRef.value.scrollHeight })
-}
-
-async function ensureSession(firstMessage: string): Promise<AgentSession> {
-  if (session.value && session.value.status === 'ACTIVE') {
-    return session.value
-  }
-  session.value = await createAgentSession('SUBMIT_GUIDE', undefined, firstMessage)
-  return session.value
-}
-
-/** 快捷短语/选项 chips：等同用户输入直接发送 */
-function onQuickSend(text: string) {
-  if (sending.value || unavailable.value) {
-    return
-  }
-  input.value = text
-  onSend()
-}
-
-async function onSend() {
-  const text = input.value.trim()
-  if (!text || sending.value) {
-    return
-  }
-  sending.value = true
-  try {
-    const s = await ensureSession(text)
-    messages.value.push({ role: 'USER', content: text })
-    input.value = ''
-    quickReplies.value = []
-    const assistant: UiMessage = { role: 'ASSISTANT', content: '', streaming: true }
-    messages.value.push(assistant)
-    scrollToBottom()
-    await guideChatStream(s.id, text, props.formContext, {
-      onDelta: (delta) => {
-        assistant.content += delta
-        scrollToBottom()
-      },
-      onStructured: (payload) => {
-        if (payload.structured && Object.keys(payload.structured).length) {
-          lastStructured.value = payload.structured
-          lastMissing.value = payload.missing || []
-          emit('fill', payload.structured)
-        }
-        elements.value = payload.elements || []
-        quickReplies.value = payload.quickReplies || []
-        readyFlag.value = payload.ready && (payload.elements || []).every((e) => e.status === 'OK' || e.status === 'SKIP')
+const emit = defineEmits<{
+  (event: 'update:show', value: boolean): void
+  (event: 'busy', value: boolean): void
+  (event: 'complete', value: GuidePayload): void
+}>()
+const messages = ref<AgentMessage[]>([]); const input = ref(''); const sending = ref(false)
+const unavailable = ref(false); const failure = ref(''); const partialReply = ref(''); const thinking = ref(false)
+const latest = ref<GuidePayload | null>(null); const pending = ref<GuideRequest | null>(null); const msgBox = ref<HTMLElement>()
+let controller: AbortController | null = null
+let thinkingTimer: ReturnType<typeof setTimeout> | undefined
+let historyGeneration = 0
+let runGeneration = 0
+const pendingKey = () => `demandhub_h5_pending_${props.demandId}`
+function persistPending() { if (pending.value) sessionStorage.setItem(pendingKey(), JSON.stringify(pending.value)); else sessionStorage.removeItem(pendingKey()) }
+async function scroll() { await nextTick(); msgBox.value?.scrollTo?.({ top: msgBox.value.scrollHeight, behavior: 'smooth' }) }
+async function loadHistory() {
+  if (!props.sessionId) return
+  const sessionId = props.sessionId; const demandId = props.demandId; const generation = ++historyGeneration
+  const history = await agentSessionMessages(sessionId)
+  if (generation !== historyGeneration || props.sessionId !== sessionId || props.demandId !== demandId) return
+  messages.value = history.filter(message => message.role !== 'SYSTEM')
+  const last = [...messages.value].reverse().find(message => message.role === 'ASSISTANT' && message.structuredPayload)
+  if (last?.structuredPayload) {
+    try {
+      const payload = JSON.parse(last.structuredPayload) as GuidePayload
+      if (payload.demandId === props.demandId && payload.sessionId === props.sessionId && canApplyRevision(props.revision, payload.revision)) {
+        latest.value = payload
+        emit('complete', payload)
       }
-    })
-    assistant.streaming = false
-  } catch (e) {
-    // 流式中断：移除占位的空气泡
-    messages.value = messages.value.filter((m) => !(m.role === 'ASSISTANT' && m.streaming && !m.content))
-    if (e instanceof AgentUnavailableError && e.code === 1401) {
-      unavailable.value = true
-      showToast('AI 服务暂不可用，请手动填写表单')
-    } else if (!(e instanceof Error && e.message === '登录已过期')) {
-      showToast(e instanceof Error ? e.message : '发送失败')
-    }
-  } finally {
-    sending.value = false
+    } catch { /* 历史文本仍可回放，不使用格式异常的历史表单 */ }
   }
+  scroll()
 }
-
-function onNewSession() {
-  session.value = null
-  messages.value = []
-  lastStructured.value = null
-  lastMissing.value = []
-  elements.value = []
-  quickReplies.value = []
-  readyFlag.value = false
-  unavailable.value = false
-}
-
-/** 抽屉首次打开时加载历史会话 */
 async function onOpen() {
-  if (historyLoaded) {
-    return
-  }
-  historyLoaded = true
+  failure.value = ''; unavailable.value = false; latest.value = null
   try {
-    const sessions = await listAgentSessions('SUBMIT_GUIDE')
-    const active = sessions.find((s) => s.status === 'ACTIVE')
-    if (active) {
-      session.value = active
-      const history = await agentSessionMessages(active.id)
-      messages.value = history
-        .filter((m) => m.role === 'USER' || m.role === 'ASSISTANT')
-        .map((m) => ({ role: m.role as 'USER' | 'ASSISTANT', content: m.content }))
-      scrollToBottom()
+    const saved = sessionStorage.getItem(pendingKey())
+    if (saved) {
+      const request = JSON.parse(saved) as GuideRequest
+      if (request.demandId === props.demandId && request.sessionId === props.sessionId) { pending.value = request; input.value = request.message }
     }
-  } catch {
-    // 历史会话加载失败不影响提报
+    await loadHistory()
+  } catch { failure.value = '历史对话暂未载入，请稍后重新打开' }
+}
+async function run(request: GuideRequest) {
+  const generation = ++runGeneration
+  pending.value = request; persistPending(); sending.value = true; emit('busy', true)
+  failure.value = ''; partialReply.value = ''; thinking.value = false
+  controller = new AbortController()
+  thinkingTimer = setTimeout(() => { thinking.value = true }, 5000)
+  try {
+    const payload = await guideChatStream(request, { onDelta: delta => { partialReply.value += delta; scroll() }, onProcessing: () => scroll() }, controller.signal)
+    if (generation !== runGeneration || props.demandId !== request.demandId || props.sessionId !== request.sessionId) return
+    latest.value = payload
+    emit('complete', payload)
+    pending.value = null; persistPending(); input.value = ''; unavailable.value = false
+    try { await loadHistory() } catch { messages.value.push({ id: Date.now(), sessionId: request.sessionId, role: 'ASSISTANT', content: partialReply.value, structuredPayload: JSON.stringify(payload), createdAt: '' }) }
+  } catch (error) {
+    if (generation !== runGeneration || props.demandId !== request.demandId || props.sessionId !== request.sessionId) return
+    input.value = request.message
+    // 明确冲突表示这次请求没有成功；下一次同样文字使用最新revision和新requestId。
+    if (error instanceof StreamError && error.code === 409) { pending.value = null; persistPending() }
+    failure.value = error instanceof Error && error.name === 'AbortError' ? '请求已取消，完成状态尚未确认' : error instanceof Error ? error.message : '发送失败'
+    unavailable.value = error instanceof StreamError && error.code === 1401
+  } finally {
+    clearTimeout(thinkingTimer); sending.value = false; emit('busy', false); controller = null; partialReply.value = ''; scroll()
   }
 }
+async function send() {
+  const message = input.value.trim()
+  if (!message || sending.value || unavailable.value) return
+  if (pending.value?.message === message) return retry()
+  sending.value = true; emit('busy', true)
+  try {
+    const context = await props.prepare()
+    await run({ ...context, message, requestId: crypto.randomUUID() })
+  } catch (error) {
+    failure.value = error instanceof Error ? error.message : '草稿保存失败，请重试'
+  } finally { sending.value = false; emit('busy', false) }
+}
+function retry() { if (pending.value && !sending.value) { unavailable.value = false; return run(pending.value) } }
+function quickSend(message: string) { input.value = message; send() }
+watch(() => props.show, value => { if (!value) controller?.abort() })
+watch(() => [props.demandId, props.sessionId], () => { historyGeneration++; runGeneration++; controller?.abort(); messages.value = []; latest.value = null; pending.value = null; input.value = ''; failure.value = '' })
+onBeforeUnmount(() => { historyGeneration++; runGeneration++; controller?.abort(); clearTimeout(thinkingTimer) })
 </script>
-
 <style scoped>
-.guide-sheet {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding: 12px 14px 10px;
-  box-sizing: border-box;
-}
-
-.sheet-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-bottom: 8px;
-}
-
-.sheet-title {
-  flex: 1;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.new-session {
-  font-size: 13px;
-  color: #1F3A8A;
-}
-
-.unavailable-bar {
-  border-radius: 8px;
-  margin-bottom: 8px;
-}
-
-.msg-box {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 4px 2px;
-}
-
-.empty-tip {
-  color: #999;
-  font-size: 13px;
-  text-align: center;
-  padding: 24px 16px 14px;
-  line-height: 1.7;
-}
-
-.msg-row {
-  display: flex;
-  margin: 8px 0;
-}
-
-.msg-row.user {
-  justify-content: flex-end;
-}
-
-.msg-bubble {
-  max-width: 88%;
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 14px;
-  line-height: 1.6;
-  background: #f2f4f8;
-  word-break: break-word;
-}
-
-.msg-row.user .msg-bubble {
-  background: #1F3A8A;
-  color: #fff;
-}
-
-.cursor {
-  animation: blink 0.8s infinite;
-}
-
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
-}
-
-/* 要素完备度清单（三态） */
-.elements-box {
-  border: 1px solid #ebedf0;
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin: 6px 0;
-  font-size: 12px;
-}
-
-.elements-title {
-  font-weight: 600;
-  margin-bottom: 6px;
-  color: #323233;
-}
-
-.elements-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-}
-
-.element-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: #969799;
-}
-
-.element-item.ok {
-  color: #07c160;
-}
-
-.element-item.vague {
-  color: #ff976a;
-}
-
-.element-item.skip {
-  color: #c8c9cc;
-}
-
-.ready-tip {
-  margin-top: 6px;
-  color: #07c160;
-}
-
-.fill-tip {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  background: #f0f9eb;
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 12px;
-  margin: 6px 0;
-  color: #323233;
-}
-
-/* 快捷开场 / 快捷回复 chips */
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 8px 10px;
-  justify-content: center;
-}
-
-.chips.quick {
-  justify-content: flex-start;
-  padding: 0 0 8px;
-}
-
-.chip {
-  border: 1px solid #7c9ad4;
-  color: #1F3A8A;
-  border-radius: 14px;
-  padding: 5px 12px;
-  font-size: 12px;
-  user-select: none;
-}
-
-.chip:active {
-  background: #eef3fb;
-}
-
-.input-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  padding-top: 6px;
-}
-
-.input-field {
-  flex: 1;
-  border: 1px solid #ebedf0;
-  border-radius: 8px;
-  padding: 6px 10px;
-}
-
-.send-btn {
-  flex-shrink: 0;
-  height: 36px;
-  border-radius: 8px;
-}
-
-.tip {
-  color: #969799;
-  font-size: 11px;
-  margin-top: 6px;
-}
+.guide-sheet { display: flex; flex-direction: column; height: 100%; padding: 16px 14px max(14px, env(safe-area-inset-bottom)); gap: 10px; }
+.sheet-header { display: flex; justify-content: space-between; align-items: center; }.msg-box { flex: 1; min-height: 0; overflow-y: auto; }.empty-tip { font-size: 13px; color: #777; line-height: 1.8; padding: 20px 12px; text-align: center; }.msg-row { display: flex; margin: 10px 0; }.msg-row.user { justify-content: flex-end; }.msg-bubble { background: #eef1f6; border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.7; max-width: 90%; white-space: pre-wrap; overflow-wrap: anywhere; }.user .msg-bubble { color: #fff; background: #1f3a8a; }.failure { background: #fff7ed; color: #9a3412; font-size: 12px; padding: 10px; line-height: 1.7; }.summary { padding: 10px; background: #eef3fb; font-size: 12px; line-height: 1.6; }.summary small { display: block; margin-top: 4px; color: #666; }.chips { display: flex; flex-wrap: wrap; gap: 8px; }.chips button { border: 1px solid #a7b8d8; color: #1f3a8a; background: #fff; border-radius: 16px; padding: 6px 10px; }.input-row { display: flex; align-items: flex-end; gap: 10px; }.input-row .van-field { border: 1px solid #eee; border-radius: 8px; }.input-row .van-button { flex-shrink: 0; }.tip { font-size: 11px; line-height: 1.6; color: #888; }
 </style>

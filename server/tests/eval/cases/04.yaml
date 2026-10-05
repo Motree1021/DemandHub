@@ -1,0 +1,23 @@
+name: 验收尽快
+type: TECH
+turns:
+- user: 标题写作「查询性能提升」。子类是运维优化，验收标准先写「尽快好用」。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      title: 查询性能提升
+      ext.techSubtype: OPS_OPT
+      ext.acceptanceCriteria: 尽快好用
+    elements_status:
+      acceptanceCriteria: VAGUE
+- user: 验收标准改为「查询3秒内返回，与核心系统对账误差为0」。
+  expect:
+    structured_contains:
+      ext.acceptanceCriteria: 查询3秒内返回，与核心系统对账误差为0
+    elements_status:
+      acceptanceCriteria: OK

@@ -1,120 +1,103 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import type { RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHashHistory, isNavigationFailure, NavigationFailureType, type RouteLocation } from 'vue-router'
 import { useUserStore } from '@/store/user'
-import { channelSso, me } from '@/api/auth'
+import { channelParameters, channelSso, me } from '@/api/auth'
+import { CHANNEL_ENTRY_KEYS, cleanChannelHistoryState, cleanChannelQuery, cleanChannelUrl, readChannelEntry } from '@/utils/auth-entry'
 
-const routes: RouteRecordRaw[] = [
-  {
-    path: '/',
-    redirect: '/report'
-  },
-  {
-    path: '/auth',
-    name: 'Auth',
-    component: () => import('@/views/auth/index.vue'),
-    meta: { title: '登录', public: true }
-  },
-  {
-    path: '/report',
-    name: 'Report',
-    component: () => import('@/views/report/index.vue'),
-    meta: { title: '需求提报' }
-  },
-  {
-    path: '/mine',
-    name: 'Mine',
-    component: () => import('@/views/mine/index.vue'),
-    meta: { title: '我的需求' }
-  },
-  {
-    path: '/notification',
-    name: 'Notification',
-    component: () => import('@/views/notification/index.vue'),
-    meta: { title: '通知' }
-  },
-  {
-    path: '/demand/:id',
-    name: 'DemandDetail',
-    component: () => import('@/views/demand/detail.vue'),
-    meta: { title: '需求详情' }
-  },
-  {
-    path: '/demand/:id/acceptance',
-    name: 'Acceptance',
-    component: () => import('@/views/demand/acceptance.vue'),
-    meta: { title: '验收评价' }
-  },
-  {
-    path: '/triage',
-    name: 'Triage',
-    component: () => import('@/views/triage/index.vue'),
-    meta: { title: '待受理队列' }
-  }
-]
-
-const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
-  routes
+// 路由初始化前捕获一次性入口，立即清URL和旧history状态；失败也不回填宿主token。
+const startupUrl = new URL(window.location.href)
+let initialEntry = readChannelEntry(startupUrl)
+const cleanedStartupUrl = cleanChannelUrl(startupUrl)
+if (cleanedStartupUrl !== window.location.pathname + window.location.search + window.location.hash) {
+  history.replaceState(null, '', cleanedStartupUrl)
+}
+function entryError(error: unknown, parameters: boolean): string {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+  if (parameters && code === 404) return '参数联调登录尚未开启'
+  if (code === 1107) return '登录已失效，请从创金零售重新进入'
+  if (code === 1113) return '账号不可用，请联系管理员'
+  if (code === 1108) return '该渠道已停用，请联系管理员'
+  // 后端任意message不得进入路由；即使错误原文带宿主token也不会再次泄露。
+  return '登录暂时不可用，请从创金零售重新进入或稍后重试'
+}
+const router = createRouter({ history: createWebHashHistory(), routes: [
+  { path: '/', redirect: '/report' },
+  { path: '/auth', component: () => import('@/views/auth/index.vue'), meta: { title: '登录', public: true } },
+  { path: '/report', component: () => import('@/views/report/index.vue'), meta: { title: '需求提报' } },
+  { path: '/mine', component: () => import('@/views/mine/index.vue'), meta: { title: '我的需求' } },
+  { path: '/demand/:id', component: () => import('@/views/demand/detail.vue'), meta: { title: '需求详情' } },
+  { path: '/admin', component: () => import('@/views/admin/index.vue'), meta: { title: '需求整理', admin: true } },
+  { path: '/:pathMatch(.*)*', redirect: '/report' }
+] })
+function scrubRouteEntry(location: RouteLocation, seen = new Set<RouteLocation>()) {
+  if (seen.has(location)) return
+  seen.add(location)
+  const safe = router.resolve({ path: location.path, query: cleanChannelQuery(location.query), hash: location.hash })
+  location.query = safe.query
+  location.fullPath = safe.fullPath
+  if ('href' in location) (location as RouteLocation & { href: string }).href = safe.href
+  if (location.redirectedFrom) scrubRouteEntry(location.redirectedFrom, seen)
+}
+let navigationGeneration = 0
+router.afterEach((_to, _from, failure) => {
+  // 重复跳转不会执行beforeEach，但同样会取消正在等待的旧导航。
+  if (isNavigationFailure(failure, NavigationFailureType.duplicated)) navigationGeneration++
 })
-
-/**
- * 路由守卫（对接标准 v2.1 §3.1，P5 任务 5.1）：
- * 1. 识别 URL ticket（from 仅决定渠道适配与嵌入外壳）→ 调 channel-sso（渠道码后端白名单选定）
- *    → 存 token → replace 清除地址栏 ticket/from/state；
- *    URL 明文 userid/name 等身份字段一律不读、不采信（身份仅经服务端 verify 响应返回）。
- * 2. 票据校验失败 → /auth 错误页（复用后端 AC07 文案）。
- * 3. 无 ticket 且无登录态 → /auth 提示页（非企微 UA 引导从创金零售进入）。
- */
-router.beforeEach(async (to, _from, next) => {
-  document.title = (to.meta.title as string) || 'DemandHub'
-
-  const userStore = useUserStore()
-
-  const from = to.query.from as string | undefined
-  if (from) {
-    userStore.setFrom(from)
-  }
-
-  // 一次性票据登录：任何路由携带 ticket 都先完成登录再进入目标页
-  const ticket = to.query.ticket as string | undefined
-  if (ticket) {
-    try {
-      const resp = await channelSso(
-        userStore.from || 'chuangjinls',
-        ticket,
-        to.query.state as string | undefined
-      )
-      userStore.setLogin(resp)
-      // 登录成功后立即从地址栏清除 ticket/from/state（§3.2），避免刷新重复消费与票据泄露
-      const query = { ...to.query }
-      delete query.ticket
-      delete query.from
-      delete query.state
-      return next({ path: to.path, query, replace: true })
-    } catch (e) {
-      const message = e instanceof Error && e.message ? e.message : '登录失败，请从创金零售重新进入'
-      return next({ path: '/auth', query: { error: message }, replace: true })
+router.beforeEach(async to => {
+  const generation = ++navigationGeneration
+  document.title = String(to.meta.title || 'DemandHub')
+  const user = useUserStore()
+  const routeUrl = new URL(window.location.href)
+  routeUrl.hash = to.fullPath
+  const entry = initialEntry || readChannelEntry(routeUrl)
+  initialEntry = null
+  const hasEntryQuery = CHANNEL_ENTRY_KEYS.some(key => Object.prototype.hasOwnProperty.call(to.query, key))
+  // Vue Router会把guard重定向源保留在redirectedFrom；先原地清理整条链再做任何异步工作。
+  scrubRouteEntry(to)
+  if (entry || hasEntryQuery) {
+    // 兼容后续hash入口；任何网络请求开始前也先清实际地址栏。
+    const currentUrl = new URL(window.location.href)
+    const cleanedUrl = cleanChannelUrl(currentUrl)
+    if (cleanedUrl !== window.location.pathname + window.location.search + window.location.hash) history.replaceState(cleanChannelHistoryState(history.state), '', cleanedUrl)
+    if (entry?.kind === 'invalid') {
+      user.clear()
+      return { path: '/auth', query: { error: entry.message }, replace: true }
+    }
+    if (entry) {
+      try {
+        // 交换入口身份时先清旧JWT；失败不能沿用上个账号。
+        user.clear()
+        if (entry.kind === 'parameters') {
+          user.setFrom('chuangjinls')
+          const login = await channelParameters(entry.parameters)
+          if (generation !== navigationGeneration) return false
+          user.setLogin(login)
+        } else {
+          user.setFrom(entry.parameters.from)
+          const login = await channelSso(entry.parameters.from, entry.parameters.ticket, entry.parameters.state)
+          if (generation !== navigationGeneration) return false
+          user.setLogin(login)
+        }
+      } catch (error) {
+        if (generation !== navigationGeneration) return false
+        user.clear()
+        return { path: '/auth', query: { error: entryError(error, entry.kind === 'parameters') }, replace: true }
+      }
     }
   }
-
-  if (to.meta.public) {
-    return next()
-  }
-
-  if (!userStore.isLoggedIn) {
-    return next({ path: '/auth', query: { redirect: to.fullPath } })
-  }
-
-  // token 有效但用户信息丢失（浏览器刷新场景）：恢复用户信息
-  if (!userStore.userInfo) {
+  if (to.meta.public) return true
+  if (!user.isLoggedIn) return { path: '/auth', query: { redirect: to.fullPath }, replace: true }
+  if (!user.userInfo) {
     try {
-      userStore.setUserInfo(await me())
+      const info = await me()
+      if (generation !== navigationGeneration) return false
+      user.setUserInfo(info)
     } catch {
-      // 401 由响应拦截器统一处理（刷新 token 或重登）
+      if (generation !== navigationGeneration) return false
+      user.clear()
+      return { path: '/auth', query: { error: '登录已过期，请从创金零售重新进入' }, replace: true }
     }
   }
-
-  next()
+  if (to.meta.admin && !user.userInfo?.isAdmin) return '/mine'
+  return true
 })
-
 export default router

@@ -1,0 +1,80 @@
+type: TRAIN
+name: 培训需求
+version: '1'
+glossary:
+- 代销系统：面向银行/券商等代销渠道的销售与结算系统
+- 晨会：一线部门每个交易日 8:30 前的例会
+elements:
+- key: title
+  label: 需求标题
+  kind: text
+  required: true
+  ok_when: 一句话，2~60 字，能看出要解决什么问题
+  rule:
+    min_len: 2
+    max_len: 60
+- key: demandTypeCode
+  label: 需求类型
+  kind: enum
+  required: true
+  options:
+    TECH: 科技需求
+    MATL: 物料需求
+    TRAIN: 培训需求
+- key: content
+  label: 需求描述
+  kind: text
+  required: true
+  ok_when: ≥10 字，含业务背景与期望效果
+  rule:
+    min_len: 10
+  vague_hint: 描述过短，缺业务背景与期望效果
+follow_up_order: []
+max_attempts: 2
+vague_words:
+- 尽快
+- 好用
+- 方便
+- 优化一下
+- 越快越好
+- 体验
+- 满意
+- 顺便
+skip_phrases:
+- 不知道
+- 跳过
+- 后续补充
+- 再说吧
+- 以后再说
+- 不清楚
+- 先这样
+optional_fields:
+- key: trainingSubtype
+  label: 培训子类
+  kind: text
+  path: ext.trainingSubtype
+- key: traineeObject
+  label: 培训对象
+  kind: text
+  path: ext.traineeObject
+- key: traineeCount
+  label: 培训人数
+  kind: number
+  path: ext.traineeCount
+- key: expectedCompleteAt
+  label: 期望完成时间
+  kind: date
+  path: ext.expectedCompleteAt
+subtype_fields: {}
+common_fields:
+- key: urgency
+  label: 紧急程度
+  kind: enum
+  options:
+    NORMAL: 普通
+    URGENT: 紧急
+    CRITICAL: 特急
+  default: NORMAL
+- key: expectDeliveryAt
+  label: 期望交付时间
+  kind: date
