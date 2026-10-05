@@ -1,6 +1,6 @@
 # DemandHub 系统架构（现状）
 
-> 版本：v1.1（2026-09-30，基于当前代码整理；含火山方舟大模型接入、ADMIN 超级用户全线直通）
+> 版本：v1.2（2026-10-05，基于当前代码整理；含火山方舟大模型接入、ADMIN 超级用户全线直通、LLM thinking 开关、技术选型决策说明）
 > 技术栈：Java 17 / Spring Boot 3.2 / Spring Cloud Gateway / MyBatis-Plus / Vue 3 / RocketMQ 5.2 / MySQL 8 / Redis 7 / MinIO
 
 ---
@@ -74,7 +74,30 @@ flowchart TB
     style MIDDLE fill:#ffffff,stroke:#ff7f00,stroke-width:2px,color:#000000
 ```
 
-## 2. 后端模块结构
+## 2. 技术选型决策：为何 Java 微服务而非 FastAPI + MySQL
+
+### 2.1 决策结论
+
+DemandHub 的本质是**企业级工作流系统**——需求全生命周期状态流转、细粒度数据权限、异步通知、审计留痕，复杂度集中在状态一致性、并发控制、权限模型与长期可维护性上；AI 只是经 REST 外置的辅助能力（火山方舟，OpenAI 兼容协议，语言无关）。这类系统正是 Java 企业级生态的主场，而 FastAPI + MySQL 的优势场景（AI/ML 胶水层、数据科学原型、小团队快速 CRUD 验证）在本项目中并不成立。
+
+### 2.2 关键决策因素（结合本系统实证）
+
+| 维度 | Java 微服务（选型） | FastAPI + MySQL | 本系统实证 |
+|---|---|---|---|
+| **并发模型** | JVM 真多线程，CPU / IO 密集均可 | asyncio 单线程事件循环 + GIL，CPU 密集任务会阻塞事件循环 | `SlaScanJob` 30s 扫描、`StatDailyJob` 聚合、POI 报表导出、应用层向量余弦计算均为 CPU 任务；需求认领高并发（Redis 分布式锁 + DB 乐观锁） |
+| **事务与一致性** | Spring 声明式事务 + `@TransactionalEventListener(AFTER_COMMIT)` | SQLAlchemy 需手工拼装同类语义，工程实践成熟度弱 | 状态流转要求「demand 更新 + transition_log 落库 + 事件投递」严格同事务；AFTER_COMMIT 保证「通知先于数据可见」不发生 |
+| **横切横贯能力** | MyBatis 拦截器 + Spring AOP，编译期织入的成熟范式 | 需自研中间件/装饰器，动态类型下回归风险高 | `DataScopeInterceptor` 自动过滤 demand SELECT；`AuditMetaObjectHandler` 自动填充审计字段；`@RequireRole` AOP 鉴权 |
+| **中间件生态** | RocketMQ / Nacos / Redis / MinIO 官方 Java SDK 一等公民 | RocketMQ Python 客户端能力弱（延迟队列、重试语义不完整） | 通知链路依赖 RocketMQ 延迟队列指数退避（≤5 次）；事件驱动架构以 MQ 为骨架 |
+| **网关与服务治理** | Spring Cloud Gateway：路由 + 鉴权过滤器 + 请求头改写 + CORS 一体化 | 无原生网关层，需引入 Kong / Traefik 等额外组件，增加异构运维 | `AuthFilter` 伪造头剥离 / 用户头注入是安全模型核心；StripPrefix 路由支撑双部署形态路径一致 |
+| **类型安全与工程规模** | 静态类型 + 编译期检查 + IDE 安全重构 | 动态类型，多模块多人协作下维护成本随规模陡增 | 7 个 Maven 模块、20+ 实体、配置驱动状态机、双部署形态同一份代码 |
+| **部署与交付** | Maven 多模块同构装配：微服务 / 单体随意切换，可执行 jar + Docker 多阶段构建 | 难以做到同一份代码两种装配形态 | 同一源码产出 5 个微服务镜像 + `demandhub-server` 单体（H5 Publish 部署） |
+| **组织与环境** | 基金公司主流技术栈，团队储备、招聘、与周边系统对接成本最低 | 周边系统（渠道、企微、运维体系）以 Java 为主，异构栈增加协作与运维摩擦 | 创金零售渠道 SSO、企业微信对接均遵循企业级 Java 集成规范 |
+
+### 2.3 FastAPI 的适用边界（为何本项目不适用）
+
+FastAPI + MySQL 的合理场景是：**直接依赖 Python ML 生态**（PyTorch / 本地向量库 / 数据科学栈）的 AI 服务、原型验证、轻量 CRUD。本项目 AI 能力完全外置——chat / embedding 均走火山方舟 REST API，Java 与 Python 调用成本相同，Python 生态红利为零；而工作流内核的事务刚性、并发强度、权限复杂度远超原型量级，动态类型 + GIL 会成为长期负债。若未来出现重 ML 的离线计算（如大规模向量重建、模型微调 pipeline），可以以独立 Python 批处理服务补充，与主架构不冲突。
+
+## 3. 后端模块结构
 
 Maven 多模块（`backend/pom.xml`），7 个模块：
 
@@ -84,11 +107,11 @@ Maven 多模块（`backend/pom.xml`），7 个模块：
 | **demandhub-system** | 系统管理 | `AuthController`（PC 账密登录 / refresh / logout / me）；渠道 SSO：`ChuangjinLsSsoClient`、`ChannelSsoTicketVerifier`（env 三件套优先于 `demand_channel.config_json`）、`SecretCrypto`（AES-GCM）；`ChannelUserMatcher` / `UserMergeService`（渠道用户映射合并）；`OrgService`（物化路径子树匹配）；`RoleGrantService`（角色族 + demand_type_scope + org 范围） |
 | **demandhub-demand** | 需求核心 | 自研轻量状态机 `DemandStateMachine`（`state_machine_config` 表驱动、热加载，**ADMIN 角色校验直通**）；`DemandNoGenerator`（Redis 锁 + DB 乐观锁，TECH/MATL/TRAIN-YYYYMMDD-NNN 无空洞）；`DemandEventRelay`（事务提交后 Spring 事件 → RocketMQ）；`SlaScanJob`（30s 扫描 + Redis 去重告警）；`StatDailyJob`（5min 增量聚合 `demand_stat_daily`）；`ReportExportExecutor`（POI 异步导出）；类型扩展表 tech/material/training |
 | **demandhub-notification** | 通知中心 | `DemandEventConsumer` 订阅需求事件 → `TemplateService`（`${demand_no}` 变量渲染）→ `PreferenceService`（用户可关非关键通知）→ `RecipientResolver` → 站内信落库 + `WecomPushProducer/Consumer`（延迟队列指数退避，最多 5 次） |
-| **demandhub-agent** | AI 助手 | `AgentGuideController`（SSE 流式提报引导）；`LlmClient` 双实现按 `@ConditionalOnProperty(demandhub.integration.llm.mock)` 互斥装配：**MockLlmClient**（默认，本地/测试确定性）/ **RealLlmClient**（火山方舟，OpenAI 兼容协议 REST 直连无 SDK：chat 走 `/chat/completions` + JSON mode，embedding 走 `/embeddings` 或多模态 `/embeddings/multimodal`；连续失败 3 次进入 60s 冷却，超时/5xx/解析失败 → 1401 前端降级手动流程）；`LlmSwitch` 运行期切换模拟故障；`RagService` + `RagVectorizeConsumer`（MQ 异步向量化）；`PromptTemplateService`（方舟提示词配置 `09-ark-llm-prompt.sql`） |
+| **demandhub-agent** | AI 助手 | `AgentGuideController`（SSE 流式提报引导）；`LlmClient` 双实现按 `@ConditionalOnProperty(demandhub.integration.llm.mock)` 互斥装配：**MockLlmClient**（默认，本地/测试确定性）/ **RealLlmClient**（火山方舟，OpenAI 兼容协议 REST 直连无 SDK：chat 走 `/chat/completions` + JSON mode，embedding 走 `/embeddings` 或多模态 `/embeddings/multimodal`；`LLM_CHAT_THINKING=disabled` 关闭模型思考，轻推理场景显著降时延；连续失败 3 次进入 60s 冷却，超时/5xx/解析失败 → 1401 前端降级手动流程）；`LlmSwitch` 运行期切换模拟故障；`RagService` + `RagVectorizeConsumer`（MQ 异步向量化）；`PromptTemplateService`（方舟提示词配置 `09-ark-llm-prompt.sql`） |
 | **demandhub-gateway** | 网关 | Spring Cloud Gateway；`AuthFilter`：JWT 验签 + Redis 会话存在性校验；剥离客户端伪造用户头，注入 `X-User-Id` / `X-User-Uid` / `X-User-Roles` / `X-Channel`；CORS；按路径路由四模块 |
 | **demandhub-server** | 单体装配 | 合并四业务模块为单进程（H5 Publish 部署形态）；Servlet 版 `AuthFilter` 统一鉴权；`context-path=/api` 与微服务形态路径完全一致，nginx / 前端 / e2e 零改动 |
 
-## 3. 两种部署形态（代码同构）
+## 4. 两种部署形态（代码同构）
 
 ```mermaid
 %%{init: {'theme':'base', 'flowchart':{'useMaxWidth':false, 'htmlLabels':true, 'nodeSpacing':70, 'rankSpacing':90}, 'themeVariables':{'fontSize':'20px', 'background':'#ffffff', 'mainBkg':'#ffffff', 'primaryColor':'#ffffff', 'primaryBorderColor':'#ff7f00', 'primaryTextColor':'#000000', 'lineColor':'#ff7f00', 'clusterBkg':'#ffffff', 'clusterBorder':'#ff7f00', 'edgeLabelBackground':'#ffffff'}}}%%
@@ -110,7 +133,7 @@ flowchart LR
     style B fill:#ffffff,stroke:#ff7f00,stroke-width:2px,color:#000000
 ```
 
-## 4. 环境拓扑
+## 5. 环境拓扑
 
 | 环境 | 编排文件 | 关键端口（宿主） | 说明 |
 |---|---|---|---|
@@ -118,9 +141,9 @@ flowchart LR
 | test | `deploy/docker-compose.test.yml`（demandhub-test，13 容器） | Nginx 8088（同域）/ 网关 8180 / MySQL 3317 / Redis 6380 / MinIO 9010·9011 / Nacos 8858 / 契约 Mock 8099 | `CHANNEL_SSO_MOCK=false`，verify 回源走契约 Mock（严格验签）；LLM 默认 Mock（e2e 确定性），页面验证真实模型时 shell 注入 `DEMANDHUB_INTEGRATION_LLM_MOCK=false` + `LLM_API_KEY` |
 | prod | `deploy/docker-compose.prod.yml`（demandhub-prod） | Nginx 80 / 网关 8080 | `CHANNEL_SSO_MOCK=false` 强制；`SECRET_STORE_KEY` / `CHANNEL_LS_*` / `LLM_API_KEY` env 注入（`:?` 缺失即拒启）；agent 强制 `DEMANDHUB_INTEGRATION_LLM_MOCK=false` 走火山方舟真实模型 |
 
-## 5. 核心链路
+## 6. 核心链路
 
-### 5.1 渠道 SSO 登录（H5）
+### 6.1 渠道 SSO 登录（H5）
 
 ```
 创金零售 App → https://host/h5/report?from=chuangjinls&ticket=xxx（TTL 60s，URL 只带 ticket）
@@ -131,7 +154,7 @@ flowchart LR
   → 后续请求：AuthFilter 验签 + Redis 会话校验 → 注入用户头（X-Channel 来自会话，不信前端）
 ```
 
-### 5.2 需求流转与通知（异步解耦）
+### 6.2 需求流转与通知（异步解耦）
 
 ```
 提报 / 流转操作 → DemandStateMachine.transition()（配置表校验，ADMIN 直通）
@@ -140,18 +163,18 @@ flowchart LR
   → notification 消费：模板渲染 → 偏好过滤 → 站内信落库 + 企微 MQ 推送（延迟重试 ≤ 5 次）
 ```
 
-### 5.3 AI 提报引导（SSE + 火山方舟）
+### 6.3 AI 提报引导（SSE + 火山方舟）
 
 ```
 PC / H5 → /api/agent/guide/**（SSE，Nginx proxy_buffering off）
   → AgentGuideService → LlmClient（Mock / RealLlmClient 按 env 互斥装配）
-  → 火山方舟 /chat/completions（JSON mode）流式输出
+  → 火山方舟 /chat/completions（JSON mode；LLM_CHAT_THINKING=disabled 时带 thinking=disabled 降时延）
   → 失败策略：超时 / 5xx / 解析失败 → LlmUnavailableException(1401) 前端降级手动流程；
     连续失败 3 次进入 60s 冷却期，期间直接降级不打平台，冷却结束自动恢复探测
   → 解析结果回填表单（高亮 + 角标）→ 缺失要素逐项追问
 ```
 
-## 6. 安全与横切约束
+## 7. 安全与横切约束
 
 - **统一鉴权**：真实 401 只来自 AuthFilter（网关 / 单体 Servlet 版）；业务接口异常一律 HTTP 200 + `{code,message,data}`
 - **头信任边界**：业务模块只信网关注入的 `X-User-*` / `X-Channel`；绕过网关直连 8081~8084 返回 401
