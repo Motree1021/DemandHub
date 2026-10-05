@@ -8,6 +8,27 @@
 
 Java、PC 和旧部署保留作移植参考，后续真正上线并稳定至少三个工作日后再清理。下文为旧 Java 版本说明；新版请按上述入口运行。
 
+## 双栈并存开发说明
+
+仓库当前并存两套后端栈：**Python 单体（主线，承接新需求）** 与 **Java 微服务（冻结，仅作蓝本与回归参照）**。演进路线见 [DemandHub_架构演进路线_v1.0.md](DemandHub_架构演进路线_v1.0.md)。并存期间遵守：
+
+**端口对照（两套栈可同时运行，端口已错开）**
+
+| 用途 | Python 栈 | Java 栈 |
+|---|---|---|
+| 后端 API | 8000（`/demandhub-api`） | 8180 网关 / 8080 单体 / 8081-8084 服务 |
+| MySQL | 3308 | 3307（dev）/ 3317（test） |
+| 契约 Mock | **8199**（容器内 8099） | 8099（test 栈） |
+| 前端 dev | 5174（H5，代理到 8000） | 5173（PC，代理到 Java）/ 8088（test 栈 nginx） |
+| e2e 入口 | `python scripts/e2e_mvp.py` | `python scripts/phase6_e2e.py`（参照） |
+
+**守则**
+
+1. Java 侧冻结：不加新功能、不开新提报入口；新需求一律走 Python 栈。
+2. 正式需求编号只由 Python 侧 `demand_no_seq` 发放，两库严禁同库。
+3. H5（5174）已切换到 Python 链路（hash 路由 + `/demandhub-api`）；旧 Java 版 H5 入口不再维护。
+4. Python 栈本地起服：`docker compose -f deploy/docker-compose.dev.yml up -d --build` 后按 [server/README.md](server/README.md) 操作。
+
 ## 仓库结构
 
 ```

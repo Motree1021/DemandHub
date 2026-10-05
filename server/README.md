@@ -4,7 +4,7 @@
 
 ## 本地运行
 
-从仓库根目录启动隔离依赖：`docker compose -f deploy/docker-compose.dev.yml up -d --build`。MySQL8 暴露127.0.0.1:3308，严格SSO契约Mock为127.0.0.1:8099，卷和项目名均独立于旧版。
+从仓库根目录启动隔离依赖：`docker compose -f deploy/docker-compose.dev.yml up -d --build`。MySQL8 暴露127.0.0.1:3308，严格SSO契约Mock为127.0.0.1:8199（容器内仍8099；宿主端口错开 Java test 栈同名契约Mock的8099，两套栈可同时运行），卷和项目名均独立于旧版。
 
 进入 `server/`，执行 `cp .env.example .env`，仅在本机填写真实凭据。随后：
 
@@ -16,6 +16,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-access-lo
 ```
 
 关闭访问日志是为了避免 GET SSO ticket 出现在URL日志中。应用日志也不回显token、上游响应原文、SQL参数或连接URL。开发登录只在APP_ENV=dev/test且AUTH_DEV_LOGIN=true时注册。
+
+Windows 本机两个已知环境坑（已踩过）：① 系统代理打开时 Python 会经 `urllib.getproxies()` 读取注册表代理，导致访问 127.0.0.1 的 verify/签票请求被错误代理——启动服务与跑 e2e 前必须设 `NO_PROXY=127.0.0.1,localhost`（大小写各一份）；② Windows Python 无 IANA 时区库，`Asia/Shanghai` 依赖 `tzdata` 包（已列入 dependencies，勿删）。
 
 健康检查路径 `/demandhub-api/health`：DB正常200，异常503。公开路由使用实际前缀，Kong应保留路径（strip_path=false）。开发OpenAPI路径 `/demandhub-api/openapi.json`，生产禁用。
 

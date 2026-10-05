@@ -3,7 +3,21 @@ name = "demandhub-server"
 version = "0.1.0"
 description = "DemandHub V1 需求收集服务"
 requires-python = ">=3.12,<3.13"
-dependencies = ["fastapi", "uvicorn[standard]", "sqlalchemy[asyncio]", "asyncmy", "pymysql", "alembic", "pydantic-settings", "pyjwt", "httpx", "openai", "pyyaml", "openpyxl"]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "asyncmy",
+    "pymysql",
+    "alembic",
+    "pydantic-settings",
+    "pyjwt",
+    "httpx",
+    "openai",
+    "pyyaml",
+    "openpyxl",
+    "tzdata>=2026.5",
+]
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "respx", "ruff"]

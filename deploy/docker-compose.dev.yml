@@ -23,6 +23,6 @@ services:
     environment:
       APP_KEY: demandhub-dev
       APP_SECRET: local-mock-only-secret
-    ports: ["127.0.0.1:8099:8099"]
+    ports: ["127.0.0.1:8199:8099"]
 volumes:
   demandhub-python-mysql:

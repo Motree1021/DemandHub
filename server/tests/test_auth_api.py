@@ -15,7 +15,7 @@ BASE = "/demandhub-api"
 async def test_live_contract_sso(client):
     import httpx
     async with httpx.AsyncClient() as mock:
-        ticket = (await mock.post("http://127.0.0.1:8099/ticket", json={"channelUserId": "real-contract-user", "name": "契约用户"})).json()["ticket"]
+        ticket = (await mock.post("http://127.0.0.1:8199/ticket", json={"channelUserId": "real-contract-user", "name": "契约用户"})).json()["ticket"]
     response = await client.get(BASE + "/auth/channel-sso", params={"channel": "chuangjinls", "ticket": ticket})
     assert response.json()["code"] == 0
     assert response.json()["data"]["user"]["userId"] == "real-contract-user"

@@ -98,7 +98,7 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-base", default="http://127.0.0.1:8000/demandhub-api")
-    parser.add_argument("--mock-base", default="http://127.0.0.1:8099")
+    parser.add_argument("--mock-base", default="http://127.0.0.1:8199")
     parser.add_argument("--admin-user", default="mvp-admin")
     parser.add_argument("--agent-mode", choices=["none", "mock", "real"], default="none")
     parser.add_argument("--chat-transport", choices=["stream", "chat"], default="stream")
