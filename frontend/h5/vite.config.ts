@@ -6,5 +6,5 @@ export default defineConfig({
   base: './',
   plugins: [vue()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
-  server: { port: 5174, proxy: { '/demandhub-api': { target: 'http://localhost:8000', changeOrigin: true } } }
+  server: { port: 5174, proxy: { '/demandhub-api': { target: 'http://127.0.0.1:8000', changeOrigin: true } } }
 })

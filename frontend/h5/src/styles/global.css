@@ -1,0 +1,24 @@
+/* 全局样式：宽屏（PC/平板浏览器直接打开）下保持手机壳效果，壳内布局不变 */
+@media (min-width: 520px) {
+  body {
+    background: radial-gradient(1200px 700px at 70% -10%, #1e3a8a 0%, #0f172a 55%, #0b1120 100%);
+    background-attachment: fixed;
+  }
+  #app {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: #f5f6f8;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 60px rgba(0, 0, 0, 0.45);
+  }
+  /* Vant 固定定位组件贴视口，需同步约束到壳宽（left+right 约束，避免 transform 与弹层动画冲突） */
+  .van-nav-bar--fixed,
+  .van-tabbar--fixed,
+  .van-popup--bottom,
+  .van-overlay {
+    left: calc(50% - 240px) !important;
+    right: calc(50% - 240px) !important;
+    width: auto !important;
+  }
+}

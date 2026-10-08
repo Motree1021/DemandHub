@@ -1,9 +1,11 @@
-import type { DemandForm, ElementStatus, FieldSources } from './demand'
+import type { DemandForm, ElementStatus, FieldSources, TypeRecognition } from './demand'
 export interface GuideRequest { demandId: number; sessionId: number; requestId: string; revision: number; message: string }
+export interface GranularityHint { level: 'too_broad' | 'too_narrow'; hint: string; converge: string }
 export interface GuidePayload {
   demandId: number; sessionId: number; requestId: string; revision: number
   structured: Omit<DemandForm, 'fieldSources'>; fieldSources: FieldSources; missing: string[]; elements: ElementStatus[]
   askedTarget: string | null; canSubmit: boolean; guidanceComplete: boolean; qualityComplete: boolean; ready: boolean; quickReplies: string[]
+  typeRecognition?: TypeRecognition | null; granularityHint?: GranularityHint | null; impactHints?: string[]
 }
 export class StreamError extends Error {
   constructor(public code: number, message: string) { super(message); this.name = 'StreamError' }
@@ -21,10 +23,11 @@ function validatePayload(data: Record<string, unknown>, request: GuideRequest): 
   if (data.requestId !== request.requestId || data.demandId !== request.demandId || data.sessionId !== request.sessionId ||
       !Number.isInteger(data.revision) || Number(data.revision) <= request.revision ||
       !structured || typeof structured !== 'object' || !structured.ext || typeof structured.ext !== 'object' || Array.isArray(structured.ext) ||
+      (structured.elements !== undefined && (typeof structured.elements !== 'object' || structured.elements === null || Array.isArray(structured.elements))) ||
       !['title', 'demandTypeCode', 'content', 'urgency', 'expectDeliveryAt'].every(key => key in structured) ||
       !['title', 'content'].every(key => structured[key] === null || typeof structured[key] === 'string') ||
       ![null, 'TECH', 'MATL', 'TRAIN'].includes(structured.demandTypeCode as string | null) ||
-      !['NORMAL', 'URGENT', 'CRITICAL'].includes(String(structured.urgency)) ||
+      ![null, 'NORMAL', 'URGENT', 'CRITICAL'].includes(structured.urgency as string | null) ||
       !(structured.expectDeliveryAt === null || (typeof structured.expectDeliveryAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(structured.expectDeliveryAt))) ||
       !data.fieldSources || typeof data.fieldSources !== 'object' || Array.isArray(data.fieldSources) ||
       !Object.values(data.fieldSources).every(source => ['default', 'agent', 'user'].includes(String(source))) ||

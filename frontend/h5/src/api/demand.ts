@@ -2,7 +2,8 @@ import { get, post, put, downloadFile } from './request'
 export type FieldSources = Record<string, 'default' | 'agent' | 'user'>
 export interface ElementStatus { key: string; label?: string; status: 'OK' | 'VAGUE' | 'MISSING' | 'SKIP'; note: string; attempts: number }
 export interface StandardField {
-  key: string; label: string; path?: string | null; kind: 'text' | 'enum' | 'number' | 'date'
+  key: string; label: string; path?: string | null; kind: 'text' | 'enum' | 'number' | 'date' | 'list'
+  zone?: 'A' | 'B' | 'C' | 'D' | null; code?: string; system?: boolean
   options?: Record<string, string>; placeholder?: string; required?: boolean; default?: unknown
   okWhen?: string; example?: string; rule?: { minLen?: number; maxLen?: number }
 }
@@ -12,14 +13,18 @@ export interface Standard {
   followUpOrder: string[]
 }
 export interface StandardSummary { code: string; name: string; description?: string }
+export type ZoneElements = Record<string, Record<string, unknown>>
 export interface DemandForm {
-  title: string | null; demandTypeCode: string | null; content: string | null; urgency: string
-  expectDeliveryAt: string | null; ext: Record<string, unknown>; fieldSources: FieldSources
+  title: string | null; demandTypeCode: string | null; content: string | null; urgency: string | null
+  expectDeliveryAt: string | null; elements: ZoneElements; ext: Record<string, unknown>; fieldSources: FieldSources
 }
+export interface ChangeLog { id: number; fieldKey: string; oldValue: unknown; newValue: unknown; source: 'default' | 'agent' | 'user'; changedBy: number | null; createdAt: string }
+export interface TypeRecognition { business?: number; user?: number; function?: number; confirmed?: string | null; evidence?: Record<string, string> }
 export interface DemandEntity extends DemandForm {
   id: number; demandNo: string | null; subtypeCode: string | null; revision: number; status: 'DRAFT' | 'SUBMITTED' | 'CLOSED'
   submitterId: number; submitterName: string | null; submitterDept: string | null; channel: string; sessionId: number | null
   submittedAt: string | null; closedAt: string | null; closeReason: string | null; createdAt: string; updatedAt: string; quality: ElementStatus[]
+  changeLogs: ChangeLog[]
 }
 export interface AgentMessage { id: number; sessionId: number; role: 'USER' | 'ASSISTANT' | 'SYSTEM'; content: string; structuredPayload: string | null; requestId?: string; createdAt: string }
 export interface DemandDetail { demand: DemandEntity; quality: ElementStatus[]; standard: Standard | null; messages: AgentMessage[] }

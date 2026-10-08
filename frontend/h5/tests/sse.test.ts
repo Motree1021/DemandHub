@@ -27,6 +27,12 @@ describe('SSE 成功终态', () => {
     ['格式错误', event('message', '{not-json')],
     ['重复structured', event('structured', payload) + event('structured', payload)]
   ])('%s不能假成功', async (_name, text) => { await expect(consumeGuideStream(stream(text), request)).rejects.toThrow() })
+  it('urgency 为 null（去默认后草稿未填）属合法响应', async () => {
+    const nullUrgency = { ...payload, structured: { ...payload.structured, urgency: null } }
+    const text = event('message', { delta: '已整理' }) + event('structured', nullUrgency) + event('done', { requestId: 'turn-1', status: 'completed' })
+    const result = await consumeGuideStream(stream(text), request)
+    expect(result.structured.urgency).toBeNull()
+  })
   it('流内error忽略伪done，抛原业务码', async () => {
     const text = event('structured', payload) + event('error', { requestId: 'turn-1', code: 409, message: '草稿已更新' }) + event('done', { requestId: 'turn-1', status: 'completed' })
     await expect(consumeGuideStream(stream(text), request)).rejects.toMatchObject({ code: 409, message: '草稿已更新' })
