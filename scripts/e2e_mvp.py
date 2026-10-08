@@ -73,7 +73,7 @@ def run(args):
         assert replay_result["structured"] == result["structured"]
         saved = http(args.api_base, f"/demand/{draft['id']}", token=token)
         assert len(saved["messages"]) == 2 and saved["demand"]["revision"] == result["revision"]
-    confirmed = {"expectedRevision": draft["revision"], "title": "持仓自动报表", "demandTypeCode": "TECH", "content": "每天晨会前客户经理需要查询渠道持仓并汇总报表，替代手工统计，提高晨会准备效率。", "urgency": "NORMAL", "ext": {"techSubtype": "DATA_RPT", "businessScenario": "每天晨会前客户经理查询各渠道持仓并整理晨会材料", "acceptanceCriteria": "连续7天对账误差为0", "valueImpact": "20人每天节省40分钟"}, "fieldSources": {"title": "user", "demandTypeCode": "user", "content": "user"}}
+    confirmed = {"expectedRevision": draft["revision"], "title": "持仓自动报表", "demandTypeCode": "TECH", "content": "每天晨会前客户经理需要查询渠道持仓并汇总报表，替代手工统计，提高晨会准备效率。", "urgency": "NORMAL", "elements": {"A": {"techSubtype": "DATA_RPT"}, "C": {"userRole": "客户经理", "userGoal": "晨会前快速查看各渠道持仓汇总", "useScenario": "客户经理每天晨会前查询各渠道持仓并整理晨会材料", "painPoint": "手工统计20多个渠道持仓每次近40分钟容易出错"}, "D": {"functionDescription": "按渠道汇总前一交易日持仓并生成报表支持导出", "inputOutput": "输入交易流水输出持仓汇总报表", "acceptanceCriteria": "连续7天与核心系统对账误差为0"}}, "fieldSources": {"title": "user", "demandTypeCode": "user", "content": "user"}}
     draft = http(args.api_base, f"/demand/{draft['id']}", method="PUT", token=token, data=confirmed)
     submitted = http(args.api_base, f"/demand/{draft['id']}/submit", method="POST", token=token, data={"expectedRevision": draft["revision"]})
     assert submitted["demandNo"].startswith("TECH-") and submitted["quality"]

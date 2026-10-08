@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>科技需求收集智能体 · H5 交互原型 v1.0</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f172a'/%3E%3Cpath d='M9 12h14M9 16h10M9 20h12' stroke='%233b82f6' stroke-width='2.6' stroke-linecap='round'/%3E%3Ccircle cx='24' cy='10' r='2.4' fill='%23d97706'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --navy:#0f172a; --navy2:#1e293b; --blue:#1d4ed8; --blue-d:#1e40af; --blue-l:#dbeafe;
+    --orange:#d97706; --orange-l:#fef3c7; --green:#16a34a; --green-l:#dcfce7; --red:#dc2626;
+    --gray:#f1f5f9; --line:#e2e8f0; --ink:#0f172a; --sub:#64748b; --soft:#f8fafc;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    background:radial-gradient(1200px 700px at 70% -10%, #1e3a8a 0%, #0f172a 55%, #0b1120 100%);
+    color:var(--ink); display:flex; align-items:center; justify-content:center; min-height:100vh;
+  }
+  .stage{width:100%; display:flex; align-items:center; justify-content:center; padding:22px 0;}
+  .phone{
+    width:min(420px, 100%); height:min(880px, calc(100vh - 44px));
+    background:#eef2f7; border-radius:30px; overflow:hidden; position:relative;
+    display:flex; flex-direction:column; box-shadow:0 30px 70px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.08);
+  }
+  @media (max-width:520px){
+    body{align-items:stretch;} .stage{padding:0;} .phone{height:100vh; height:100dvh; border-radius:0; box-shadow:none;}
+  }
+
+  /* ===== 顶部 ===== */
+  .hd{background:linear-gradient(135deg,#0f172a 0%,#172554 100%); color:#fff; padding:14px 16px 12px;}
+  .hd-top{display:flex; align-items:center; gap:10px;}
+  .hd .logo{width:34px;height:34px;border-radius:9px;background:#1e293b;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .hd .t1{font-size:15px;font-weight:700;line-height:1.2;}
+  .hd .t2{font-size:12px;color:#93c5fd;margin-top:1px;}
+  .hd .save{margin-left:auto; display:flex; align-items:center; gap:5px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.22); color:#e2e8f0; font-size:13px; padding:9px 14px; border-radius:20px; cursor:pointer; min-height:44px;}
+  .hd .save:active{background:rgba(255,255,255,.22);}
+  .steps{display:flex; margin-top:11px; gap:0;}
+  .step{flex:1; text-align:center; font-size:11px; color:#64748b; position:relative; padding-top:16px;}
+  .step::before{content:''; position:absolute; top:4px; left:50%; transform:translateX(-50%); width:10px;height:10px;border-radius:50%; background:#334155; border:2px solid #334155;}
+  .step.on{color:#93c5fd;} .step.on::before{background:#3b82f6; border-color:#3b82f6;}
+  .step.done{color:#86efac;} .step.done::before{background:#16a34a; border-color:#16a34a;}
+  .step + .step::after{content:''; position:absolute; top:9px; right:50%; width:100%; height:2px; background:#334155;}
+  .step.done + .step::after{background:#16a34a;}
+  .step.on + .step::after{background:#475569;}
+
+  /* ===== 对话流 ===== */
+  .chat{flex:1; overflow-y:auto; padding:16px 14px 10px; display:flex; flex-direction:column; gap:12px; scroll-behavior:smooth;}
+  .row{display:flex; gap:8px; align-items:flex-end; animation:pop .25s ease;}
+  .row.user{flex-direction:row-reverse;}
+  @keyframes pop{from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:none;}}
+  .ava{width:28px;height:28px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;}
+  .ava.ag{background:#1d4ed8;color:#fff;}
+  .ava.me{background:#c7d2fe;color:#312e81;}
+  .bubble{max-width:82%; padding:10px 13px; border-radius:14px; font-size:14px; line-height:1.6; word-break:break-word;}
+  .row:not(.user) .bubble{background:#fff; border:1px solid var(--line); border-top-left-radius:4px;}
+  .row.user .bubble{background:var(--blue); color:#fff; border-top-right-radius:4px;}
+  .bubble .who{font-size:12px; color:var(--sub); margin-bottom:3px;}
+  .row.user .bubble .who{color:#bfdbfe;}
+
+  /* 选项 */
+  .opts{display:flex; flex-direction:column; gap:7px; margin-top:8px;}
+  .opt{
+    border:1px solid #93c5fd; color:var(--blue-d); background:#fff; border-radius:18px; padding:11px 14px;
+    font-size:13.5px; cursor:pointer; text-align:left; line-height:1.5; min-height:44px; display:flex; align-items:center;
+  }
+  .opt:active{background:var(--blue-l);}
+  .opt.primary{background:var(--blue); border-color:var(--blue); color:#fff;}
+  .opt.warn{border-color:#fbbf24; color:#92400e; background:#fffbeb;}
+  .opt.dim{border-color:var(--line); color:var(--sub); background:var(--soft);}
+  .opt .tag{display:inline-block; font-size:10px; background:#e0e7ff; color:#3730a3; border-radius:8px; padding:1px 7px; margin-right:6px;}
+
+  /* 拆解卡片 / 表单卡片 */
+  .card{border-radius:14px; padding:11px 12px; background:#fff; border:1px solid var(--line); margin-top:8px; font-size:12.5px;}
+  .card .ct{font-size:12px; font-weight:700; color:var(--navy); margin-bottom:7px; display:flex; align-items:center; gap:6px;}
+  .kv{display:flex; flex-direction:column; gap:5px;}
+  .kv .li{display:flex; gap:6px; align-items:flex-start; line-height:1.5; color:#334155;}
+  .kv .li b{color:var(--ink); font-weight:600; flex-shrink:0; min-width:64px;}
+  .pill{display:inline-flex; align-items:center; gap:4px; border-radius:12px; padding:2px 8px; font-size:11px; font-weight:600; flex-shrink:0;}
+  .pill.ok{background:var(--green-l); color:#14532d;}
+  .pill.missing{background:var(--orange-l); color:#92400e;}
+  .pill.vague{background:#fef9c3; color:#854d0e;}
+  .pill.biz{background:#e0e7ff; color:#3730a3;}
+  .pill.usr{background:#fce7f3; color:#9d174d;}
+  .pill.fun{background:#dcfce7; color:#14532d;}
+
+  .zone{border:1px solid var(--line); border-radius:10px; padding:8px 10px; margin-top:7px; background:var(--soft);}
+  .zone .zt{font-size:11px; font-weight:700; margin-bottom:5px; display:flex; align-items:center; gap:6px;}
+  .zone .rows{display:flex; flex-direction:column; gap:4px;}
+  .el{display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; color:#334155; padding:2px 0; border-bottom:1px dashed #e8edf3;}
+  .el:last-child{border-bottom:none;}
+  .el .nm{display:flex; align-items:center; gap:5px; min-width:0;}
+  .el .nm .ico{width:14px;height:14px;flex-shrink:0;}
+  .el .val{color:var(--sub); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px;}
+  /* 要素 key 标注（原型演示用：显示字段标识，生产环境隐藏） */
+  .el .nm .key{font-size:10px; color:#94a3b8; font-weight:400; background:#f1f5f9; border-radius:4px; padding:0 4px; margin-left:2px; letter-spacing:0.2px;}
+
+  /* 思考中 */
+  .thinking{display:flex; gap:4px; padding:6px 2px;}
+  .thinking i{width:7px;height:7px;border-radius:50%;background:#93c5fd;animation:blink 1.1s infinite;}
+  .thinking i:nth-child(2){animation-delay:.18s;} .thinking i:nth-child(3){animation-delay:.36s;}
+  @keyframes blink{0%,80%,100%{opacity:.25} 40%{opacity:1}}
+
+  /* 通用提醒卡（草稿恢复 / 提交成功） */
+  .irb{border:1px solid #fbbf24; background:#fffbeb; border-radius:12px; padding:10px 12px; margin-top:8px;}
+  .irb .it{font-size:12.5px; font-weight:700; color:#92400e; display:flex; align-items:center; gap:6px; margin-bottom:4px;}
+  .irb .ib{font-size:12.5px; color:#78350f; line-height:1.55;}
+
+  /* 一段话需求示例卡 */
+  .ex{border:1px solid #c7d2fe; background:#eef2ff; border-radius:12px; padding:10px 12px; margin-top:8px;}
+  .ex .ex-t{font-size:12.5px; font-weight:700; color:#3730a3; margin-bottom:5px;}
+  .ex .ex-b{font-size:12.5px; color:#1e293b; line-height:1.65;}
+
+  /* 输入栏 */
+  .inbar{background:#fff; border-top:1px solid var(--line); padding:10px 12px calc(10px + env(safe-area-inset-bottom)); display:flex; gap:8px; align-items:flex-end;}
+  .inbar input{flex:1; border:1px solid #cbd5e1; border-radius:20px; padding:10px 14px; font-size:16px; outline:none; font-family:inherit; min-height:42px;}
+  .inbar input:focus{border-color:var(--blue);}
+  .send{width:44px;height:44px;border-radius:50%; background:var(--blue); border:none; color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;}
+  .send:active{background:var(--blue-d);}
+
+  /* 浮层 */
+  .mask{position:absolute; inset:0; background:rgba(15,23,42,.55); display:none; align-items:center; justify-content:center; z-index:50; padding:26px;}
+  .mask.show{display:flex;}
+  .modal{width:100%; background:#fff; border-radius:18px; padding:18px; animation:pop .22s ease;}
+  .modal h4{font-size:15px; margin-bottom:4px;}
+  .modal .sub{font-size:12px; color:var(--sub); margin-bottom:12px; line-height:1.6;}
+  .modal .mrow{margin-bottom:10px;}
+  .modal .mrow label{display:block; font-size:12px; color:var(--sub); margin-bottom:4px;}
+  .modal .mrow select,.modal .mrow input{width:100%; border:1px solid #cbd5e1; border-radius:10px; padding:9px 10px; font-size:16px; font-family:inherit; outline:none;}
+  .modal .btns{display:flex; gap:8px; margin-top:14px;}
+  .modal .btns button{flex:1; border-radius:12px; padding:10px; font-size:13.5px; border:1px solid var(--line); background:#fff; cursor:pointer;}
+  .modal .btns button.p{background:var(--blue); color:#fff; border-color:var(--blue);}
+  .modal .btns button.o{background:var(--orange); color:#fff; border-color:var(--orange);}
+
+  .toast{position:absolute; left:50%; bottom:74px; transform:translateX(-50%); background:var(--navy); color:#fff; font-size:12.5px; padding:9px 16px; border-radius:18px; display:none; z-index:60; max-width:86%; text-align:center; box-shadow:0 8px 24px rgba(0,0,0,.3);}
+  .toast.show{display:block; animation:pop .2s ease;}
+
+  .foot{background:#fff; border-top:1px solid var(--line); padding:8px 12px; text-align:center; font-size:11px; color:#94a3b8;}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="phone" id="phone">
+    <div class="hd">
+      <div class="hd-top">
+        <div class="logo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M5 7h14M5 12h9M5 17h11" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/><circle cx="19" cy="5" r="2" fill="#d97706"/></svg></div>
+        <div>
+          <div class="t1">科技需求收集智能体</div>
+          <div class="t2">DemandHub · 需求提报</div>
+        </div>
+        <button class="save" id="btnSave">保存草稿</button>
+      </div>
+      <div class="steps" id="steps">
+        <div class="step on" data-s="0">表达</div>
+        <div class="step" data-s="1">拆解</div>
+        <div class="step" data-s="2">确认</div>
+        <div class="step" data-s="3">追问</div>
+        <div class="step" data-s="4">提交</div>
+      </div>
+    </div>
+
+    <div class="chat" id="chat"></div>
+
+    <div class="inbar">
+      <input id="inp" type="text" placeholder="继续说，或粘贴大段需求…" autocomplete="off">
+      <button class="send" id="btnSend" aria-label="发送"><svg viewBox="0 0 24 24" width="17" height="17" fill="#fff"><path d="M3.4 20.4l17-8.4-17-8.4v6.6L14 12 3.4 13.8z"/></svg></button>
+    </div>
+    <div class="foot">交互原型 · 模拟对话演示 · 非真实系统</div>
+
+    <div class="mask" id="maskDraft">
+      <div class="modal">
+        <h4>草稿已保存</h4>
+        <div class="sub" id="draftSub">要素与未完成追问已暂存，下次可继续完善。</div>
+        <div class="zone">
+          <div class="zt">已保存内容</div>
+          <div class="rows" id="draftRows"></div>
+        </div>
+        <div class="btns">
+          <button id="btnDraftClose">留在当前会话</button>
+          <button class="p" id="btnDraftRestore">恢复草稿并继续</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mask" id="maskModify">
+      <div class="modal">
+        <h4>修改需求要素</h4>
+        <div class="sub">模拟对话中"突发奇想"的修改：选定要素并更新内容，Agent 会提示受影响要素。</div>
+        <div class="mrow"><label>选择要修改的要素</label>
+          <select id="modKey">
+            <option value="B3">业务价值（B3）</option>
+            <option value="C1">目标用户角色（C1）</option>
+            <option value="D1">功能描述（D1）</option>
+            <option value="D8">验收标准（D8）</option>
+          </select>
+        </div>
+        <div class="mrow"><label>新的内容</label><input id="modVal" type="text" placeholder="输入修改后的内容…"></div>
+        <div class="btns">
+          <button id="btnModCancel">取消</button>
+          <button class="p" id="btnModOk">确认修改</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<!-- APP_SCRIPT -->
+<script>
+"use strict";
+/* =========================================================
+   科技需求收集智能体 · 交互原型剧本
+   覆盖：大段拆解 / 类型识别 / 智能评估 / 启发式追问 /
+        草稿续报 / 对话中修改 / 表单交付
+   ========================================================= */
+var chat = document.getElementById('chat');
+var inp  = document.getElementById('inp');
+var btnSend = document.getElementById('btnSend');
+var toastEl = document.getElementById('toast');
+var maskDraft = document.getElementById('maskDraft');
+var maskModify = document.getElementById('maskModify');
+var stepEls = document.querySelectorAll('.step');
+
+/* ---------- 需求要素表单（演示数据） ---------- */
+var FORM = {
+  A: [
+    {k:'title', n:'需求标题', v:'渠道销量晨会报表', s:'ok'},
+    {k:'techSubtype', n:'需求子类', v:'数据报表', s:'ok'},
+    {k:'urgency', n:'紧急程度', v:'紧急', s:'ok'}
+  ],
+  B: [
+    {k:'businessGoal', n:'业务目标', v:'晨会前 8:00 自动产出各渠道销量，减少人工统计', s:'ok'}
+  ],
+  C: [
+    {k:'userRole', n:'目标用户', v:'网金业务部运营同事', s:'ok'},
+    {k:'useScenario', n:'使用场景', v:'每个交易日晨会前，运营查看各渠道销量', s:'ok'},
+    {k:'useFrequency', n:'使用频率', v:'', s:'missing'}
+  ],
+  D: [
+    {k:'functionDescription', n:'功能描述', v:'自动生成销量报表并推送企微群', s:'ok'},
+    {k:'dataRequirements', n:'数据需求', v:'代销系统交易库+核心系统持仓', s:'ok'},
+    {k:'acceptanceCriteria', n:'验收标准', v:'', s:'missing'}
+  ]
+};
+var MISSING_QUEUE = []; // 待追问要素
+
+/* ---------- 基础渲染 ---------- */
+function addAgent(html){
+  var row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = '<div class="ava ag">AI</div><div class="bubble"><div class="who">需求收集智能体</div>' + html + '</div>';
+  chat.appendChild(row);
+  scrollDown();
+  return row;
+}
+function addUser(text){
+  var row = document.createElement('div');
+  row.className = 'row user';
+  row.innerHTML = '<div class="ava me">我</div><div class="bubble"><div class="who">我</div>' + esc(text) + '</div>';
+  chat.appendChild(row);
+  scrollDown();
+}
+function addThinking(){
+  var row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = '<div class="ava ag">AI</div><div class="bubble"><div class="who">需求收集智能体</div><div class="thinking"><i></i><i></i><i></i></div></div>';
+  chat.appendChild(row);
+  scrollDown();
+  return row;
+}
+function addOptions(list){
+  var wrap = document.createElement('div');
+  wrap.className = 'opts';
+  list.forEach(function(o){
+    var b = document.createElement('button');
+    b.className = 'opt' + (o.cls ? ' ' + o.cls : '');
+    b.innerHTML = (o.tag ? '<span class="tag">' + o.tag + '</span>' : '') + esc(o.label);
+    b.addEventListener('click', o.fn);
+    wrap.appendChild(b);
+  });
+  chat.appendChild(wrap);
+  scrollDown();
+}
+function scrollDown(){ chat.scrollTop = chat.scrollHeight; }
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function setStep(n){
+  stepEls.forEach(function(el, i){
+    el.className = 'step' + (i < n ? ' done' : i === n ? ' on' : '');
+  });
+}
+function toast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  setTimeout(function(){ toastEl.classList.remove('show'); }, 2200);
+}
+function delay(ms, fn){ setTimeout(fn, ms); }
+
+/* ---------- 要素表单实时卡片 ---------- */
+function formCard(){
+  var h = '<div class="card"><div class="ct"><svg viewBox="0 0 24 24" width="15" height="15" fill="none"><rect x="4" y="4" width="16" height="16" rx="3" stroke="#1d4ed8" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="#16a34a" stroke-width="1.8" stroke-linecap="round"/></svg>需求要素表单（实时）</div>';
+  var zones = [
+    ['A 公共要素', 'A', '#334155'],
+    ['B 业务需求', 'B', '#3730a3'],
+    ['C 用户需求', 'C', '#9d174d'],
+    ['D 功能需求', 'D', '#14532d']
+  ];
+  zones.forEach(function(z){
+    h += '<div class="zone"><div class="zt"><span class="pill ' + (z[1]==='A'?'biz':z[1]==='B'?'biz':z[1]==='C'?'usr':'fun') + '">' + z[0] + '</span></div><div class="rows">';
+    FORM[z[1]].forEach(function(el){
+      var ico = el.s === 'ok'
+        ? '<svg class="ico" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#dcfce7"/><path d="M8 12.5l3 3 5-6" stroke="#16a34a" stroke-width="2" stroke-linecap="round"/></svg>'
+        : '<svg class="ico" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#fef3c7"/><path d="M12 7.5v5M12 16v.2" stroke="#d97706" stroke-width="2" stroke-linecap="round"/></svg>';
+      var st = el.s === 'ok'
+        ? '<span class="pill ok">已填</span>'
+        : '<span class="pill missing">待补充</span>';
+      h += '<div class="el"><span class="nm">' + ico + '<span>' + esc(el.n) + '<span class="key">' + esc(el.k) + '</span></span></span><span>' + (el.v ? '<span class="val">' + esc(el.v) + '</span>' : '') + st + '</span></div>';
+    });
+    h += '</div></div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+/* ---------- 场景入口 ---------- */
+function enterWelcome(){
+  setStep(0);
+  addAgent(
+    '你好，我是<b>科技需求收集智能体</b>，负责帮你把需求提报清楚。<br>' +
+    '你可以：<br>· 直接说一句话诉求<br>· 整段粘贴你整理好的文字<br>· 语音转文字也行<br><br>' +
+    '我会把需求拆解成 <b>业务需求 · 用户需求 · 功能需求</b> 三部分，缺什么会主动问你。先试试：'
+  );
+  addOptions([
+    {label:'我有一段需求要提报（大段粘贴）', tag:'推荐', cls:'primary', fn:enterBigInput},
+    {label:'看一段话需求示例，照看写', fn:enterExample},
+    {label:'我只有一个模糊想法', fn:enterFuzzy}
+  ]);
+}
+
+/* ===== 一段话需求示例（帮用户一次性提报完整） ===== */
+function enterExample(){
+  addAgent('直接参考这两个<b>一段话示例</b>，把业务目标、使用场景、功能、验收都带全，Agent 一次就能拆解完整。<br>点「采用」，我按这个示例帮你演示拆解，你也可以改成自己的：');
+  addAgent(
+    '<div class="ex"><div class="ex-t">示例一 · 完整型（业务/用户/功能三层都带）</div>' +
+    '<div class="ex-b">"我们部门每天晨会要统计各渠道销量，现在手工从三个系统导数据拼 Excel，要 40 分钟还容易错。希望做一个自动报表，每天早上 8 点前生成，包含各渠道销量明细和排名，自动推送企微群；验收标准是每个交易日 8:00 前生成、数据与核心系统一致。"</div></div>'
+  );
+  addAgent(
+    '<div class="ex"><div class="ex-t">示例二 · 简洁型（一句话带核心要素）</div>' +
+    '<div class="ex-b">"客户经理每月要导出客户持仓清单发给客户，希望系统每月末自动生成 Excel 并邮件推送，验收是每月最后一天 18:00 前发出、覆盖全部客户。"</div></div>'
+  );
+  addOptions([
+    {label:'采用示例一，帮我拆解', cls:'primary', fn:function(){ submitBigInput('我们部门每天晨会要统计各渠道销量，现在手工从三个系统导数据拼 Excel，要 40 分钟还容易错。希望做一个自动报表，每天早上 8 点前生成，包含各渠道销量明细和排名，自动推送企微群；验收标准是每个交易日 8:00 前生成、数据与核心系统一致。'); }},
+    {label:'采用示例二，帮我拆解', fn:function(){ submitBigInput('客户经理每月要导出客户持仓清单发给客户，希望系统每月末自动生成 Excel 并邮件推送，验收是每月最后一天 18:00 前发出、覆盖全部客户。'); }},
+    {label:'我自己来写，进入输入', cls:'dim', fn:enterBigInput}
+  ]);
+}
+
+/* ===== 场景 1：大段粘贴 ===== */
+function enterBigInput(){
+  addAgent('好，把内容粘贴进来，或直接输入。我一次帮你拆解清楚。');
+  state = 'biginput';
+}
+function submitBigInput(text){
+  addUser(text);
+  setStep(1);
+  var th = addThinking();
+  delay(1400, function(){
+    th.remove();
+    // 回填表单（示例一 / 示例二按内容适配）
+    if(text.indexOf('客户持仓清单') > -1){
+      FORM.A[0].v = '客户持仓清单月度导出'; FORM.A[0].s='ok';
+      FORM.B[0].v = '客户经理每月自动导出持仓清单发给客户，减少人工操作'; FORM.B[0].s='ok';
+      FORM.C[0].v = '客户经理'; FORM.C[0].s='ok';
+      FORM.C[1].v = '每月末自动生成客户持仓 Excel 并邮件推送'; FORM.C[1].s='ok';
+      FORM.D[0].v = '月末自动生成持仓 Excel 并邮件推送'; FORM.D[0].s='ok';
+      FORM.D[1].v = '客户持仓库 + 客户邮箱列表'; FORM.D[1].s='ok';
+    } else {
+      FORM.A[0].v = '渠道销量晨会报表';
+      FORM.C[1].v = '每个交易日晨会前，运营查看各渠道销量';
+      FORM.D[0].v = '自动生成销量报表并推送企微群';
+      FORM.D[1].v = '代销系统交易库 + 核心系统持仓';
+      FORM.B[0].v = '晨会前 8:00 自动产出各渠道销量，减少手工统计';
+    }
+    addAgent(
+      '已拆解完毕，我从你的描述里提取出以下要素：' + formCard() +
+      '<div class="irb" style="border-color:#bfdbfe;background:#eff6ff;"><div class="it" style="color:#1e40af">识别结果</div>' +
+      '<div class="ib">这看起来是<b>业务需求 + 用户需求 + 功能需求</b>混合：<br>' +
+      '· <span class="pill biz">业务</span>提到"减少手工统计/自动化"<br>' +
+      '· <span class="pill usr">用户</span>明确使用角色与场景<br>' +
+      '· <span class="pill fun">功能</span>是自动生成 + 推送<br><br>' +
+      '另有 <b>3 个要素</b>需要补充，我会逐项问你。</div></div>'
+    );
+    setStep(2);
+    delay(500, function(){
+      addAgent('先确认需求层级——我理解为这是一个<b>业务需求</b>（涉及部门效率目标与成本投入），对吗？');
+      addOptions([
+        {label:'对，是业务需求', cls:'primary', fn:enterTypeConfirm},
+        {label:'不是，只是日常功能需求', fn:function(){ addUser('不是，只是日常功能需求'); enterTypeConfirm(); }},
+        {label:'我也说不清，你帮我判断', fn:function(){ addUser('我也说不清，你帮我判断'); enterTypeConfirm(); }}
+      ]);
+    });
+  });
+}
+
+/* ===== 类型确认 ===== */
+function enterTypeConfirm(){
+  addUser('对，是业务需求');
+  addAgent('好，按<b>业务需求</b>继续。先补齐缺口要素：');
+  setStep(3);
+  MISSING_QUEUE = ['useFrequency','acceptanceCriteria'];
+  askNextMissing();
+}
+
+/* ===== 启发式追问循环 ===== */
+function askNextMissing(){
+  if(!MISSING_QUEUE.length){ enterFinalConfirm(); return; }
+  var key = MISSING_QUEUE.shift();
+  if(key === 'useFrequency'){
+    addAgent('补充一个问题：<b>使用频率 <span class="key" style="background:#e2e8f0;">C4</span></b>——这个报表大概多久用一次？');
+    addOptions([
+      {label:'每个交易日都用', fn:function(){ setField('C','useFrequency','每个交易日',true); }},
+      {label:'每周一次', fn:function(){ setField('C','useFrequency','每周一次',true); }},
+      {label:'偶尔用，说不准', fn:function(){ setField('C','useFrequency','偶尔',true); }},
+      {label:'跳过，后续补充', cls:'dim', fn:function(){ skipField('useFrequency'); }}
+    ]);
+  } else if(key === 'acceptanceCriteria'){
+    addAgent('<b>验收标准 <span class="key" style="background:#e2e8f0;">D8</span></b>：怎样算这个需求做完了？给个可检查的标准，比如"每个交易日 8:00 前自动生成、数据与核心系统一致"。');
+    addOptions([
+      {label:'每个交易日 8:00 前生成，与核心系统对账误差为 0', cls:'primary', fn:function(){ setField('D','acceptanceCriteria','每个交易日 8:00 前生成，与核心系统对账误差为 0',true); }},
+      {label:'参考句式：当__时，系统应__；检查项：__', cls:'dim', fn:function(){ addUser('（查看句式示范）'); addAgent('句式示范：「<b>当每个交易日 8:00 前</b>，系统应<b>自动生成销量报表并推送至企微群</b>；检查项：①数据与核心系统一致 ②推送成功率 ≥ 99%。」照着补一下试试？'); MISSING_QUEUE.unshift('acceptanceCriteria'); askNextMissing(); }},
+      {label:'跳过，后续补充', cls:'dim', fn:function(){ skipField('acceptanceCriteria'); }}
+    ]);
+  }
+}
+
+function setField(zone, key, val, isUser){
+  FORM[zone].forEach(function(el){ if(el.k === key){ el.v = val; el.s = 'ok'; } });
+  addUser(val);
+  reRenderForm();
+  delay(600, askNextMissing);
+}
+function skipField(key){
+  addUser('跳过，后续补充');
+  toast('已标记为「后续补充」，表单保留缺口');
+  delay(900, askNextMissing);
+}
+function reRenderForm(){
+  // 在最新一条 Agent 消息后补一张更新后的表单卡
+  addAgent('已更新。当前表单：' + formCard());
+}
+
+/* ===== 对话中修改（突发奇想） ===== */
+function enterModifyDemo(){
+  addAgent('没问题，随时可以改。你想改哪一项？我会提示受影响的要素。');
+  addOptions([
+    {label:'修改「使用场景」', fn:function(){ openModify('C','useScenario','机构业务部客户经理，每天晨会前查各机构持仓'); }},
+    {label:'修改「业务目标」', fn:function(){ openModify('B','businessGoal','覆盖全部渠道，晨会前 8:00 自动产出销量明细'); }},
+    {label:'不改了，继续', cls:'dim', fn:function(){ addUser('不改了，继续'); askNextMissing(); }}
+  ]);
+}
+function openModify(zone, key, newVal){
+  maskModify.classList.add('show');
+  document.getElementById('modKey').value = zone + '.' + key;
+  document.getElementById('modVal').value = newVal;
+  window._mod = {zone:zone, key:key};
+}
+document.getElementById('btnModCancel').addEventListener('click', function(){
+  maskModify.classList.remove('show');
+  addUser('先不改了');
+  askNextMissing();
+});
+document.getElementById('btnModOk').addEventListener('click', function(){
+  var m = window._mod; var v = document.getElementById('modVal').value.trim();
+  maskModify.classList.remove('show');
+  if(!v){ toast('请输入修改后的内容'); return; }
+  addUser('改一下：「' + v + '」');
+  setField(m.zone, m.key, v, true);
+  // 影响提示
+  delay(700, function(){
+    addAgent('已更新 <b>' + m.key + '</b> 并递增版本。<br>受影响要素提示：<br>· <span class="pill usr">用户需求</span>：使用场景随之调整<br>· <span class="pill fun">功能需求</span>：功能描述需同步确认<br>是否继续调整？');
+    addOptions([
+      {label:'没问题，继续收集', cls:'primary', fn:function(){ addUser('没问题，继续收集'); MISSING_QUEUE.unshift('acceptanceCriteria'); askNextMissing(); }},
+      {label:'继续改其他要素', fn:enterModifyDemo}
+    ]);
+  });
+});
+
+/* ===== 最终确认与提交 ===== */
+function enterFinalConfirm(){
+  setStep(4);
+  addAgent('要素已基本齐备，最后做完整性确认：' + formCard());
+  delay(600, function(){
+    addAgent('确认无误后即可<b>提交</b>，提交后生成需求编号并进入受理流程。');
+    addOptions([
+      {label:'确认提交', cls:'primary', fn:doSubmit},
+      {label:'先保存草稿，稍后再提交', fn:function(){ addUser('先保存草稿，稍后再提交'); openDraft(true); }},
+      {label:'还要修改', fn:enterModifyDemo}
+    ]);
+  });
+}
+function doSubmit(){
+  addUser('确认提交');
+  var th = addThinking();
+  delay(1300, function(){
+    th.remove();
+    addAgent(
+      '<div class="irb" style="border-color:#86efac;background:#f0fdf4;"><div class="it" style="color:#14532d"><svg viewBox="0 0 24 24" width="15" height="15" fill="none"><circle cx="12" cy="12" r="10" fill="#dcfce7"/><path d="M8 12.5l3 3 5-6" stroke="#16a34a" stroke-width="2" stroke-linecap="round"/></svg>提交成功</div>' +
+      '<div class="ib">需求编号：<b>TECH-20261006-001</b><br>状态：待受理（SUBMITTED）<br>已自动路由至：财管科技产品部<br><br>BA 可直接依据要素表单编写需求文档。</div></div>'
+    );
+    addOptions([
+      {label:'查看需求要素表单', fn:function(){ addAgent(formCard()); addOptions([{label:'重新演示一遍', cls:'primary', fn:resetDemo}]); }},
+      {label:'重新演示一遍', cls:'dim', fn:resetDemo}
+    ]);
+    setStep(4);
+  });
+}
+
+/* ===== 场景 2：模糊想法（启发式） ===== */
+function enterFuzzy(){
+  addUser('我只有一个模糊想法');
+  addAgent('没问题，我陪你一起理清楚。<br>先说说：这个想法大概想解决<b>什么问题</b>？');
+  state = 'fuzzy_q1';
+  enterFuzzyQ1();
+}
+function enterFuzzyQ1(){
+  addAgent('比如：是某个环节太慢、容易出错，还是信息看不到？');
+  state = 'fuzzy_q1';
+  inp.placeholder = '输入你的想法…（演示可输入任意内容）';
+  state = 'fuzzy_q1';
+  addOptions([
+    {label:'输入一句话想法', cls:'primary', fn:function(){
+      var v = inp.value.trim() || '月底汇总各渠道销售数据太慢，总出错';
+      inp.value = '';
+      handleFuzzyQ1(v);
+    }}
+  ]);
+}
+function handleFuzzyQ1(text){
+  addUser(text);
+  var th = addThinking();
+  delay(1100, function(){
+    th.remove();
+    addAgent('记下了。<br>为了把需求说清楚，请试着套用这个句式：<br><b>「作为 __（角色），在 __（时间/频率），需要 __（做什么）」</b><br>比如：作为网金运营，每月初，需要汇总各渠道销量。');
+    state = 'fuzzy_q2';
+    addOptions([
+      {label:'作为网金运营，每月初需要汇总各渠道销量', cls:'primary', fn:function(){ handleFuzzyQ2('作为网金运营，每月初需要汇总各渠道销量'); }},
+      {label:'还是不太会写', cls:'dim', fn:function(){ addUser('还是不太会写'); addAgent('没关系，我换种问法：<br>· <b>谁</b>会用这个？<br>· 在什么<b>时间</b>用？<br>· 用来<b>做什么</b>？<br>随便回答一个也行。'); state='fuzzy_q2'; addOptions([{label:'（输入任意回答继续）', cls:'primary', fn:function(){ var v=inp.value.trim()||'运营同事，晨会前看销量'; inp.value=''; handleFuzzyQ2(v); }}]); } }
+    ]);
+  });
+}
+function handleFuzzyQ2(text){
+  addUser(text);
+  addAgent('很好，需求逐渐清晰了。我按三层拆解并回填表单：' + formCard());
+  delay(700, function(){
+    FORM.C[0].v = '网金业务部运营'; FORM.C[0].s = 'ok';
+    FORM.C[1].v = '每月初汇总各渠道销量'; FORM.C[1].s = 'ok';
+    addAgent('已拆解为：<br>· <span class="pill usr">用户需求</span>：运营每月初查看销量<br>· <span class="pill fun">功能需求</span>：自动汇总报表<br><br>还需要补充 <b>业务目标</b> 与 <b>验收标准</b>。');
+    MISSING_QUEUE = ['acceptanceCriteria'];
+    askNextMissing();
+  });
+}
+
+/* ===== 草稿演示 ===== */
+function openDraft(fromFinal){
+  var rows = '';
+  ['A','B','C','D'].forEach(function(z){
+    FORM[z].forEach(function(el){
+      rows += '<div class="el"><span class="nm">' + esc(el.n) + '</span><span class="pill ' + (el.s==='ok'?'ok':'missing') + '">' + (el.s==='ok'?'已填':'待补') + '</span></div>';
+    });
+  });
+  document.getElementById('draftRows').innerHTML = rows;
+  document.getElementById('draftSub').textContent =
+    (fromFinal ? '已保存全部要素与对话上下文，下次可继续提交。' : '已保存当前要素 + 未完成追问清单，下次继续完善。');
+  maskDraft.classList.add('show');
+}
+document.getElementById('btnSave').addEventListener('click', function(){
+  openDraft(false);
+  toast('草稿已自动保存');
+});
+document.getElementById('btnDraftClose').addEventListener('click', function(){
+  maskDraft.classList.remove('show');
+});
+document.getElementById('btnDraftRestore').addEventListener('click', function(){
+  maskDraft.classList.remove('show');
+  addAgent('<div class="irb" style="border-color:#93c5fd;background:#eff6ff;"><div class="it" style="color:#1e40af">草稿已恢复</div><div class="ib">已从「我的需求」恢复草稿，保留 8 项已填要素与 2 项未完成追问，从断点继续。</div></div>');
+  if(MISSING_QUEUE.length){ delay(700, askNextMissing); }
+  else { delay(700, enterFinalConfirm); }
+});
+
+/* ===== 输入与状态机 ===== */
+var state = '';
+btnSend.addEventListener('click', onSend);
+inp.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); onSend(); } });
+function onSend(){
+  var v = inp.value.trim();
+  if(!v) return;
+  inp.value = '';
+  if(state === 'biginput'){ submitBigInput(v); return; }
+  if(state === 'fuzzy_q1' || state === 'fuzzy_q2'){
+    addUser(v);
+    if(state === 'fuzzy_q1') handleFuzzyQ1(v);
+    else handleFuzzyQ2(v);
+    return;
+  }
+  // 兜底
+  addUser(v);
+  addAgent('收到。我会把这条补充进对应要素。');
+}
+
+/* ---------- 重置演示 ---------- */
+function resetDemo(){
+  chat.innerHTML = '';
+  MISSING_QUEUE = [];
+  FORM = {
+    A:[{k:'title',n:'需求标题',v:'渠道销量晨会报表',s:'ok'},{k:'techSubtype',n:'需求子类',v:'数据报表',s:'ok'},{k:'urgency',n:'紧急程度',v:'紧急',s:'ok'}],
+    B:[{k:'businessGoal',n:'业务目标',v:'晨会前 8:00 自动产出各渠道销量，减少人工统计',s:'ok'}],
+    C:[{k:'userRole',n:'目标用户',v:'网金业务部运营同事',s:'ok'},{k:'useScenario',n:'使用场景',v:'每个交易日晨会前，运营查看各渠道销量',s:'ok'},{k:'useFrequency',n:'使用频率',v:'',s:'missing'}],
+    D:[{k:'functionDescription',n:'功能描述',v:'自动生成销量报表并推送企微群',s:'ok'},{k:'dataRequirements',n:'数据需求',v:'代销系统交易库+核心系统持仓',s:'ok'},{k:'acceptanceCriteria',n:'验收标准',v:'',s:'missing'}]
+  };
+  state = '';
+  enterWelcome();
+}
+
+/* ---------- 启动 ---------- */
+enterWelcome();
+</script>
+</body>
+</html>
