@@ -35,7 +35,8 @@ def request_hash(req):
 
 
 def demand_form(demand):
-    return {"title": demand.title, "demandTypeCode": demand.demand_type_code, "content": demand.content, "urgency": demand.urgency, "expectDeliveryAt": demand.expect_delivery_at.isoformat() if demand.expect_delivery_at else None, "ext": deepcopy(demand.ext or {})}
+    from app.services.demand_service import form_of
+    return form_of(demand)
 
 
 @dataclass
@@ -94,7 +95,13 @@ class GuideService:
                 raise BizError(ErrorCode.AI_SERVICE_UNAVAILABLE)
             history = await session_service.messages(self.db, self.user, req.session_id, limit=20)
             previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT" and m.structured_payload), {})
-            return Prepared(demand_form(demand), deepcopy(demand.field_sources or {}), [ElementStatus.model_validate(e) for e in previous.get("elements", [])], agent_session.asked_target, deepcopy(previous.get("structured", {})), [{"role": "user" if m.role == "USER" else "assistant", "content": m.content} for m in history if m.role in {"USER", "ASSISTANT"}])
+            form = demand_form(demand)
+            sources = deepcopy(demand.field_sources or {})
+            # FR-02/D6 原文保真：content 为空时本轮消息原文即 A8 底稿（来源 user，模型不得改写）
+            if not (form.get("content") or "").strip() and req.message.strip():
+                form["content"] = req.message
+                sources["content"] = "user"
+            return Prepared(form, sources, [ElementStatus.model_validate(e) for e in previous.get("elements", [])], agent_session.asked_target, deepcopy(previous.get("structured", {})), [{"role": "user" if m.role == "USER" else "assistant", "content": m.content} for m in history if m.role in {"USER", "ASSISTANT"}])
         finally:
             # ORM读取默认autobegin，显式结束，模型等待不占数据库连接。
             if self.db.in_transaction():

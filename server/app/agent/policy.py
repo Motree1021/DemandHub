@@ -2,28 +2,67 @@
 import re
 from copy import deepcopy
 
-from app.agent.schemas import ElementStatus, ModelOutput
+from app.agent.schemas import ElementStatus, ModelOutput, TypeSignalsOutput
 from app.standards import loader as standard_loader
-from app.standards.rules import assess, blank, filter_form, get_value, schema_errors, set_value
+from app.standards.rules import (
+    assess,
+    blank,
+    business_confirmed,
+    filter_form,
+    get_value,
+    schema_errors,
+    set_value,
+)
 from app.standards.schema import Standard
 
 
-def merge_structured(model_structured: dict, form: dict, field_sources: dict, standard: Standard | None = None, *, standards=None):
+def _numbers(text) -> set:
+    """文本中的全部数字（含小数），用于 FR-08 量化事实溯源。"""
+    return set(re.findall(r"\d+(?:\.\d+)?", text if isinstance(text, str) else ""))
+
+
+def merge_structured(model_structured: dict, form: dict, field_sources: dict, standard: Standard | None = None, *, standards=None, grounded_text: str | None = None):
     result = deepcopy(form)
     sources = dict(field_sources)
+    known = standards["TECH"] if standards else standard_loader.get("TECH")
+    kinds = {f.field_path: f.kind for f in known.fields}
     for key, value in model_structured.items():
         if key == "ext":
             if not isinstance(value, dict):
                 raise ValueError("模型 ext 必须为对象")
+            # overview 是详情页"需求概述"四段式摘要（dict[str,str]），畸形输出整轮拒绝
+            overview = value.get("overview")
+            if overview is not None and (not isinstance(overview, dict) or any(not isinstance(v, str) for v in overview.values())):
+                raise ValueError("模型 ext.overview 必须为字符串字典")
             items = [("ext." + k, v) for k, v in value.items()]
+        elif key == "elements":
+            if not isinstance(value, dict) or any(not isinstance(v, (dict, type(None))) for v in value.values()):
+                raise ValueError("模型 elements 必须为按区嵌套的对象")
+            items = []
+            for zone, values in value.items():
+                for k, v in (values or {}).items():
+                    path = f"elements.{zone}.{k}"
+                    # 模型常把 zone=A 而 field_path 在顶层的要素（urgency/expectDeliveryAt/title/content 等）
+                    # 误嵌进 elements.A，此处归位到顶层；归位后来源保护与格式校验照常生效
+                    if path not in kinds and "." not in k and k in kinds:
+                        path = k
+                    items.append((path, v))
         else:
             items = [(key, value)]
         for path, item in items:
+            kind = kinds.get(path)
+            # 非 list 要素输出数组/对象属畸形（空集合的新语义是"未输出"，仅 list 要素合法）
+            if kind is not None and kind != "list" and isinstance(item, (list, dict)):
+                raise ValueError(f"模型输出{path}类型错误")
             if sources.get(path) == "user" or blank(item):
                 continue
+            # FR-08 提炼约束：agent 文本中的数字必须可溯源到本轮消息或旧值，含新增数字视为编造事实，整值过滤
+            if grounded_text is not None and kind == "text" and isinstance(item, str):
+                grounded = _numbers(grounded_text) | _numbers(get_value(result, path))
+                if not _numbers(item) <= grounded:
+                    continue
             set_value(result, path, item)
             sources[path] = "agent"
-    known = standards["TECH"] if standards else standard_loader.get("TECH")
     type_code = result.get("demandTypeCode")
     if not blank(type_code):
         from app.standards.rules import field_error
@@ -32,11 +71,67 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
         if error:
             raise ValueError(error)
     selected = (standards[type_code] if standards else standard_loader.get(type_code)) if type_code else None
-    normalization_standard = selected or known.model_copy(update={"elements": [e for e in known.elements if not e.field_path.startswith("ext.")], "optional_fields": [], "subtype_fields": {}})
-    result = filter_form(normalization_standard, result)
+    normalization_standard = selected or known.model_copy(update={"elements": [e for e in known.elements if "." not in e.field_path], "optional_fields": [], "subtype_fields": {}})
+    # BR-T11 实例切分建议：一期仅打标 ext.pendingSplits（list 才合法），用户确认后分路留 V2
+    pending_splits = (result.get("ext") or {}).get("pendingSplits")
+    old_pending = (form.get("ext") or {}).get("pendingSplits")
+    # ext.overview 需求概述（四段式摘要）非五区要素，filter_form 会丢弃，需与 pendingSplits 同样保留
+    overview = (result.get("ext") or {}).get("overview")
+    old_overview = (form.get("ext") or {}).get("overview")
+    # 容错模式：模型输出的单个非法值（如日期写"本周"）丢弃而非整轮报错；demandTypeCode 已在上方单独严控
+    result = filter_form(normalization_standard, result, validate=False)
+    if isinstance(pending_splits, list) and pending_splits:
+        result.setdefault("ext", {})["pendingSplits"] = pending_splits
+    if isinstance(overview, dict) and overview:
+        result.setdefault("ext", {})["overview"] = overview
     allowed = {f.field_path for f in normalization_standard.fields}
     sources = {k: v for k, v in sources.items() if k in allowed}
+    if "pendingSplits" in (result.get("ext") or {}):
+        sources["ext.pendingSplits"] = field_sources.get("ext.pendingSplits") if pending_splits == old_pending else "agent"
+    if "overview" in (result.get("ext") or {}):
+        sources["ext.overview"] = field_sources.get("ext.overview") if overview == old_overview else "agent"
     return result, sources, selected
+
+
+def merge_type_signals(signals: TypeSignalsOutput | None, form: dict) -> dict | None:
+    """模型判型票与既有 ext.typeRecognition 合并：置信度取历史最高，confirmed（用户定稿）不被模型覆盖。"""
+    prev = (form.get("ext") or {}).get("typeRecognition") or {}
+    if signals is None:
+        return prev or None
+    result = {"confirmed": prev.get("confirmed")}
+    evidence = dict(prev.get("evidence") or {})
+    for layer in ("business", "user", "function"):
+        vote = getattr(signals, layer)
+        result[layer] = round(max(float(prev.get(layer) or 0), vote.confidence), 4)
+        if vote.evidence:
+            evidence[layer] = vote.evidence
+    result["evidence"] = evidence
+    return result
+
+
+def detect_granularity(standard: Standard, form: dict, message: str) -> dict | None:
+    """BR-T13/FR-10 粒度治理：关键词命中且对应区未填时才提示；收敛标准统一为可验证/可追踪/可独立受理。"""
+    granularity = standard.granularity
+    if granularity is None:
+        return None
+    text = "。".join([message or "", str(form.get("title") or ""), str(form.get("content") or "")])
+    c_filled = any(not blank(get_value(form, f"elements.C.{key}")) for key in ("userRole", "useScenario"))
+    if any(keyword in text for keyword in granularity.too_narrow.keywords) and not c_filled:
+        return {"level": "too_narrow", "hint": granularity.too_narrow.hint, "converge": granularity.converge}
+    d_filled = any(not blank(get_value(form, f"elements.D.{key}")) for key in ("functionDescription", "inputOutput"))
+    if any(keyword in text for keyword in granularity.too_broad.keywords) and not d_filled:
+        return {"level": "too_broad", "hint": granularity.too_broad.hint, "converge": granularity.converge}
+    return None
+
+
+def impact_hints(previous_form: dict, merged: dict) -> list[str]:
+    """FR-06 影响分析：已填的 B 区业务要素被修改时，提示 C/D 区可能需联动调整。"""
+    for key in ("businessGoal", "businessBackground", "businessValue"):
+        path = f"elements.B.{key}"
+        old, new = get_value(previous_form, path), get_value(merged, path)
+        if not blank(old) and old != new:
+            return ["B 区业务要素已变更，C/D 区的用户与功能要素可能需要联动调整，请确认。"]
+    return []
 
 
 def complete_elements(standard: Standard, form: dict, model_elements: list[ElementStatus]):
@@ -48,11 +143,12 @@ def complete_elements(standard: Standard, form: dict, model_elements: list[Eleme
     result = []
     for rule in assess(standard, form):
         item = model.get(rule.key)
-        if item is None or rule.status == "MISSING":
+        # 状态以规则层为准：规则合格/缺失均不被模型票改写。模型对已有有效值报 MISSING/VAGUE 多为自相矛盾
+        # （值往往就是模型自己 structured 写入的），一旦降级已填字段会被反复追问。
+        # 仅当规则判 VAGUE（有值但质量存疑）且无硬性格式错误时，模型票生效：OK 抬升确认，VAGUE 补充质量 note。
+        if item is None or item.status == "MISSING" or rule.status != "VAGUE":
             final = rule
-        elif item.status == "MISSING":
-            final = rule.model_copy(update={"status": "VAGUE", "note": "已填写，需进一步确认"})
-        elif rule.status == "VAGUE" and schema_errors_for_key(standard, form, rule.key):
+        elif schema_errors_for_key(standard, form, rule.key):
             final = rule
         else:
             final = rule.model_copy(update={"status": item.status, "note": item.note})
@@ -88,12 +184,12 @@ def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_
 
 
 def compute_missing(standard, form):
-    return [e.key for e in standard.elements if e.required and blank(get_value(form, e.field_path))]
+    return [e.key for e in standard.elements if e.required and not e.system and blank(get_value(form, e.field_path))]
 
 
 def pick_follow_up(standard, elements):
     by_key = {element.key: element for element in elements}
-    required = [e.key for e in standard.elements if e.required]
+    required = [e.key for e in standard.elements if e.required and not e.system]
     for key in required + standard.follow_up_order:
         element = by_key[key]
         if element.status not in {"OK", "SKIP"} and element.attempts < standard.max_attempts:
@@ -119,7 +215,8 @@ def quick_replies(standard, target):
 
 def reply_for(standard, target, form):
     if target is None:
-        return "已记下当前需求，请核对表单。可以提交，质量缺口仍会保留在记录中。" if not schema_errors(standard, form, required=True) else "当前引导已结束，请在表单中补齐必填内容后提交。"
+        # 必填已齐、引导结束：选填项的 VAGUE/MISSING 状态会留在要素记录里供审核参考，用白话告知而非"质量缺口"术语
+        return "已记下当前需求，请核对表单。必填内容已齐，可以提交。未填或不完整的选填项会在要素表单里标注，不影响提交，后续可补充；或由产品经理调研分析后补充。" if not schema_errors(standard, form, required=True) else "当前引导已结束，请在表单中补齐必填内容后提交。"
     field = next(e for e in standard.elements if e.key == target.key)
     value = str(get_value(form, field.field_path) or "")
     snippet = value[:20] + ("…" if len(value) > 20 else "")
@@ -137,17 +234,33 @@ def reply_for(standard, target, form):
 
 
 def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementStatus], prev_target: str | None, previous_form: dict, text: str, *, standards=None):
-    merged, field_sources, selected = merge_structured(output.structured, form, sources, standards=standards)
+    merged, field_sources, selected = merge_structured(output.structured, form, sources, standards=standards, grounded_text=text)
     # 未定类型仍使用共用三个质量字段，不暴露 TECH 扩展要素。
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
+    # FR-01/FR-03 判型合并：confirmed（用户定稿）不被模型覆盖，模型票只更新置信度与依据
+    recognition = merge_type_signals(output.type_signals, form)
+    if recognition:
+        merged.setdefault("ext", {})["typeRecognition"] = recognition
+        prev_confirmed = ((form.get("ext") or {}).get("typeRecognition") or {}).get("confirmed")
+        field_sources["ext.typeRecognition"] = "user" if prev_confirmed is not None else "agent"
     curr = complete_elements(standard, merged, output.elements)
     curr = inherit_and_count(prev, curr, prev_target, user_said_skip(standard, text), standard=standard, previous_form=previous_form, form=merged)
     target = pick_follow_up(standard, curr)
-    can_submit = selected is not None and not schema_errors(selected, merged, required=True)
+    # B 区必填按判型门槛生效（PRD §4.3、FR-03 分支）：业务需求全量四区，否则 A/C/D
+    active_zones = {"A", "C", "D"} | ({"B"} if business_confirmed(recognition) else set())
+    can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
+    granularity = detect_granularity(standard, merged, text)
+    impacts = impact_hints(previous_form, merged)
+    reply = reply_for(standard, target, merged)
+    if impacts:
+        reply = " ".join(impacts) + " " + reply
+    if granularity:
+        reply = granularity["hint"] + " " + reply
     return {
         "structured": merged, "fieldSources": field_sources,
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
         "askedTarget": target.key if target else None, "canSubmit": can_submit, "ready": can_submit,
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
-        "quickReplies": quick_replies(standard, target), "reply": reply_for(standard, target, merged),
+        "quickReplies": quick_replies(standard, target), "reply": reply,
+        "typeRecognition": recognition, "granularityHint": granularity, "impactHints": impacts,
     }

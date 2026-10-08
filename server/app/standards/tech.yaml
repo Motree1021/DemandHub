@@ -1,11 +1,19 @@
+# 科技需求五区标准（PRD v1.3 §4）：A 公共 / B 业务(Why) / C 用户(Who/What) / D 功能(How)
+# E 区为系统维护（elementStatus/fieldSources/revision/changeLog/askHistory），不在交互要素内。
+# 旧六要素映射（PRD §4.4，详见 migration_map.py）：
+#   title→A1 title / demandTypeCode→A2 / techSubtype→A3 / content→A8(+B2) /
+#   businessScenario→C3 useScenario / valueImpact→B3 businessValue / acceptanceCriteria→D8
 type: TECH
 name: 科技需求
-version: '1'
+version: '2'
 glossary:
 - 代销系统：面向银行/券商等代销渠道的销售与结算系统
 - 晨会：一线部门每个交易日 8:30 前的例会
 elements:
+# ---- A 区：公共要素（所有科技需求必填）----
 - key: title
+  code: A1
+  zone: A
   label: 需求标题
   kind: text
   required: true
@@ -13,7 +21,10 @@ elements:
   rule:
     min_len: 2
     max_len: 60
+  ask_l1: 我把需求标题记为「{snippet}」，你看合适吗？不合适直接告诉我改成什么。
 - key: demandTypeCode
+  code: A2
+  zone: A
   label: 需求类型
   kind: enum
   required: true
@@ -21,29 +32,194 @@ elements:
     TECH: 科技需求
     MATL: 物料需求
     TRAIN: 培训需求
-- key: content
-  label: 需求描述
-  kind: text
-  required: true
-  ok_when: ≥10 字，含业务背景与期望效果
-  rule:
-    min_len: 10
-  vague_hint: 描述过短，缺业务背景与期望效果
 - key: techSubtype
-  label: 需求子类
+  code: A3
+  zone: A
+  label: 科技需求子类
   kind: enum
-  path: ext.techSubtype
+  path: elements.A.techSubtype
+  required: true
   options:
     SYS_DEV: 系统开发
     DATA_RPT: 数据报表
     SYS_INT: 系统集成
     OPS_OPT: 运维优化
     OTHER: 其他
-  ask_l1: 为了把需求记录清楚，这个科技需求更接近哪一类？
-- key: businessScenario
-  label: 业务场景
+  ask_missing: 为了把需求记录清楚，这个科技需求更接近哪一类？
+  ask_l1: 这个需求更接近系统开发、数据报表、系统集成、运维优化中的哪一类？
+- key: requester
+  code: A4
+  zone: A
+  label: 提报人
   kind: text
-  path: ext.businessScenario
+  system: true
+  required: true
+- key: dept
+  code: A5
+  zone: A
+  label: 部门/小组
+  kind: text
+  system: true
+  required: true
+- key: urgency
+  code: A6
+  zone: A
+  label: 紧急程度
+  kind: enum
+  required: true
+  options:
+    NORMAL: 普通
+    URGENT: 紧急
+    CRITICAL: 特急
+  ask_missing: 这个需求有多紧急？普通按常规排期；紧急或特急请说明期望时间，便于排期。
+- key: expectDeliveryAt
+  code: A7
+  zone: A
+  label: 期望交付时间
+  kind: date
+- key: content
+  code: A8
+  zone: A
+  label: 原始提报文本
+  kind: text
+  required: true
+  ok_when: ≥10 字，用户原始描述完整保留，作为追溯底稿
+  rule:
+    min_len: 10
+  vague_hint: 描述过短，缺业务背景与期望效果
+# ---- B 区：业务需求要素（Why——识别为业务需求时必填，提交按 active_zones 条件生效）----
+- key: businessGoal
+  code: B1
+  zone: B
+  label: 业务目标
+  kind: text
+  path: elements.B.businessGoal
+  required: true
+  ok_when: 组织/部门要达成的可衡量目标，≥15 字，含量化词
+  rule:
+    min_len: 15
+    any_of_regex:
+    - \d
+    - 提升|提高|降低|减少|增加|覆盖|达成|缩短
+  vague_hint: 目标不够可衡量，缺量化词
+  ask_missing: 这个需求背后，部门或团队要达成的业务目标是什么？尽量可衡量，比如「把客户回访覆盖率从 60% 提升到 80%」。
+  ask_l1: 「{snippet}」还不太像可衡量的目标——能补一个量化口径吗？比如比例、时长、次数。
+  ask_l2: 参考句式：「把__（指标）从__提升/降低到__（量化值）」。
+- key: businessBackground
+  code: B2
+  zone: B
+  label: 业务背景
+  kind: text
+  path: elements.B.businessBackground
+  required: true
+  ok_when: 说明现状与为什么现在要做，≥15 字
+  rule:
+    min_len: 15
+  vague_hint: 缺少现状与动因说明
+  ask_missing: 说说这项需求的业务背景：现状是怎样的，为什么现在要做？
+  ask_l1: 「{snippet}」背景还偏简略——现在的做法是什么、遇到了什么问题促使现在提出来？
+  ask_l2: 参考句式：「目前__（现状做法），存在__（问题），因此需要__」。
+- key: businessValue
+  code: B3
+  zone: B
+  label: 业务价值
+  kind: text
+  path: elements.B.businessValue
+  required: true
+  ok_when: 含量化事实（多少人/多少时间/不做的后果）
+  rule:
+    any_of_regex:
+    - \d
+    - 不做
+    - 否则
+    - 影响
+    - 风险
+  vague_hint: 缺量化事实（人数/时长/后果）
+  ask_missing: 这个需求不做的话有什么影响？量化一下，比如「20多个客户经理每人每天花40分钟手工整理」。
+  ask_l1: 再具体一点点：大概影响多少人或几个部门？每次能省多少时间？
+  ask_l2: 参考句式：「影响__人/__个部门，每次节省约__分钟；不做会__」。
+- key: stakeholders
+  code: B4
+  zone: B
+  label: 干系人
+  kind: list
+  path: elements.B.stakeholders
+  required: true
+  ok_when: 列出业务方、承接方、受益方
+  vague_hint: 看不出业务方/承接方/受益方
+  ask_missing: 这个需求涉及哪些干系人？比如谁提出的业务方、谁承接建设、谁是受益方。
+  ask_l1: 能列一下相关的部门或角色吗？例如「机构业务部提出，科技中心承接，客户经理受益」。
+- key: businessRules
+  code: B5
+  zone: B
+  label: 业务规则/合规约束
+  kind: text
+  path: elements.B.businessRules
+  ok_when: 数据合规、监管要求等约束写清楚；无约束可留空
+  ask_missing: 有没有必须遵守的业务规则或合规约束？比如数据脱敏、监管报送口径。没有可留空。
+- key: upstreamGoal
+  code: B6
+  zone: B
+  label: 所属战略目标
+  kind: text
+  path: elements.B.upstreamGoal
+  ok_when: 填写上游业务目标（如公司战略/部门年度目标），便于拆条溯源；可留空
+  ask_missing: 这条需求归属于哪个上游业务目标或战略？例如「提升客户回访率至 80%」。没有可留空。
+- key: relatedDemands
+  code: B7
+  zone: B
+  label: 关联需求
+  kind: list
+  path: elements.B.relatedDemands
+  ok_when: 同源拆分或关联需求编号列表；可留空
+  ask_missing: 是否有关联或同源拆分的需求编号？有可列出，没有可留空。
+# ---- C 区：用户需求要素（Who/What——用户要做什么）----
+- key: userRole
+  code: C1
+  zone: C
+  label: 目标用户角色
+  kind: text
+  path: elements.C.userRole
+  required: true
+  ok_when: 明确谁在用：客户经理/运营/专员/机构等
+  rule:
+    any_of:
+    - 客户经理
+    - 理财经理
+    - 专员
+    - 机构
+    - 营业部
+    - 部门
+    - 经理
+    - 同事
+    - 运营
+    - 柜员
+    - 主管
+  vague_hint: 看不出谁在用
+  ask_missing: 这个需求主要给谁用？比如机构业务部客户经理、运营专员。
+  ask_l1: 「{snippet}」里还看不出具体角色——是客户经理、运营专员，还是其他岗位？
+  ask_l2: 可以这样写：「机构业务部客户经理」「分公司运营专员」。
+- key: userGoal
+  code: C2
+  zone: C
+  label: 用户目标
+  kind: text
+  path: elements.C.userGoal
+  required: true
+  ok_when: 用户要达成的任务目标，含时机/频率，≥10 字
+  rule:
+    min_len: 10
+  vague_hint: 看不出用户要完成什么任务
+  ask_missing: 用户想用这个能力完成什么任务？大概什么时候、多久用一次？
+  ask_l1: 再说说用户要达成的具体任务吧，比如「晨会前快速查看各机构持仓汇总」。
+  ask_l2: 参考句式：「在__（时机/频率），完成__（任务）」。
+- key: useScenario
+  code: C3
+  zone: C
+  label: 使用场景
+  kind: text
+  path: elements.C.useScenario
+  required: true
   ok_when: 含角色 + 时机/频率 + 任务，≥15 字，无歧义词
   rule:
     min_len: 15
@@ -69,10 +245,121 @@ elements:
   ask_missing: 再说说使用场景吧：谁（角色）、在什么时间/频率、用它来做什么？比如「机构业务部客户经理，每天晨会前查各机构持仓」。
   ask_l1: 记下了。不过「{snippet}」还有点概括——能再具体说说哪些人、在什么时机用吗？
   ask_l2: 可以这样写：「作为__（角色），在__（时间/频率），需要__（做什么）」。示例：作为机构业务部专员，每周一早上，需要汇总各渠道销量。
+- key: useFrequency
+  code: C4
+  zone: C
+  label: 使用频率
+  kind: text
+  path: elements.C.useFrequency
+  ok_when: 每天/每周/每月/每次等；可留空
+  ask_missing: 大概多久用一次？每天、每周、每月还是按需？可留空。
+- key: painPoint
+  code: C5
+  zone: C
+  label: 用户痛点
+  kind: text
+  path: elements.C.painPoint
+  required: true
+  ok_when: 现状困难描述清楚，含量化事实更佳，≥10 字
+  rule:
+    min_len: 10
+  vague_hint: 痛点不够具体
+  ask_missing: 现在做这件事最麻烦的地方是什么？比如「手工汇总 20 多个机构数据，每次近 1 小时还容易错」。
+  ask_l1: 「{snippet}」还比较概括——具体卡在哪一步？大概多花多少时间？
+  ask_l2: 参考句式：「目前需要__（手工步骤），每次约__分钟，容易__（问题）」。
+- key: userCount
+  code: C6
+  zone: C
+  label: 用户规模
+  kind: number
+  path: elements.C.userCount
+  ok_when: 受影响用户的大致人数；可留空
+  ask_missing: 大概多少用户会受影响？填个估计数即可，可留空。
+# ---- D 区：功能需求要素（How——系统必须做什么）----
+- key: functionDescription
+  code: D1
+  zone: D
+  label: 功能描述
+  kind: text
+  path: elements.D.functionDescription
+  required: true
+  ok_when: 系统要做什么，行为描述清楚，≥10 字
+  rule:
+    min_len: 10
+  vague_hint: 看不出系统要做什么
+  ask_missing: 系统需要做什么？描述一下期望的功能行为，比如「按机构汇总前一交易日持仓并支持导出」。
+  ask_l1: 「{snippet}」还没说清系统的行为——系统收到什么、处理成什么、给谁看？
+  ask_l2: 参考句式：「系统应__（动作）__（对象），并支持__（输出）」。
+- key: inputOutput
+  code: D2
+  zone: D
+  label: 输入/输出
+  kind: text
+  path: elements.D.inputOutput
+  required: true
+  ok_when: 说明输入数据与产出物（报表/推送/接口）
+  rule:
+    min_len: 5
+    any_of:
+    - 输入
+    - 输出
+    - 报表
+    - 推送
+    - 接口
+    - 导出
+    - 数据
+    - 页面
+    - 展示
+  vague_hint: 缺输入或产出物说明
+  ask_missing: 这个功能的输入数据和产出物分别是什么？比如「输入交易流水，输出按机构汇总的持仓报表」。
+  ask_l1: 补充一下数据从哪来、结果以什么形式给出（页面/报表/推送/接口）？
+- key: businessRuleMap
+  code: D3
+  zone: D
+  label: 业务规则映射
+  kind: text
+  path: elements.D.businessRuleMap
+  ok_when: 功能须遵守的 B 区规则细化；可留空
+  ask_missing: 功能层面要遵守哪些业务规则细化？与 B 区规则对应的可列出，可留空。
+- key: dataRequirements
+  code: D4
+  zone: D
+  label: 数据需求
+  kind: text
+  path: elements.D.dataRequirements
+  ok_when: 数据源、字段、口径、刷新频率；可留空
+  ask_missing: 涉及哪些数据源、字段口径和刷新频率？比如「代销系统交易库，按机构汇总，每交易日 8:00 前刷新」。可留空。
+- key: interfaceRequirements
+  code: D5
+  zone: D
+  label: 接口/集成需求
+  kind: text
+  path: elements.D.interfaceRequirements
+  ok_when: 对接系统、流向、时效、异常；可留空
+  ask_missing: 需要与哪些系统对接？数据流向和时效要求是什么？可留空。
+- key: nfrRequirements
+  code: D6
+  zone: D
+  label: 非功能需求
+  kind: list
+  path: elements.D.nfrRequirements
+  ok_when: 性能/安全/可用性要求（秒级、脱敏、通过率）；可留空
+  ask_missing: 有没有性能、安全类要求？比如「查询 3 秒内返回」「客户敏感信息脱敏」。可留空。
+- key: exceptionHandling
+  code: D7
+  zone: D
+  label: 异常与边界
+  kind: text
+  path: elements.D.exceptionHandling
+  ok_when: 失败重试、无数据处理、权限边界；可留空
+  ask_missing: 异常场景怎么处理？比如同步失败重试、无数据时的展示、权限边界。可留空。
 - key: acceptanceCriteria
+  code: D8
+  zone: D
   label: 验收标准
   kind: text
-  path: ext.acceptanceCriteria
+  path: elements.D.acceptanceCriteria
+  required: true
   ok_when: 含可量化指标（数字/时间/误差/通过率）或明确检查项
   rule:
     any_of_regex:
@@ -88,27 +375,19 @@ elements:
   ask_missing: 怎样算这个需求做完了？给一个可检查的标准，比如「连续一周与核心系统对账误差为0」。
   ask_l1: 「{snippet}」还不太可检验——能加个量化指标吗？比如时间、准确率或覆盖范围。
   ask_l2: 参考句式：「当__时，系统应__；检查项：①__②__」。
-- key: valueImpact
-  label: 价值与影响
-  kind: text
-  path: ext.valueImpact
-  ok_when: 含量化事实（多少人/多少时间/不做的后果）
-  rule:
-    any_of_regex:
-    - \d
-    - 不做
-    - 否则
-    - 影响
-    - 风险
-  vague_hint: 缺量化事实（人数/时长/后果）
-  ask_missing: 这个需求不做的话有什么影响？量化一下，比如「20多个客户经理每人每天花40分钟手工整理」。
-  ask_l1: 再具体一点点：大概影响多少人或几个部门？每次能省多少时间？
-  ask_l2: 参考句式：「影响__人/__个部门，每次节省约__分钟；不做会__」。
 follow_up_order:
 - techSubtype
-- businessScenario
+- businessGoal
+- businessBackground
+- businessValue
+- stakeholders
+- userRole
+- userGoal
+- useScenario
+- painPoint
+- functionDescription
+- inputOutput
 - acceptanceCriteria
-- valueImpact
 max_attempts: 2
 vague_words:
 - 尽快
@@ -127,78 +406,67 @@ skip_phrases:
 - 以后再说
 - 不清楚
 - 先这样
-optional_fields:
-- key: relatedSystem
-  label: 关联系统
-  path: ext.relatedSystem
-  kind: enum
-  options:
-    代销系统: 代销系统
-    直销系统: 直销系统
-    估值系统: 估值系统
-    CRM: CRM
-    数据中心: 数据中心
-    其他: 其他
-- key: relatedModule
-  label: 关联模块
-  path: ext.relatedModule
-  kind: text
-subtype_fields:
-  SYS_DEV:
-  - key: devFeatures
-    label: 涉及功能/流程
-    placeholder: 如：代销看板-机构持仓页签，涉及查询与导出流程
-  - key: devPermission
-    label: 角色与权限
-    placeholder: 如：机构业务部全员可查，仅主管可导出
-  - key: devQuality
-    label: 性能/安全
-    placeholder: 如：查询3秒内返回；客户敏感信息需脱敏
-  DATA_RPT:
-  - key: dataDimensions
-    label: 维度与口径
-    placeholder: 如：按机构汇总前一交易日持仓，与核心系统口径一致
-  - key: dataSource
-    label: 数据来源
-    placeholder: 如：代销系统交易库 + 核心系统持仓
-  - key: refreshFrequency
-    label: 刷新频率
-    placeholder: 如：每个交易日早8:00前刷新
-  - key: exportRequirement
-    label: 导出要求
-    placeholder: 如：支持导出Excel，字段与页面一致
-  SYS_INT:
-  - key: intTargetSystem
-    label: 对接系统
-    placeholder: 如：与CRM双向对接
-  - key: intDataFlow
-    label: 流向与触发
-    placeholder: 如：客户风险等级由CRM实时推送
-  - key: intTimeliness
-    label: 时效要求
-    placeholder: 如：数据延迟不超过5分钟
-  - key: intException
-    label: 异常处理
-    placeholder: 如：同步失败自动重试并通知运维
-  OPS_OPT:
-  - key: opsProblem
-    label: 问题现象
-    placeholder: 如：月末批量导出Excel等待约10分钟，经常超时
-  - key: opsScope
-    label: 影响范围
-    placeholder: 如：全渠道客户经理，每月初集中使用
-  - key: opsTarget
-    label: 期望目标
-    placeholder: 如：导出1分钟内完成
-common_fields:
-- key: urgency
-  label: 紧急程度
-  kind: enum
-  options:
-    NORMAL: 普通
-    URGENT: 紧急
-    CRITICAL: 特急
-  default: NORMAL
-- key: expectDeliveryAt
-  label: 期望交付时间
-  kind: date
+# PRD §4.3 三层判型信号（供 LLM 判型提示词，P2 接入）
+type_signals:
+  business:
+    label: 业务需求
+    keywords:
+    - 部门目标
+    - 组织目标
+    - 效率
+    - 成本
+    - 投入产出
+    - 合规
+    - 监管
+    - 立项
+    - 考核
+    - 指标
+  user:
+    label: 用户需求
+    keywords:
+    - 客户经理
+    - 专员
+    - 运营
+    - 每天
+    - 每周
+    - 手工
+    - 痛点
+    - 流程
+    - 晨会
+  function:
+    label: 功能需求
+    keywords:
+    - 系统应该
+    - 系统必须
+    - 自动
+    - 支持
+    - 接口
+    - 报表
+    - 推送
+    - 按钮
+    - 页面
+    - 字段
+# BR-T13 粒度治理：目标级分解 / 字段级补全，收敛标准统一
+granularity:
+  converge: 可验证、可追踪、可独立受理
+  too_broad:
+    keywords:
+    - 提升
+    - 提高到
+    - 全面
+    - 整体
+    - 战略
+    - 体系
+    - 平台化
+    hint: 这是一个目标级需求，建议先聚焦其中一条可独立受理的子需求，其余可先保存为草稿。
+  too_narrow:
+    keywords:
+    - 加个字段
+    - 加字段
+    - 加个列
+    - 显示一下
+    - 按钮
+    hint: 这个需求偏字段级，建议补充所属功能、使用场景与用户角色，便于整体评估。
+optional_fields: []
+subtype_fields: {}
+common_fields: []

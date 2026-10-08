@@ -9,7 +9,14 @@ from app.standards.loader import get
 
 
 def payload(key):
-    return {"clientRequestId": key, "title": "需求记录", "demandTypeCode": "TECH", "content": "整理需求并记录完整业务信息"}
+    # 五区标准下 TECH 提交需补齐 A/C/D 区必填（B 区 P1 阶段条件必填不生效）
+    return {"clientRequestId": key, "title": "需求记录", "demandTypeCode": "TECH", "content": "整理需求并记录完整业务信息",
+            "urgency": "NORMAL",
+            "elements": {"A": {"techSubtype": "DATA_RPT"},
+                         "C": {"userRole": "客户经理", "userGoal": "晨会前快速查看各机构持仓汇总",
+                               "useScenario": "客户经理每天晨会前查看各机构持仓", "painPoint": "手工汇总20多个机构持仓每次近1小时"},
+                         "D": {"functionDescription": "按机构汇总前一交易日持仓并展示", "inputOutput": "输入交易流水输出持仓汇总报表",
+                               "acceptanceCriteria": "连续7天与核心系统对账误差为0"}}}
 
 
 async def test_twenty_actual_demands_concurrently(session_factory, user):

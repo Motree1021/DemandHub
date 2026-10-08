@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from datetime import date, timedelta
 
 from sqlalchemy import func, select
@@ -8,15 +9,19 @@ from sqlalchemy.dialects.mysql import insert
 from app.core.deps import is_admin
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
-from app.db.models import AgentMessage, AgentSession, Demand, PromptVersion, now
+from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, PromptVersion, now
 from app.services.demand_no import next_no
 from app.standards import rules
 from app.standards.loader import ensure_snapshot
 from app.standards.loader import get as get_standard
+from app.standards.migration_map import elements_from_legacy, legacy_from_elements
 from app.standards.schema import Standard
 
 TOP_FIELDS = {"title": "title", "demandTypeCode": "demand_type_code", "content": "content",
               "urgency": "urgency", "expectDeliveryAt": "expect_delivery_at"}
+
+# ext 保留位：判型结果（FR-03）与实例切分建议（BR-T11，一期打标）不走标准要素白名单，全程保留
+RESERVED_EXT_KEYS = ("typeRecognition", "pendingSplits", "overview")
 
 
 def fingerprint(value: dict) -> str:
@@ -25,13 +30,21 @@ def fingerprint(value: dict) -> str:
 
 
 def form_of(demand: Demand) -> dict:
-    return {"title": demand.title, "demandTypeCode": demand.demand_type_code,
+    form = {"title": demand.title, "demandTypeCode": demand.demand_type_code,
             "content": demand.content, "urgency": demand.urgency,
             "expectDeliveryAt": demand.expect_delivery_at.isoformat() if demand.expect_delivery_at else None,
             "ext": dict(demand.ext or {})}
+    # 存量草稿 elements 为空时按迁移映射回退读 ext（概念模型 §6.2，无需数据回填）
+    form["elements"] = deepcopy(demand.elements) if demand.elements is not None else elements_from_legacy(demand.ext)
+    return form
 
 
-def serialize_demand(demand: Demand) -> dict:
+def serialize_change_log(row: DemandChangeLog) -> dict:
+    return {"id": row.id, "fieldKey": row.field_key, "oldValue": row.old_value, "newValue": row.new_value,
+            "source": row.source, "changedBy": row.changed_by, "createdAt": encode(row.created_at)}
+
+
+def serialize_demand(demand: Demand, change_logs: list | None = None) -> dict:
     result = {"id": demand.id, "demandNo": demand.demand_no, **form_of(demand),
               "subtypeCode": demand.subtype_code, "revision": demand.revision,
               "fieldSources": demand.field_sources or {}, "status": demand.status,
@@ -39,9 +52,25 @@ def serialize_demand(demand: Demand) -> dict:
               "submitterName": demand.submitter_name, "submitterDept": demand.submitter_dept,
               "channel": demand.channel, "sessionId": demand.session_id,
               "standardVersionId": demand.standard_version_id, "qualityContentHash": demand.quality_content_hash,
+              "changeLogs": change_logs or [],
               "submittedAt": demand.submitted_at, "closedAt": demand.closed_at,
               "closeReason": demand.close_reason, "createdAt": demand.created_at, "updatedAt": demand.updated_at}
     return encode(result)
+
+
+async def change_logs_map(db, demand_ids: list[int]) -> dict[int, list]:
+    """按需求 id 批量取变更留痕（E7），避免列表 N+1。"""
+    if not demand_ids:
+        return {}
+    rows = (await db.execute(select(DemandChangeLog).where(DemandChangeLog.demand_id.in_(demand_ids)).order_by(DemandChangeLog.id))).scalars().all()
+    result: dict[int, list] = {demand_id: [] for demand_id in demand_ids}
+    for row in rows:
+        result.setdefault(row.demand_id, []).append(serialize_change_log(row))
+    return result
+
+
+async def serialize_with_logs(db, demand: Demand) -> dict:
+    return serialize_demand(demand, (await change_logs_map(db, [demand.id]))[demand.id])
 
 
 def normalized(form: dict) -> tuple[dict, Standard | None]:
@@ -49,22 +78,34 @@ def normalized(form: dict) -> tuple[dict, Standard | None]:
     std = get_standard(type_code) if type_code else None
     try:
         result = rules.filter_form(std, form)
+        for key in RESERVED_EXT_KEYS:
+            if (form.get("ext") or {}).get(key) is not None:
+                result.setdefault("ext", {})[key] = form["ext"][key]
         errors = rules.schema_errors(std, result)
         if errors:
             raise ValueError(errors[0])
         for path, value in paths(result).items():
             if rules.blank(value):
                 rules.set_value(result, path, None)
-        if result.get("urgency") is None:
-            result["urgency"] = "NORMAL"
         return result, std
     except ValueError as exc:
         raise BizError(ErrorCode.PARAM_INVALID, str(exc)) from None
 
 
 def paths(form: dict) -> dict:
-    return {**{k: v for k, v in form.items() if k != "ext"},
-            **{"ext." + k: v for k, v in (form.get("ext") or {}).items()}}
+    result = {k: v for k, v in form.items() if k not in ("ext", "elements")}
+    result.update({"ext." + k: v for k, v in (form.get("ext") or {}).items()})
+    for zone, values in (form.get("elements") or {}).items():
+        result.update({f"elements.{zone}.{k}": v for k, v in (values or {}).items()})
+    return result
+
+
+def merge_elements(base: dict | None, patch: dict | None) -> dict:
+    """elements 按区深合并（区→要素两层）。"""
+    result = {zone: dict(values or {}) for zone, values in (base or {}).items()}
+    for zone, values in (patch or {}).items():
+        result.setdefault(zone, {}).update(values or {})
+    return result
 
 
 def assign(demand: Demand, form: dict, sources: dict) -> None:
@@ -73,9 +114,18 @@ def assign(demand: Demand, form: dict, sources: dict) -> None:
         if key == "expectDeliveryAt":
             value = date.fromisoformat(value) if value else None
         setattr(demand, attr, value)
-    demand.ext = dict(form.get("ext") or {})
+    if "elements" in form:
+        # TECH 五区表单：elements 主写，ext 保留兼容副本（概念模型 §6.2 双写过渡）+ 保留位
+        demand.elements = {zone: dict(values or {}) for zone, values in (form.get("elements") or {}).items()}
+        reserved = {k: deepcopy(form["ext"][k]) for k in RESERVED_EXT_KEYS if k in (form.get("ext") or {})}
+        demand.ext = {**legacy_from_elements(demand.elements), **reserved}
+        demand.subtype_code = (demand.elements.get("A") or {}).get("techSubtype")
+    else:
+        # MATL/TRAIN ext 表单（未升级五区）
+        demand.ext = dict(form.get("ext") or {})
+        demand.elements = None
+        demand.subtype_code = demand.ext.get("techSubtype")
     demand.field_sources = {path: source for path, source in sources.items() if path in paths(form)}
-    demand.subtype_code = demand.ext.get("techSubtype")
 
 
 async def get_owned_draft(db, user, demand_id: int, for_update: bool = False) -> Demand:
@@ -95,17 +145,37 @@ def assert_editable(demand: Demand, expected_revision: int) -> None:
         raise BizError(ErrorCode.CONFLICT)
 
 
+def write_change_logs(db, demand: Demand, before: dict, after: dict, sources: dict, user_id: int) -> None:
+    """要素级修改留痕（FR-06/E7）：before/after 均为规范化表单，逐路径比对，有变化写一行。"""
+    for path, new in paths(after).items():
+        # ext.overview 是 AI 每轮重写的派生摘要，留痕会刷噪音；原文与要素留痕已足够追溯
+        if path == "ext.overview":
+            continue
+        old = rules.get_value(before, path)
+        if old == new:
+            continue
+        db.add(DemandChangeLog(demand_id=demand.id, field_key=path,
+                               old_value=encode(old), new_value=encode(new),
+                               source=sources.get(path) or "user", changed_by=user_id))
+
+
+def with_legacy_elements(payload: dict) -> dict:
+    """旧六要素 ext 手填兼容（P4 前 H5 表单）：映射为五区 elements，显式 elements 同 key 优先。"""
+    legacy = elements_from_legacy(payload.get("ext"))
+    if legacy:
+        payload = {**payload, "elements": merge_elements(legacy, payload.get("elements"))}
+    return payload
+
+
 async def create_draft(db, user, payload: dict) -> Demand:
-    form, _ = normalized({"urgency": "NORMAL", **payload})
+    form, _ = normalized(with_legacy_elements(payload))
     supplied_sources = payload.get("fieldSources") or {}
     sources = {}
     for path, value in paths(form).items():
         source = supplied_sources.get(path)
-        sources[path] = "default" if source == "default" and path in {"urgency", "demandTypeCode"} else "user"
+        sources[path] = "default" if source == "default" and path == "demandTypeCode" else "user"
         if rules.blank(value) and source is None:
             sources.pop(path, None)
-    if "urgency" not in payload:
-        sources["urgency"] = "default"
     digest = fingerprint(payload)
     statement = insert(Demand).values(submitter_id=user.id, client_request_id=payload["clientRequestId"],
         create_request_hash=digest, ext={}, field_sources={}, revision=0, status="DRAFT", channel=user.channel)
@@ -125,8 +195,15 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
     demand = await get_owned_draft(db, user, demand_id, for_update=True)
     assert_editable(demand, payload["expectedRevision"])
     before = form_of(demand)
-    patch = {k: v for k, v in payload.items() if k in TOP_FIELDS or k == "ext"}
+    patch = with_legacy_elements({k: v for k, v in payload.items() if k in TOP_FIELDS or k in ("ext", "elements")})
     merged = {**before, **patch, "ext": {**before["ext"], **(patch.get("ext") or {})}}
+    old_recognition = before["ext"].get("typeRecognition")
+    new_recognition = (patch.get("ext") or {}).get("typeRecognition")
+    if isinstance(old_recognition, dict) and isinstance(new_recognition, dict):
+        # 判型确认/改判按层合并，只更新给定键，不丢置信度与依据
+        merged["ext"]["typeRecognition"] = {**old_recognition, **new_recognition}
+    if "elements" in patch:
+        merged["elements"] = merge_elements(before["elements"], patch.get("elements"))
     form, _ = normalized(merged)
     sources = dict(demand.field_sources or {})
     requested = payload.get("fieldSources") or {}
@@ -137,6 +214,7 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
         elif path not in sources and not rules.blank(value):
             sources[path] = "user"
     assign(demand, form, sources)
+    write_change_logs(db, demand, before, form, sources, user.id)
     demand.revision += 1
     demand.updated_at = now()
     await db.flush()
@@ -149,17 +227,20 @@ async def apply_agent_patch(db, user, demand, *, expected_revision: int, patch: 
         raise BizError(ErrorCode.DEMAND_NOT_FOUND)
     before = form_of(demand)
     sources = dict(demand.field_sources or {})
-    merged = {**before, "ext": dict(before["ext"])}
+    # 必须深拷贝：set_value 沿嵌套 dict 就地写入，浅拷贝会污染 before，导致来源比对与 change_log diff 失效
+    merged = deepcopy(before)
     for path, value in paths(patch).items():
         if sources.get(path) == "user" or rules.blank(value):
             continue
         rules.set_value(merged, path, value)
-        if value != rules.get_value(before, path):
-            sources[path] = "agent"
-        elif field_sources and field_sources.get(path) == "user":
+        # 策略层判定为 user 的来源（如 A8 原文回填）优先于值比对
+        if (field_sources or {}).get(path) == "user":
             sources[path] = "user"
+        elif value != rules.get_value(before, path):
+            sources[path] = "agent"
     form, _ = normalized(merged)
     assign(demand, form, sources)
+    write_change_logs(db, demand, before, form, sources, user.id)
     demand.revision += 1
     demand.updated_at = now()
     await db.flush()
@@ -172,7 +253,9 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
         return demand
     assert_editable(demand, expected_revision)
     form, std = normalized(form_of(demand))
-    errors = rules.schema_errors(std, form, required=True)
+    # B 区必填按判型门槛生效（FR-03/PRD §4.3）：判型或确认为业务需求时全量四区，否则 A/C/D
+    active_zones = {"A", "C", "D"} | ({"B"} if rules.business_confirmed((demand.ext or {}).get("typeRecognition")) else set())
+    errors = rules.schema_errors(std, form, required=True, active_zones=active_zones)
     if errors:
         raise BizError(ErrorCode.PARAM_INVALID, errors[0])
     version = await ensure_snapshot(db, std)
@@ -195,7 +278,8 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
 
 async def close(db, user, demand_id: int, reason: str) -> Demand:
     demand = await get_owned_draft(db, user, demand_id, for_update=True)
-    if demand.status != "SUBMITTED":
+    # 草稿撤销与已提交撤回同一出口（DRAFT/SUBMITTED → CLOSED）；CLOSED 不可重复流转
+    if demand.status not in ("DRAFT", "SUBMITTED"):
         raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION)
     demand.status, demand.close_reason, demand.closed_at = "CLOSED", reason, now()
     demand.revision += 1
@@ -222,7 +306,8 @@ async def list_records(db, user=None, *, page=1, size=20, **query):
     statement = filters(statement, **query)
     total = (await db.execute(select(func.count()).select_from(statement.subquery()))).scalar_one()
     records = (await db.execute(statement.order_by(Demand.created_at.desc(), Demand.id.desc()).offset((page-1)*size).limit(size))).scalars().all()
-    return {"records": [serialize_demand(d) for d in records], "total": total,
+    logs = await change_logs_map(db, [d.id for d in records])
+    return {"records": [serialize_demand(d, logs[d.id]) for d in records], "total": total,
             "size": size, "current": page, "pages": (total + size - 1) // size}
 
 
@@ -244,5 +329,5 @@ async def detail(db, user, demand_id: int) -> dict:
         messages = [{"id": row.id, "sessionId": row.session_id, "role": row.role, "content": row.content,
             "structuredPayload": json.dumps(row.structured_payload, ensure_ascii=False) if row.structured_payload else None,
             "createdAt": encode(row.created_at)} for row in rows]
-    return {"demand": serialize_demand(demand), "quality": demand.quality or [],
+    return {"demand": serialize_demand(demand, (await change_logs_map(db, [demand.id]))[demand.id]), "quality": demand.quality or [],
             "standard": std.model_dump(mode="json", by_alias=True) if std else None, "messages": messages}

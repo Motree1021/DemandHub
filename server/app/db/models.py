@@ -63,16 +63,19 @@ class Demand(Timestamps, Base):
     __table_args__ = (UniqueConstraint("submitter_id", "client_request_id", name="uq_demand_create"),
                      Index("ix_demand_owner_status", "submitter_id", "status"),
                      Index("ix_demand_type_status", "demand_type_code", "status"),
-                     Index("ix_demand_submitted", "submitted_at"), {"comment": "草稿与正式需求"})
+                     Index("ix_demand_submitted", "submitted_at"),
+                     Index("ix_demand_split_group", "split_group_id"),
+                     Index("ix_demand_split_from", "split_from_id"), {"comment": "草稿与正式需求"})
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     demand_no: Mapped[str | None] = mapped_column(String(40), unique=True)
     title: Mapped[str | None] = mapped_column(String(256))
     demand_type_code: Mapped[str | None] = mapped_column(String(32))
     subtype_code: Mapped[str | None] = mapped_column(String(32))
     content: Mapped[str | None] = mapped_column(Text)
-    urgency: Mapped[str] = mapped_column(String(16), default="NORMAL", server_default="NORMAL")
+    urgency: Mapped[str | None] = mapped_column(String(16))
     expect_delivery_at: Mapped[date | None] = mapped_column(Date)
     ext: Mapped[dict] = mapped_column(JSON, default=dict)
+    elements: Mapped[dict | None] = mapped_column(JSON)
     quality: Mapped[list | None] = mapped_column(JSON)
     field_sources: Mapped[dict] = mapped_column(JSON, default=dict)
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -86,9 +89,25 @@ class Demand(Timestamps, Base):
     submitter_dept: Mapped[str | None] = mapped_column(String(128))
     channel: Mapped[str | None] = mapped_column(String(32))
     session_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    split_from_id: Mapped[int | None] = mapped_column(ForeignKey("demand.id"))
+    split_group_id: Mapped[str | None] = mapped_column(String(36))
     submitted_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
     closed_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
     close_reason: Mapped[str | None] = mapped_column(String(256))
+
+
+class DemandChangeLog(Base):
+    __tablename__ = "demand_change_log"
+    __table_args__ = (Index("ix_change_demand_time", "demand_id", "created_at"),
+                     {"comment": "需求要素变更留痕（E7）"})
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    demand_id: Mapped[int] = mapped_column(ForeignKey("demand.id", name="fk_change_demand"))
+    field_key: Mapped[str] = mapped_column(String(64))
+    old_value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON)
+    new_value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON)
+    source: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
+    changed_by: Mapped[int | None] = mapped_column(ForeignKey("dh_user.id", name="fk_change_user"))
+    created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)"))
 
 
 class DemandNoSeq(Base):

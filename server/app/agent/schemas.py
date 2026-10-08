@@ -39,9 +39,22 @@ class CreateSessionRequest(AgentModel):
     first_message: str = Field(default="", max_length=20000)
 
 
+class TypeSignalVote(AgentModel):
+    """单层判型投票：置信度 + 依据原文片段（PRD §4.3、FR-03）。"""
+    confidence: float = Field(default=0, ge=0, le=1)
+    evidence: str = ""
+
+
+class TypeSignalsOutput(AgentModel):
+    business: TypeSignalVote = Field(default_factory=TypeSignalVote)
+    user: TypeSignalVote = Field(default_factory=TypeSignalVote)
+    function: TypeSignalVote = Field(default_factory=TypeSignalVote)
+
+
 class ModelOutput(BaseModel):
     structured: dict[str, Any] = Field(default_factory=dict)
     elements: list[ElementStatus] = Field(default_factory=list)
+    type_signals: TypeSignalsOutput | None = None
 
 
 class GuideResult(AgentModel):
@@ -60,6 +73,26 @@ class GuideResult(AgentModel):
     quality_complete: bool
     ready: bool
     quick_replies: list[str]
+    type_recognition: dict[str, Any] | None = None
+    granularity_hint: dict[str, str] | None = None
+    impact_hints: list[str] = Field(default_factory=list)
+
+
+def _parse_type_signals(value) -> TypeSignalsOutput | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("typeSignals 必须为对象")
+    votes = {}
+    for layer in ("business", "user", "function"):
+        item = value.get(layer) or {}
+        if not isinstance(item, dict):
+            raise ValueError("typeSignals 层必须为对象")
+        confidence = item.get("confidence", 0)
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ValueError("typeSignals 置信度必须为0~1数值")
+        votes[layer] = TypeSignalVote(confidence=float(confidence), evidence=item.get("evidence") if isinstance(item.get("evidence"), str) else "")
+    return TypeSignalsOutput(**votes)
 
 
 def parse_model_output(raw: str) -> ModelOutput:
@@ -82,4 +115,4 @@ def parse_model_output(raw: str) -> ModelOutput:
         if status not in {"OK", "VAGUE", "MISSING"}:
             status = "VAGUE"
         elements.append(ElementStatus(key=item["key"], status=status, note=item.get("note") if isinstance(item.get("note"), str) else ""))
-    return ModelOutput(structured=value["structured"], elements=elements)
+    return ModelOutput(structured=value["structured"], elements=elements, type_signals=_parse_type_signals(value.get("typeSignals")))

@@ -16,7 +16,7 @@ def override(client, fake):
 
 async def test_success_sse_contract_immediate_query_and_replay(client, auth_headers):
     req = await setup(client, auth_headers)
-    fake = FakeArk({"structured": {"ext": {"techSubtype": "DATA_RPT"}}, "elements": []})
+    fake = FakeArk({"structured": {"elements": {"A": {"techSubtype": "DATA_RPT"}}}, "elements": []})
     override(client, fake)
     response = await client.post("/demandhub-api/agent/guide/chat/stream", headers=auth_headers, json=req)
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -26,7 +26,7 @@ async def test_success_sse_contract_immediate_query_and_replay(client, auth_head
     messages = (await client.get(f'/demandhub-api/agent/session/{req["sessionId"]}/messages', headers=auth_headers)).json()["data"]
     assert len(messages) == 2 and isinstance(messages[-1]["structuredPayload"], str)
     payload = json.loads(messages[-1]["structuredPayload"])
-    assert payload["revision"] == 1 and payload["askedTarget"] == "businessScenario"
+    assert payload["revision"] == 1 and payload["askedTarget"] == "urgency"
     again = await client.post("/demandhub-api/agent/guide/chat", headers=auth_headers, json=req)
     assert again.json()["code"] == 0 and fake.calls == 1
     req["message"] = "换一个消息"

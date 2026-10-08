@@ -8,20 +8,41 @@ from app.standards.schema import Element, Standard
 
 
 def blank(value: Any) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict)):
+        return not value
+    return False
+
+
+def _container(form: dict, path: str) -> tuple[dict, str]:
+    """把 ext.key / elements.区.key 解析到直接父容器与末段 key；顶层路径原样返回。"""
+    parts = path.split(".")
+    source = form
+    for part in parts[:-1]:
+        if not isinstance(source, dict):
+            return {}, parts[-1]
+        source = source.get(part)
+    return (source if isinstance(source, dict) else {}), parts[-1]
 
 
 def get_value(form: dict, path: str):
-    if path.startswith("ext."):
-        return (form.get("ext") or {}).get(path[4:])
-    return form.get(path)
+    source, key = _container(form, path)
+    return source.get(key)
 
 
 def set_value(form: dict, path: str, value: Any):
-    if path.startswith("ext."):
-        form.setdefault("ext", {})[path[4:]] = value
-    else:
-        form[path] = value
+    parts = path.split(".")
+    source = form
+    for part in parts[:-1]:
+        child = source.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            source[part] = child
+        source = child
+    source[parts[-1]] = value
 
 
 def field_error(field: Element, value: Any) -> str | None:
@@ -37,6 +58,10 @@ def field_error(field: Element, value: Any) -> str | None:
         return f"{field.label}取值不在选项内"
     if field.kind == "number" and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 1 or value > 99999):
         return f"{field.label}必须为1至99999的有效数值"
+    if field.kind == "list" and not isinstance(value, list):
+        return f"{field.label}必须为列表"
+    if field.kind == "list" and any(not isinstance(item, (str, int, float)) or isinstance(item, bool) for item in value):
+        return f"{field.label}列表项必须为文本或数值"
     if field.kind == "date":
         try:
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
@@ -50,39 +75,62 @@ def field_error(field: Element, value: Any) -> str | None:
 
 
 def filter_form(standard: Standard | None, form: dict, *, validate: bool = True) -> dict:
-    """白名单过滤不接受身份/编号/状态/质量；允许显式清空。"""
+    """白名单过滤不接受身份/编号/状态/质量；允许显式清空。system 快照要素不接受表单输入。"""
     if not isinstance(form, dict) or ("ext" in form and not isinstance(form["ext"], (dict, type(None)))):
         raise ValueError("表单/ext必须为对象")
+    if "elements" in form and not isinstance(form["elements"], (dict, type(None))):
+        raise ValueError("表单/elements必须为对象")
     if standard is None:
         from app.standards.loader import get
         known = get("TECH")
-        fields = [f for f in known.fields if not f.field_path.startswith("ext.")]
+        fields = [f for f in known.fields if "." not in f.field_path]
     else:
         fields = standard.fields
     result = {}
     for field in fields:
-        source = (form.get("ext") or {}) if field.field_path.startswith("ext.") else form
-        key = field.field_path.split(".")[-1]
+        if field.system:
+            continue
+        source, key = _container(form, field.field_path)
         if key not in source:
             continue
         value = source[key]
         if blank(value):
             value = field.default if field.default is not None else None
+        # 枚举容错：模型/前端可能回传中文选项名（用户点选快捷回复后模型未映射 code），按选项标签归一为 code
+        if field.kind == "enum" and isinstance(value, str) and value not in field.options:
+            value = next((code for code, label in field.options.items() if label == value), value)
         error = field_error(field, value)
-        if validate and error:
-            raise ValueError(error)
+        if error:
+            if validate:
+                raise ValueError(error)
+            # 容错：模型输出的非法值（如期望交付时间写"本周"）丢弃该值，而不是让整轮对话报错
+            value = None
         set_value(result, field.field_path, value)
     return result
 
 
-def schema_errors(standard: Standard | None, form: dict, *, required: bool = False) -> list[str]:
+def business_confirmed(recognition: dict | None) -> bool:
+    """判型结果是否按业务需求门槛生效（PRD §4.3：命中 B 区信号即业务需求；用户确认/改判定稿）。"""
+    if not recognition:
+        return False
+    confirmed = recognition.get("confirmed")
+    if confirmed is not None:
+        return confirmed == "business"
+    return (recognition.get("business") or 0) >= 0.5
+
+
+def schema_errors(standard: Standard | None, form: dict, *, required: bool = False, active_zones: set[str] | None = None) -> list[str]:
+    """required=True 时按必填门槛校验；active_zones 限定必填生效的区（None=全部区生效，用于 B 区判型条件必填）。"""
     if standard is None:
         return ["需求类型未填写"] if required else []
     errors = []
     for field in standard.fields:
+        if field.system:
+            continue
         value = get_value(form, field.field_path)
         if required and field.required and blank(value):
-            errors.append(f"{field.label}未填写")
+            if active_zones is None or field.zone is None or field.zone in active_zones:
+                errors.append(f"{field.label}未填写")
         error = field_error(field, value)
         if error:
             errors.append(error)
@@ -93,6 +141,8 @@ def assess(standard: Standard, form: dict):
     from app.agent.schemas import ElementStatus
     result = []
     for field in standard.elements:
+        if field.system:
+            continue
         value = get_value(form, field.field_path)
         status, note = "OK", ""
         if blank(value):

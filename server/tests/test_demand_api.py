@@ -12,15 +12,37 @@ async def create(client, headers, **fields):
     return response.json()["data"]
 
 
+async def test_draft_can_be_closed(client, auth_headers):
+    # 草稿允许撤销（DRAFT → CLOSED）；已撤销不可重复流转
+    draft = await create(client, auth_headers, title="要撤销的草稿")
+    closed = await client.post(f"{BASE}/demand/{draft['id']}/close", headers=auth_headers, json={"reason": "提报人撤销草稿"})
+    assert closed.json()["code"] == 0, closed.text
+    assert closed.json()["data"]["status"] == "CLOSED" and closed.json()["data"]["closeReason"] == "提报人撤销草稿"
+    again = await client.post(f"{BASE}/demand/{draft['id']}/close", headers=auth_headers, json={"reason": "重复撤销"})
+    assert again.json()["code"] == 1001
+
+
+async def test_blank_string_enums_accepted_as_none(client, auth_headers):
+    # H5 newForm 以空字符串表示空值（urgency: ''）；Literal 字段须在 schema 层归一为 None 而非 422
+    draft = await create(client, auth_headers, urgency="", demandTypeCode="")
+    assert draft["urgency"] is None and draft["demandTypeCode"] is None
+    updated = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, "urgency": ""})
+    assert updated.json()["code"] == 0, updated.text
+    assert updated.json()["data"]["urgency"] is None
+
+
 async def test_incomplete_draft_full_lifecycle(client, auth_headers):
     draft = await create(client, auth_headers)
     assert draft["demandNo"] is None and draft["demandTypeCode"] is None
     response = await client.post(f"{BASE}/demand/{draft['id']}/submit", headers=auth_headers, json={"expectedRevision": 0})
     assert response.json()["code"] == 400
-    response = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, "title": "持仓数据报表", "demandTypeCode": "TECH", "content": "每天晨会前需要自动整理渠道持仓数据，替代手工Excel统计", "ext": {"businessScenario": "每周客户经理查询各渠道持仓并整理晨会材料", "acceptanceCriteria": "连续7天对账误差为0", "valueImpact": "20人每天节省40分钟", "unknown": "filtered"}})
+    response = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, "title": "持仓数据报表", "demandTypeCode": "TECH", "content": "每天晨会前需要自动整理渠道持仓数据，替代手工Excel统计", "urgency": "NORMAL",
+        "elements": {"A": {"techSubtype": "DATA_RPT"},
+                     "C": {"userRole": "客户经理", "userGoal": "晨会前快速查看各渠道持仓汇总", "useScenario": "每周客户经理查询各渠道持仓并整理晨会材料", "painPoint": "手工汇总20多个机构持仓每次近1小时", "unknown": "filtered"},
+                     "D": {"functionDescription": "按机构汇总前一交易日持仓并支持导出", "inputOutput": "输入交易流水输出持仓报表", "acceptanceCriteria": "连续7天对账误差为0"}}})
     assert response.json()["code"] == 0, response.text
     updated = response.json()["data"]
-    assert updated["fieldSources"]["title"] == "user" and "unknown" not in updated["ext"]
+    assert updated["fieldSources"]["title"] == "user" and "unknown" not in (updated["elements"].get("C") or {})
     response = await client.post(f"{BASE}/demand/{draft['id']}/submit", headers=auth_headers, json={"expectedRevision": updated["revision"]})
     assert response.json()["code"] == 0, response.text
     submitted = response.json()["data"]
@@ -47,7 +69,7 @@ async def test_create_replay_and_conflict(client, auth_headers):
 
 
 async def test_revision_owner_and_admin_export(client, auth_headers):
-    draft = await create(client, auth_headers, demandTypeCode="TECH", title="=FORMULA", content="业务描述", ext={"businessScenario": "=SUM(1,2)"})
+    draft = await create(client, auth_headers, demandTypeCode="TECH", title="=FORMULA", content="业务描述", elements={"C": {"useScenario": "=SUM(1,2)"}})
     a = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, "title": "手动修改"})
     assert a.json()["code"] == 0
     old = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, "title": "覆盖"})
@@ -69,7 +91,7 @@ async def test_revision_owner_and_admin_export(client, auth_headers):
 
 async def test_invalid_fields_and_clear_protected(client, auth_headers):
     draft = await create(client, auth_headers, demandTypeCode="TECH", title="手动标题")
-    for fields in [{"expectDeliveryAt": "2026-99-20"}, {"ext": {"techSubtype": "INVALID"}}, {"ext": {"businessScenario": 123}}, {"status": "SUBMITTED"}]:
+    for fields in [{"expectDeliveryAt": "2026-99-20"}, {"elements": {"A": {"techSubtype": "INVALID"}}}, {"elements": {"C": {"useScenario": 123}}}, {"status": "SUBMITTED"}]:
         response = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, **fields})
         assert response.json()["code"] == 400, response.text
     clear = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, "title": "", "fieldSources": {"title": "default"}})

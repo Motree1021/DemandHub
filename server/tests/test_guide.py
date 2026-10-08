@@ -63,20 +63,20 @@ async def message_count(factory):
 
 async def test_first_question_is_saved_target_and_success_commits_before_message(session_factory, user):
     did, sid, revision = await make_draft(session_factory, user)
-    fake = FakeArk({"structured": {"ext": {"techSubtype": "DATA_RPT"}}, "elements": []})
+    fake = FakeArk({"structured": {"elements": {"A": {"techSubtype": "DATA_RPT"}}}, "elements": []})
     req = request(did, sid, revision)
     async with session_factory() as db:
         stream = GuideService(db, user, fake).stream(req)
         assert "event: processing" in await anext(stream)
         first = await anext(stream)
-        assert "event: message" in first and "使用场景" in first
+        assert "event: message" in first and "紧急" in first
         async with session_factory() as observer:
             persisted = await observer.get(Demand, did)
             session = await observer.get(AgentSession, sid)
             saved = (await observer.execute(select(AgentMessage).where(AgentMessage.role == "ASSISTANT"))).scalar_one()
             version = await observer.get(PromptVersion, saved.prompt_version_id)
             assert persisted.revision == revision + 1
-            assert session.asked_target == saved.structured_payload["askedTarget"] == "businessScenario"
+            assert session.asked_target == saved.structured_payload["askedTarget"] == "urgency"
             assert "{{standard_section}}" in version.snapshot["promptTemplate"]
             assert "{{standard_section}}" not in version.snapshot["renderedPrompt"]
             assert len(version.snapshot["injectedStandards"]) == 3
