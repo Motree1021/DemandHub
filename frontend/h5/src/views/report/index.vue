@@ -1,5 +1,5 @@
 <template>
-  <app-layout :title="draftId ? '编辑需求草稿' : '需求提报'" active-tab="report">
+  <app-layout active-tab="report">
     <div class="report-chat">
       <van-notice-bar v-if="draftId" :text="`草稿已保存 · 版本 ${revision}${dirty ? ' · 有待保存修改' : ''}`" left-icon="records-o" />
       <van-notice-bar v-if="error" :text="error" color="#9a3412" background="#fff7ed" wrapable />
@@ -19,9 +19,9 @@
                 <div class="who">需求收集智能体</div>
                 你好，我是科技需求收集智能体，负责帮你把需求提报清楚。你可以直接说一句话诉求、整段粘贴整理好的文字，用输入法语音转文字也行。我会自动拆解成要素表单，缺什么会主动问你。先试试：
                 <div class="entry-opts">
-                  <button type="button" class="opt primary" @click="focusInput">我有一段需求要提报（大段粘贴）</button>
+                  <button type="button" class="opt primary" @click="focusInput">我有一个清晰的需求要提报（大段粘贴&AI检查）</button>
                   <button type="button" class="opt" @click="examplesVisible = !examplesVisible">看一段话示例，照着写</button>
-                  <button type="button" class="opt" @click="sendFuzzy">我只有一个模糊想法</button>
+                  <button type="button" class="opt" @click="sendFuzzy">我只有一个模糊想法（AI会引导你梳理需求）</button>
                 </div>
               </div>
             </div>
@@ -70,6 +70,8 @@ const changeLogs = ref<ChangeLog[]>([]); const formSheetVisible = ref(false)
 const fieldEditVisible = ref(false); const editingField = ref<StandardFieldDefinition | null>(null); const editingValue = ref<unknown>(null)
 const panelRef = ref<InstanceType<typeof AgentChatPanel> | null>(null)
 const lastPayload = ref<GuidePayload | null>(null); const examplesVisible = ref(false)
+// 页面标题经 document.title 传给宿主小程序原生导航栏（H5 内不渲染标题栏，避免双标题）
+watch(draftId, value => { document.title = value ? '编辑需求草稿' : '需求提报' }, { immediate: true })
 // 一段话示例（原型 §示例引导）：覆盖完整型/简洁型两种典型业务需求文本
 const EXAMPLES = [
   { title: '示例一 · 完整型（目标/场景/功能/验收都带）', text: '我们部门每天晨会要统计各渠道销量，现在手工从三个系统导数据拼 Excel，要 40 分钟还容易错。希望做一个自动报表，每天早上 8 点前生成，包含各渠道销量明细和排名，自动推送企微群；验收标准是每个交易日 8:00 前生成、数据与核心系统一致。' },

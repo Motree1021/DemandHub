@@ -1,5 +1,5 @@
 <template>
-  <app-layout title="需求详情" show-back>
+  <app-layout>
     <van-loading v-if="loading" class="page-loading">加载详情…</van-loading>
     <template v-else-if="detail">
       <div class="detail-card header"><div class="number">{{ demand.demandNo || `草稿 #${demand.id}` }}</div><h1>{{ demand.title || '未命名草稿' }}</h1><div class="tags"><van-tag type="primary" plain>{{ statusLabel(demand.status) }}</van-tag><van-tag plain>{{ detail.standard?.name || typeLabel(demand.demandTypeCode) }}</van-tag><van-tag :type="demand.urgency === 'NORMAL' ? 'default' : 'danger'">{{ urgencyLabel(demand.urgency) }}</van-tag></div><div class="meta"><span>期望交付：{{ demand.expectDeliveryAt || '未填写' }}</span><span>{{ demand.status === 'DRAFT' ? '保存' : '提交' }}时间：{{ fmtTime(demand.submittedAt || demand.updatedAt) }}</span><span v-if="demand.submitterName">提报人：{{ demand.submitterName }} {{ demand.submitterDept || '' }}</span></div></div>

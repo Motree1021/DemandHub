@@ -1,5 +1,5 @@
 <template>
-  <app-layout title="需求整理" active-tab="admin">
+  <app-layout active-tab="admin">
     <div class="filter-card">
       <h2>全部需求</h2><p>按类型、状态和提交日期整理，导出使用相同筛选条件。</p>
       <standard-field :field="typeField" :model-value="filters.type" @update:model-value="filters.type = String($event || '')" />

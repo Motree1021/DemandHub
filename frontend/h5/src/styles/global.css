@@ -13,7 +13,6 @@
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 60px rgba(0, 0, 0, 0.45);
   }
   /* Vant 固定定位组件贴视口，需同步约束到壳宽（left+right 约束，避免 transform 与弹层动画冲突） */
-  .van-nav-bar--fixed,
   .van-tabbar--fixed,
   .van-popup--bottom,
   .van-overlay {

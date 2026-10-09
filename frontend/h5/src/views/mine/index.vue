@@ -1,6 +1,6 @@
 <template>
-  <app-layout title="我的需求" active-tab="mine">
-    <van-tabs v-model:active="status" sticky offset-top="46" @change="refresh">
+  <app-layout active-tab="mine">
+    <van-tabs v-model:active="status" sticky offset-top="0" @change="refresh">
       <van-tab title="全部" name="" /><van-tab title="草稿" name="DRAFT" /><van-tab title="已提交" name="SUBMITTED" /><van-tab title="已撤销" name="CLOSED" />
     </van-tabs>
     <van-pull-refresh v-model="refreshing" @refresh="refresh">

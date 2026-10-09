@@ -55,7 +55,7 @@ describe('report 对话页骨架', () => {
   it('新用户进入展示欢迎语与三个入口', async () => {
     const wrapper = createWrapper(); await flushPromises()
     expect(wrapper.text()).toContain('科技需求收集智能体')
-    expect(wrapper.text()).toContain('我有一段需求要提报')
+    expect(wrapper.text()).toContain('我有一个清晰的需求要提报')
     expect(wrapper.text()).toContain('看一段话示例')
     expect(wrapper.text()).toContain('我只有一个模糊想法')
     expect(wrapper.text()).toContain('完整要素表单')
