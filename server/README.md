@@ -63,11 +63,17 @@ Python3.12、uv版本固定；frozen安装只含生产依赖，启动直接运�
 
 生产配置APP_ENV=prod、AUTH_DEV_LOGIN=false；平台注入DEMANDHUB_DATABASE_URL、JWT_SECRET、LLM_API_KEY/ARK_BASE_URL/LLM_CHAT_MODEL、CHANNEL_LS_BASE_URL/CHANNEL_LS_APP_KEY/CHANNEL_LS_APP_SECRET、ADMIN_WECOM_USERIDS。白名单为空则管理员接口全部拒绝。LLM_THINKING及超时/冷却配置按.env.example变量名注入。
 
-上线前验证：生产dev-login404；health；Kong前缀与SSE；H5域名配置；真实endpoint评测与延迟；创金零售测试SSO；iOS/Android真机。当前本地验收不能替代平台上线。
+上线前验证：生产dev-login404；**`CHANNEL_ENTRY_AUTH_MODE=ticket` 且 `/demandhub-api/auth/channel-parameters` 返回404（参数联调门已关闭，禁止把 TEST 的 trusted_parameters 配置复制到生产）**；health；Kong前缀与SSE；H5域名配置；真实endpoint评测与延迟；创金零售测试SSO；iOS/Android真机。当前本地验收不能替代平台上线。
 
 回滚通过发布平台恢复上一镜像tag/digest与H5包；本次无存量迁移。不得自动downgrade生产数据库，数据库回退须单独评估。
 
 发布记录只记commit/tag/digest/产物路径和验证结果，不保存凭据。本轮未发布、未push。
+
+## 2026-10-09 平台 TEST 部署记录（参数联调门已开启）
+
+- 发布平台 TEST 环境后端服务 `demandhub-api`（deploy id 625，镜像 `test-20261008105223-757802bd8d4d` 不变仅重建容器），经 `h5pub backend configure` 合并注入：`APP_ENV=test`、`CHANNEL_ENTRY_AUTH_MODE=trusted_parameters`、`AUTH_DEV_LOGIN=false`（其余键 DEMANDHUB_DATABASE_URL/JWT_SECRET/API_ROOT_PATH 未动）。
+- 目的：创金零售小程序以 `?userid=&X-Auth-Token=&userName=&department=` 直参 URL 跳转联调，`POST /demandhub-api/auth/channel-parameters` 已注册（此前 404，H5 提示"参数联调登录尚未开启"）。已用真实参数端到端验证换 JWT 成功。
+- **风险提醒**：该模式不验证宿主 Token 真伪，URL 即身份，属测试专用。生产上线必须改回 `CHANNEL_ENTRY_AUTH_MODE=ticket`（重新 configure + deploy 同镜像即可），并按上方上线前验证清单确认参数端点 404。
 
 ## 2026-09-30 本地验收记录
 
