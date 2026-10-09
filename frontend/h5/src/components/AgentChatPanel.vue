@@ -36,7 +36,7 @@
       <van-field v-model="input" type="textarea" rows="2" autosize :disabled="sending" placeholder="继续说，或粘贴大段需求…" />
       <van-button type="primary" :loading="sending" :disabled="!input.trim() || unavailable" @click="send">发送</van-button>
     </div>
-    <small class="tip">发送前会保存草稿；你明确手改的内容由服务端保护。最终提交内容以要素表单为准。</small>
+    <small class="tip">发送前会先保存草稿，你亲手动改过的表单要素，AI 不会覆盖。最终提交的内容以要素表单为准。</small>
   </div>
 </template>
 <script setup lang="ts">

@@ -286,7 +286,8 @@ onMounted(initialize)
 onBeforeUnmount(() => clearTimeout(flashTimer))
 </script>
 <style scoped>
-.report-chat { display: flex; flex-direction: column; height: calc(100dvh - 46px - 66px); }
+/* 高度贴合视口：标题栏由小程序原生承载不占 H5 空间；底部仅让出 tabbar 高度（van-tabbar 默认 50px + 安全区），发送面板贴住菜单栏不留白 */
+.report-chat { display: flex; flex-direction: column; height: calc(100dvh - 50px - env(safe-area-inset-bottom)); }
 .page-loading { text-align: center; padding: 48px; }
 .toolbar { display: flex; gap: 10px; padding: 8px 12px; background: #fff; border-bottom: 1px solid #ebedf0; }
 .tool { display: flex; align-items: center; gap: 4px; border: 0; background: none; color: #1f3a8a; font-size: 13px; padding: 6px 4px; }

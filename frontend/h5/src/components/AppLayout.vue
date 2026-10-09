@@ -20,5 +20,6 @@ function onTabChange(name: string | number) { if (name !== props.activeTab) rout
 <style scoped>
 .app-layout { min-height: 100vh; background: #f5f6f8; }
 .app-body { min-height: 100vh; }
-.with-tabbar { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+/* 底部预留与 van-tabbar 实际高度一致（默认 50px + 安全区），避免内容与菜单栏之间留白 */
+.with-tabbar { padding-bottom: calc(50px + env(safe-area-inset-bottom)); }
 </style>
