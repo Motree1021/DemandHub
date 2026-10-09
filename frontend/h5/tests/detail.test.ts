@@ -5,7 +5,7 @@ import { defineComponent } from 'vue'
 import Vant from 'vant'
 import Detail from '@/views/demand/detail.vue'
 import { newForm } from '@/utils/form'
-import type { AgentMessage, DemandEntity } from '@/api/demand'
+import type { AgentMessage, DemandEntity, Standard } from '@/api/demand'
 
 const mocks = vi.hoisted(() => ({ getDemand: vi.fn(), closeDemand: vi.fn(), downloadMarkdown: vi.fn(), push: vi.fn() }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: '1' } }), useRouter: () => ({ push: mocks.push }) }))
@@ -66,7 +66,7 @@ describe('demand detail 提报人补充原话（方案乙）', () => {
     const wrapper = createWrapper(); await flushPromises()
     expect(wrapper.find('.supp-title').exists()).toBe(false)
   })
-  it('E区状态信息与信息完备度默认收起（与AI对话回放同一折叠交互）', async () => {
+  it('E区状态面板不渲染，折叠面板仅保留AI对话回放与信息完备度', async () => {
     mocks.getDemand.mockResolvedValue({
       demand: entity({ changeLogs: [changeLog(9, 'user', 'title', '旧', '新标题')] }),
       quality: [{ key: 'title', code: 'A1', label: '需求标题', status: 'OK', note: '', summary: [] }],
@@ -74,18 +74,57 @@ describe('demand detail 提报人补充原话（方案乙）', () => {
       messages: [message(1, 'USER', '我要做个海报生成智能体，给市场部用', '2026-10-08T09:30:00')]
     })
     const wrapper = createWrapper(); await flushPromises()
-    // 三个折叠面板标题齐备且顺序：回放 → E区 → 信息完备度
+    // E 区面板已隐藏：标题与内容均不出现
     const titles = wrapper.findAll('.van-collapse-item__title').map(node => node.text())
-    expect(titles).toEqual(['AI 对话回放', 'E 区 · 状态信息', '信息完备度'])
-    // 默认收起：collapse 懒渲染，内容均不在 DOM
+    expect(titles).toEqual(['AI 对话回放', '信息完备度'])
+    expect(wrapper.text()).not.toContain('E 区 · 状态信息')
     expect(wrapper.text()).not.toContain('修改次数')
     expect(wrapper.text()).not.toContain('变更留痕')
+    // 信息完备度默认收起：collapse 懒渲染，内容不在 DOM
     expect(wrapper.find('[data-quality]').exists()).toBe(false)
     expect(wrapper.find('.history-row').exists()).toBe(false)
-    // 点 E 区标题展开后内容出现
-    await wrapper.findAll('.van-collapse-item__title')[1].trigger('click')
-    expect(wrapper.text()).toContain('修改次数')
-    expect(wrapper.text()).toContain('变更留痕')
+  })
+})
+
+describe('demand detail 草稿态 A-D 分区占位', () => {
+  beforeEach(() => vi.clearAllMocks())
+  const standard: Standard = {
+    type: 'TECH', name: '科技需求', version: '1', contentHash: 'h',
+    elements: [
+      { key: 'businessGoal', label: '业务目标', kind: 'text', zone: 'B', path: 'elements.B.businessGoal', required: true },
+      { key: 'userRole', label: '目标用户', kind: 'text', zone: 'C', path: 'elements.C.userRole', required: true },
+      { key: 'functionDescription', label: '功能描述', kind: 'text', zone: 'D', path: 'elements.D.functionDescription', required: true }
+    ],
+    commonFields: [], optionalFields: [], subtypeFields: {}, followUpOrder: []
+  }
+  function createWrapper(): VueWrapper {
+    return mount(Detail, { global: { plugins: [Vant], stubs: { AppLayout: { template: '<div><slot /></div>' }, QualityList: QualityListStub } } })
+  }
+  it('草稿：四个分区卡片恒显示，无要素分区显示"暂未提取到信息，待补充。"', async () => {
+    mocks.getDemand.mockResolvedValue({
+      demand: entity({ status: 'DRAFT', elements: { B: { businessGoal: '晨会前自动产出销量' } } }),
+      quality: [], standard, messages: []
+    })
+    const wrapper = createWrapper(); await flushPromises()
+    const text = wrapper.text()
+    expect(text).toContain('A · 公共要素')
+    expect(text).toContain('B · 业务需求（Why）')
+    expect(text).toContain('C · 用户需求（Who/What）')
+    expect(text).toContain('D · 功能需求（How）')
+    expect(text).toContain('晨会前自动产出销量')
+    const placeholders = wrapper.findAll('.zone-empty')
+    expect(placeholders).toHaveLength(3)
+    expect(placeholders[0].text()).toBe('暂未提取到信息，待补充。')
+  })
+  it('已提交：无要素分区仍不显示，不出现占位提示', async () => {
+    mocks.getDemand.mockResolvedValue({
+      demand: entity({ status: 'SUBMITTED', elements: { B: { businessGoal: '晨会前自动产出销量' } } }),
+      quality: [], standard, messages: []
+    })
+    const wrapper = createWrapper(); await flushPromises()
+    expect(wrapper.text()).toContain('B · 业务需求（Why）')
+    expect(wrapper.text()).not.toContain('D · 功能需求（How）')
+    expect(wrapper.findAll('.zone-empty')).toHaveLength(0)
   })
 })
 

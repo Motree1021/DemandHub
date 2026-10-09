@@ -77,13 +77,12 @@ describe('Agent当前草稿、失败和幂等恢复', () => {
     resolveOld(payload(first)); await flushPromises()
     expect(wrapper.emitted('complete')).toBeUndefined()
   })
-  it('1401允许手填且保留可重试请求，跳过不显示质量齐备', async () => {
+  it('1401允许手填且保留可重试请求，重试后恢复结果', async () => {
     mocks.stream.mockRejectedValueOnce(new StreamError(1401, 'AI 暂不可用')).mockImplementationOnce(async request => payload(request))
     const { wrapper } = createWrapper(); await flushPromises(); await send(wrapper)
     expect(wrapper.find('textarea').element).toHaveProperty('value', '同一句需求')
     expect(wrapper.emitted('unavailable')?.[0]).toEqual([true])
     await retry(wrapper)
-    expect(wrapper.text()).toContain('信息仍有质量缺口')
-    expect(wrapper.text()).not.toContain('信息已完善')
+    expect(wrapper.emitted('complete')?.[0][0]).toMatchObject({ qualityComplete: false })
   })
 })

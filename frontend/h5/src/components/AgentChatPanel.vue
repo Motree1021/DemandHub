@@ -1,6 +1,6 @@
 <template>
   <div class="chat-panel">
-    <van-notice-bar v-if="unavailable" text="AI 暂不可用，可直接打开完整表单手填提交" left-icon="warning-o" wrapable />
+    <van-notice-bar v-if="unavailable" text="AI 暂不可用，请稍后再试" left-icon="warning-o" wrapable />
     <div ref="msgBox" class="msg-box">
       <slot v-if="!messages.length && !sending" name="welcome" />
       <div v-for="message in messages" :key="message.id" class="msg-row" :class="message.role.toLowerCase()">
@@ -20,11 +20,6 @@
         <small v-for="hint in latest.impactHints" :key="hint">{{ hint }}</small>
       </div>
       <form-snapshot-card v-if="showSnapshot" :standard="standard" :form="form!" :quality="quality" :business-confirmed="businessConfirmed" :disabled="sending" @edit-field="emit('edit-field', $event)" @edit-type="emit('edit-type')" />
-      <div v-if="latest" class="summary">
-        <span>{{ latest.canSubmit ? '必填与格式已满足，可确认要素后提交' : '请补充必填或修正格式后提交' }}</span>
-        <small v-if="!latest.qualityComplete">信息仍有质量缺口，跳过的内容会标记为待后续补充。</small>
-        <small v-if="latest.guidanceComplete && !latest.qualityComplete">本轮引导已结束，可继续手动完善。</small>
-      </div>
     </div>
     <div v-if="latest?.canSubmit && !sending" class="chips">
       <button class="primary" @click="emit('submit')">确认提交</button>
@@ -36,7 +31,6 @@
       <van-field v-model="input" type="textarea" rows="2" autosize :disabled="sending" placeholder="继续说，或粘贴大段需求…" />
       <van-button type="primary" :loading="sending" :disabled="!input.trim() || unavailable" @click="send">发送</van-button>
     </div>
-    <small class="tip">发送前会先保存草稿，你亲手动改过的表单要素，AI 不会覆盖。最终提交的内容以要素表单为准。</small>
   </div>
 </template>
 <script setup lang="ts">
@@ -135,7 +129,6 @@ async function send() {
 }
 function retry() { if (pending.value && !sending.value) { unavailable.value = false; return run(pending.value) } }
 function quickSend(message: string) { input.value = message; send() }
-function sendMessage(message: string) { input.value = message; return send() }
 watch(unavailable, value => emit('unavailable', value))
 watch(() => [props.demandId, props.sessionId], () => {
   historyGeneration++; runGeneration++; controller?.abort()
@@ -144,7 +137,6 @@ watch(() => [props.demandId, props.sessionId], () => {
 })
 onMounted(() => { restorePending(); loadHistory().catch(() => { /* 首次进入无会话属正常 */ }) })
 onBeforeUnmount(() => { historyGeneration++; runGeneration++; controller?.abort(); clearTimeout(thinkingTimer) })
-defineExpose({ sendMessage })
 </script>
 <style scoped>
 .chat-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -159,15 +151,12 @@ defineExpose({ sendMessage })
 .who { font-size: 12px; color: #999; margin-bottom: 3px; }
 .user .who { color: #bfdbfe; }
 .failure { background: #fff7ed; color: #9a3412; font-size: 12px; padding: 10px; line-height: 1.7; border-radius: 8px; }
-.summary { margin: 8px 12px; padding: 10px; background: #eef3fb; border-radius: 8px; font-size: 12px; line-height: 1.6; }
-.summary small { display: block; margin-top: 4px; color: #666; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 12px; }
 .chips button { border: 1px solid #a7b8d8; color: #1f3a8a; background: #fff; border-radius: 16px; padding: 7px 12px; font-size: 13px; min-height: 36px; }
 .chips button.primary { background: #1f3a8a; color: #fff; border-color: #1f3a8a; }
 .input-row { display: flex; align-items: flex-end; gap: 10px; padding: 8px 12px 4px; background: #fff; border-top: 1px solid #ebedf0; }
 .input-row .van-field { border: 1px solid #eee; border-radius: 8px; }
 .input-row .van-button { flex-shrink: 0; }
-.tip { font-size: 11px; line-height: 1.6; color: #888; padding: 4px 14px max(6px, env(safe-area-inset-bottom)); background: #fff; }
 .hint-banner { background: #fdf6ec; border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-size: 12px; line-height: 1.7; color: #9a3412; display: flex; flex-direction: column; gap: 2px; }
 .hint-banner.impact { background: #eef3fb; color: #1f3a8a; }
 </style>

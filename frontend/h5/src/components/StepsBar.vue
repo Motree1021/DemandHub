@@ -11,7 +11,8 @@ const STEPS = ['表达', '拆解', '追问', '提交'] as const
 <style scoped>
 .steps-bar { display: flex; background: linear-gradient(135deg, #1f3a8a, #2f56b8); padding: 2px 16px 10px; }
 .step { flex: 1; text-align: center; font-size: 11px; color: #93a6d8; position: relative; padding-top: 15px; }
-.step::before { content: ''; position: absolute; top: 3px; left: 50%; transform: translateX(-50%); width: 9px; height: 9px; border-radius: 50%; background: #4b5f96; }
+/* 圆圈（::before）抬到连接线（::after）之上，避免线段两端盖住圆点 */
+.step::before { content: ''; position: absolute; z-index: 1; top: 3px; left: 50%; transform: translateX(-50%); width: 9px; height: 9px; border-radius: 50%; background: #4b5f96; }
 .step + .step::after { content: ''; position: absolute; top: 7px; right: 50%; width: 100%; height: 2px; background: #4b5f96; }
 .step.on { color: #dbeafe; font-weight: 600; }
 .step.on::before { background: #60a5fa; }
