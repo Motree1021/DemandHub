@@ -80,16 +80,12 @@ describe('report 对话页骨架', () => {
     expect(mocks.updateDraft).not.toHaveBeenCalled()
     expect(mocks.createAgentSession).not.toHaveBeenCalled()
   })
-  it('复制示例：写入剪贴板供用户编辑发送，不预写 A8、不代发消息', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  it('示例区：展开显示两个示例，无复制按钮，不触发持久化', async () => {
     const wrapper = createWrapper(); await flushPromises()
     await clickButton(wrapper, '一段话完整需求示例')
-    expect(wrapper.text()).toContain('示例一')
-    await clickButton(wrapper, '复制示例')
-    expect(writeText).toHaveBeenCalledTimes(1)
-    expect(String(writeText.mock.calls[0][0])).toContain('渠道')
-    expect(vi.mocked(showToast)).toHaveBeenCalledWith('已复制，粘贴到输入框编辑后发送')
+    expect(wrapper.text()).toContain('示例一 · 完整型（目标/场景/功能/验收都带）')
+    expect(wrapper.text()).toContain('示例二 · 简洁型（目标/场景/功能/验收精简）')
+    expect(wrapper.text()).not.toContain('复制示例')
     // 不触发草稿保存/会话创建/消息发送
     expect(mocks.createDraft).not.toHaveBeenCalled()
     expect(mocks.updateDraft).not.toHaveBeenCalled()

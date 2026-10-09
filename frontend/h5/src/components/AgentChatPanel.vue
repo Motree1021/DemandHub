@@ -95,6 +95,8 @@ async function run(request: GuideRequest) {
   const generation = ++runGeneration
   pending.value = request; persistPending(); sending.value = true; emit('busy', true)
   failure.value = ''; partialReply.value = ''; thinking.value = false
+  // 发送即刻上提：用户消息与“正在思考”一出现就保证可见，不等首个流式事件
+  scroll()
   controller = new AbortController()
   thinkingTimer = setTimeout(() => { thinking.value = true }, 5000)
   try {
@@ -102,6 +104,7 @@ async function run(request: GuideRequest) {
     if (generation !== runGeneration || props.demandId !== request.demandId || props.sessionId !== request.sessionId) return
     latest.value = payload
     emit('complete', payload)
+    scroll()
     pending.value = null; persistPending(); input.value = ''; unavailable.value = false
     try { await loadHistory() } catch { messages.value.push({ id: Date.now(), sessionId: request.sessionId, role: 'ASSISTANT', content: partialReply.value, structuredPayload: JSON.stringify(payload), createdAt: '' }) }
   } catch (error) {
@@ -130,6 +133,8 @@ async function send() {
 function retry() { if (pending.value && !sending.value) { unavailable.value = false; return run(pending.value) } }
 function quickSend(message: string) { input.value = message; send() }
 watch(unavailable, value => emit('unavailable', value))
+// 消息增多自动上提：始终保持最新一条可见（历史载入、逐字输出、卡片落位另有点位调用 scroll）
+watch(() => messages.value.length, () => scroll())
 watch(() => [props.demandId, props.sessionId], () => {
   historyGeneration++; runGeneration++; controller?.abort()
   messages.value = []; latest.value = null; pending.value = null; input.value = ''; failure.value = ''
@@ -137,6 +142,7 @@ watch(() => [props.demandId, props.sessionId], () => {
 })
 onMounted(() => { restorePending(); loadHistory().catch(() => { /* 首次进入无会话属正常 */ }) })
 onBeforeUnmount(() => { historyGeneration++; runGeneration++; controller?.abort(); clearTimeout(thinkingTimer) })
+defineExpose({ scrollToBottom: scroll })
 </script>
 <style scoped>
 .chat-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }

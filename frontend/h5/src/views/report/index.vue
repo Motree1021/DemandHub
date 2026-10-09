@@ -15,7 +15,7 @@
                 你好，我是需求收集助手，负责帮你把需求提报清楚。你可以直接说一句话诉求、整段粘贴整理好的文字，用输入法语音转文字也行。我会自动拆解成要素表单，缺什么会主动问你。先试试：
                 <div class="entry-opts">
                   <button type="button" class="opt primary" @click="focusInput">我有一个清晰的需求要提报</button>
-                  <button type="button" class="opt" @click="examplesVisible = !examplesVisible">一段话完整需求示例</button>
+                  <button type="button" class="opt" @click="toggleExamples">一段话完整需求示例</button>
                   <button type="button" class="opt" @click="sendFuzzy">我只有一个模糊想法</button>
                 </div>
               </div>
@@ -34,11 +34,10 @@
               <div class="ava ag">AI</div>
               <div class="msg-bubble">
                 <div class="who">需求收集智能体</div>
-                <p class="example-tip">把目标、场景、功能、验收写进一段话，我一次就能拆解完整。点「复制示例」粘贴到输入框，改成你自己的需求后发送：</p>
+                <p class="example-tip">把目标、场景、功能、验收写进一段话，我一次就能拆解完整。参考下面两个示例的写法，在输入框写出你自己的需求后发送：</p>
                 <div v-for="example in EXAMPLES" :key="example.title" class="example-card">
                   <strong>{{ example.title }}</strong>
                   <p>{{ example.text }}</p>
-                  <button type="button" class="opt primary" @click="copyExample(example.text)">复制示例</button>
                 </div>
               </div>
             </div>
@@ -77,7 +76,7 @@ watch(draftId, value => { document.title = value ? '编辑需求草稿' : '需�
 // 一段话示例（原型 §示例引导）：覆盖完整型/简洁型两种典型业务需求文本
 const EXAMPLES = [
   { title: '示例一 · 完整型（目标/场景/功能/验收都带）', text: '我们部门每天晨会要统计各渠道销量，现在手工从三个系统导数据拼 Excel，要 40 分钟还容易错。希望做一个自动报表，每天早上 8 点前生成，包含各渠道销量明细和排名，自动推送企微群；验收标准是每个交易日 8:00 前生成、数据与核心系统一致。' },
-  { title: '示例二 · 简洁型（一句话带核心要素）', text: '客户经理每月要导出客户持仓清单发给客户，希望系统每月末自动生成 Excel 并邮件推送，验收是每月最后一天 18:00 前发出、覆盖全部客户。' },
+  { title: '示例二 · 简洁型（目标/场景/功能/验收精简）', text: '客户经理每月要导出客户持仓清单发给客户，希望系统每月末自动生成 Excel 并邮件推送，验收是每月最后一天 18:00 前发出、覆盖全部客户。' },
 ]
 // FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；业务需求命中后 B 区必填门槛生效（对齐服务端 business_confirmed）
 const typeRecognition = computed(() => form.ext.typeRecognition as TypeRecognition | undefined)
@@ -243,21 +242,13 @@ function onUnavailable(value: boolean) {
   if (!value) return
   showToast('AI 暂不可用，请稍后再试')
 }
-// 欢迎语三入口（对齐原型）：大段粘贴聚焦输入；示例复制后由用户自行编辑发送；模糊想法先给本地固定引导语（不发消息、不建草稿），用户真正发送第一条内容时才创建草稿——只点入口不做第二步操作不会留下空草稿
+// 欢迎语三入口（对齐原型）：大段粘贴聚焦输入；示例展开供参照（不提供复制，避免原样照抄）；模糊想法先给本地固定引导语（不发消息、不建草稿），用户真正发送第一条内容时才创建草稿——只点入口不做第二步操作不会留下空草稿
 function focusInput() {
   nextTick(() => (panelRef.value?.$el as HTMLElement | undefined)?.querySelector('textarea')?.focus())
 }
-// 示例仅作参考：复制到剪贴板，由用户粘贴进输入框自行编辑后发送——不预写 content、不代发消息，避免示例文本占用 A8 原始提报底稿
-async function copyExample(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    showToast('已复制，粘贴到输入框编辑后发送')
-  } catch {
-    showToast('复制失败，请长按示例文本手动复制')
-  }
-  focusInput()
-}
-function sendFuzzy() { fuzzyGuide.value = true; focusInput() }
+function scrollChatToBottom() { panelRef.value?.scrollToBottom?.() }
+function toggleExamples() { examplesVisible.value = !examplesVisible.value; scrollChatToBottom() }
+function sendFuzzy() { fuzzyGuide.value = true; focusInput(); scrollChatToBottom() }
 let initializationGeneration = 0
 async function initialize() {
   const generation = ++initializationGeneration
@@ -303,6 +294,5 @@ onMounted(initialize)
 .example-tip { font-size: 13px; color: #555; line-height: 1.7; margin: 0 0 10px; }
 .example-card { border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
 .example-card strong { font-size: 13px; color: #3730a3; }
-.example-card p { font-size: 13px; line-height: 1.8; color: #444; margin: 8px 0 10px; white-space: pre-wrap; }
-.example-card .opt { width: 100%; text-align: center; }
+.example-card p { font-size: 13px; line-height: 1.8; color: #444; margin: 8px 0 0; white-space: pre-wrap; }
 </style>
