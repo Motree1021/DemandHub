@@ -16,5 +16,17 @@ async def upsert_from_sso(db, profile, channel="CHUANGJIN_LS") -> User:
     return user
 
 
+async def login_existing(db, wecom_userid: str, name: str) -> User:
+    """测试环境手动登录：仅放行用户表中已存在且姓名一致的账号，绝不建档。"""
+    user = (await db.execute(select(User).where(User.wecom_userid == wecom_userid)
+        .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+    if user is None or user.name != name:
+        raise BizError(ErrorCode.TEST_LOGIN_IDENTITY_INVALID)
+    if user.status != "ACTIVE":
+        raise BizError(ErrorCode.CHANNEL_ACCOUNT_UNAVAILABLE)
+    user.last_login_at = now()
+    return user
+
+
 async def get_active(db, user_id: int):
     return (await db.execute(select(User).where(User.id == user_id, User.status == "ACTIVE"))).scalar_one_or_none()

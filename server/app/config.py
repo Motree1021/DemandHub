@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(min_length=32, repr=False)
     jwt_access_ttl_hours: int = Field(default=8, ge=1, le=24)
     auth_dev_login: bool = False
+    auth_test_login: bool = False
     channel_entry_auth_mode: Literal["ticket", "trusted_parameters"] = "ticket"
     admin_wecom_userids: str = ""
     api_root_path: str = "/demandhub-api"
@@ -62,6 +63,8 @@ class Settings(BaseSettings):
                 raise ValueError("参数联调认证仅允许在测试环境启用")
             if self.auth_dev_login:
                 raise ValueError("参数联调认证禁止同时启用 dev-login")
+        if self.auth_test_login and self.app_env != "test":
+            raise ValueError("测试登录仅允许在测试环境启用")
         if self.app_env == "prod":
             if self.auth_dev_login:
                 raise ValueError("生产环境禁止 dev-login")

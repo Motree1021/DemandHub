@@ -14,6 +14,7 @@ os.environ["APP_ENV"] = "test"
 os.environ["DEMANDHUB_DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "mysql://root:local-test-only-password@127.0.0.1:3308/demandhub_test")
 os.environ["JWT_SECRET"] = "unit-test-only-secret-at-least-32-characters"
 os.environ["AUTH_DEV_LOGIN"] = "true"
+os.environ["AUTH_TEST_LOGIN"] = "true"
 os.environ["ADMIN_WECOM_USERIDS"] = "mvp-admin"
 os.environ["CHANNEL_LS_BASE_URL"] = "http://127.0.0.1:8199"
 os.environ["CHANNEL_LS_APP_KEY"] = "demandhub-dev"

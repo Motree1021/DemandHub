@@ -49,7 +49,7 @@ def test_trusted_mode_rejects_dev_login():
 
 @pytest.mark.parametrize("environment", ["test", "dev", "prod"])
 async def test_ticket_mode_has_no_parameters_route(environment):
-    settings = Settings(_env_file=None, app_env=environment, auth_dev_login=False)
+    settings = Settings(_env_file=None, app_env=environment, auth_dev_login=False, auth_test_login=False)
     async with AsyncClient(transport=ASGITransport(app=create_app(settings)), base_url="http://test") as client:
         response = await client.post(PATH, json=PAYLOAD)
         assert response.status_code == 404

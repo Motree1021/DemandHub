@@ -15,6 +15,7 @@ class ErrorCode(Enum):
     CHANNEL_TICKET_INVALID = (1107, "登录票据无效或已过期，请从原渠道重新进入")
     CHANNEL_DISABLED = (1108, "该渠道已停用")
     CHANNEL_ACCOUNT_UNAVAILABLE = (1113, "账号不可用，请联系管理员")
+    TEST_LOGIN_IDENTITY_INVALID = (1114, "姓名或企业账号未录入，请联系管理员开通")
     DEMAND_TYPE_INVALID = (1207, "需求类型无效")
     AI_SERVICE_UNAVAILABLE = (1401, "AI 服务暂不可用")
     AGENT_SESSION_NOT_FOUND = (1402, "会话不存在")

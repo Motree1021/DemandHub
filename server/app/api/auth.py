@@ -10,12 +10,13 @@ from app.core.errors import BizError, ErrorCode
 from app.core.result import ApiModel, ok
 from app.core.security import issue_token
 from app.db.models import User
-from app.services.user_service import upsert_from_sso
+from app.services.user_service import login_existing, upsert_from_sso
 from app.sso.chuangjin_ls import ChuangjinLsSsoClient
 from app.sso.schemas import ChannelSsoConfig, SsoProfile
 
 router = APIRouter(prefix="/auth")
 dev_router = APIRouter(prefix="/auth")
+test_router = APIRouter(prefix="/auth")
 parameters_router = APIRouter(prefix="/auth")
 
 
@@ -97,6 +98,26 @@ class DevLogin(ApiModel):
 async def dev_login(payload: DevLogin, db: AsyncSession = Depends(get_db)):
     async with db.begin():
         user = await upsert_from_sso(db, SsoProfile(user_id=payload.wecom_userid, name=payload.name))
+    return login_response(user)
+
+
+class TestLogin(ApiModel):
+    name: str = Field(min_length=1, max_length=64)
+    wecom_userid: str = Field(min_length=1, max_length=64)
+
+    @field_validator("name", "wecom_userid")
+    @classmethod
+    def trim_identity(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("身份字段不能为空")
+        return value
+
+
+@test_router.post("/test-login")
+async def test_login(payload: TestLogin, db: AsyncSession = Depends(get_db)):
+    async with db.begin():
+        user = await login_existing(db, payload.wecom_userid, payload.name)
     return login_response(user)
 
 

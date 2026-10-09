@@ -39,6 +39,37 @@ async def test_concurrent_first_login_and_disabled_stays_disabled(client, sessio
     assert (await client.get(BASE + "/auth/me", headers=headers)).status_code == 401
 
 
+async def test_test_login_only_admits_existing_users(client, session_factory):
+    # 先经 dev-login 建档一个用户，test-login 只允许"已录入且姓名一致"的账号进入。
+    await client.post(BASE + "/auth/dev-login", json={"name": "测试用户", "wecomUserid": "tester-001"})
+    async with session_factory() as db:
+        async with db.begin():
+            before = len((await db.execute(select(User))).scalars().all())
+    ok_resp = await client.post(BASE + "/auth/test-login", json={"name": "测试用户", "wecomUserid": "tester-001"})
+    assert ok_resp.json()["code"] == 0
+    assert ok_resp.json()["data"]["user"]["userId"] == "tester-001"
+    # 姓名不匹配、账号未录入一律 1114，且不建档。
+    assert (await client.post(BASE + "/auth/test-login", json={"name": "别人", "wecomUserid": "tester-001"})).json()["code"] == 1114
+    assert (await client.post(BASE + "/auth/test-login", json={"name": "测试用户", "wecomUserid": "ghost"})).json()["code"] == 1114
+    async with session_factory() as db:
+        async with db.begin():
+            after = (await db.execute(select(User))).scalars().all()
+            assert len(after) == before
+            (await db.execute(select(User).where(User.wecom_userid == "tester-001"))).scalar_one().status = "DISABLED"
+    assert (await client.post(BASE + "/auth/test-login", json={"name": "测试用户", "wecomUserid": "tester-001"})).json()["code"] == 1113
+
+
+async def test_test_login_route_gated_by_flag_and_env(client):
+    settings = get_settings().model_copy(update={"auth_test_login": False})
+    async with AsyncClient(transport=ASGITransport(app=create_app(settings)), base_url="http://flagoff") as app_off:
+        assert (await app_off.post(BASE + "/auth/test-login", json={"name": "用户", "wecomUserid": "u"})).status_code == 404
+    import pydantic
+    import pytest
+    with pytest.raises(pydantic.ValidationError):
+        get_settings().model_validate({**get_settings().model_dump(), "app_env": "prod", "auth_test_login": True,
+                                       "channel_ls_base_url": "http://x", "channel_ls_app_key": "k", "channel_ls_app_secret": "s"})
+
+
 async def test_expired_token_and_prod_dev_route(client, auth_headers):
     token = jwt.decode(auth_headers["Authorization"][7:], get_settings().jwt_secret, algorithms=["HS256"])
     token["exp"] = datetime.now(timezone.utc) - timedelta(minutes=1)

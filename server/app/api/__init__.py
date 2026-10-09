@@ -8,6 +8,8 @@ def build_router(settings):
         router.include_router(module.router)
     if settings.auth_dev_login:
         router.include_router(auth.dev_router)
+    if settings.auth_test_login:
+        router.include_router(auth.test_router)
     if settings.app_env == "test" and settings.channel_entry_auth_mode == "trusted_parameters":
         router.include_router(auth.parameters_router)
     return router

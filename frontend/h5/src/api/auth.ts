@@ -16,3 +16,7 @@ export function me(): Promise<UserInfo> { return get('/auth/me', undefined, { si
 export function devLogin(name: string, wecomUserid: string): Promise<LoginResponse> {
   return post('/auth/dev-login', { name, wecomUserid })
 }
+/** 测试环境手动登录：仅放行用户表已录入账号，后端不建档。 */
+export function testLogin(name: string, wecomUserid: string): Promise<LoginResponse> {
+  return post('/auth/test-login', { name, wecomUserid })
+}
