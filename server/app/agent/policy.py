@@ -130,7 +130,7 @@ def impact_hints(previous_form: dict, merged: dict) -> list[str]:
         path = f"elements.B.{key}"
         old, new = get_value(previous_form, path), get_value(merged, path)
         if not blank(old) and old != new:
-            return ["B 区业务要素已变更，C/D 区的用户与功能要素可能需要联动调整，请确认。"]
+            return ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
     return []
 
 
@@ -216,7 +216,7 @@ def quick_replies(standard, target):
 def reply_for(standard, target, form):
     if target is None:
         # 必填已齐、引导结束：选填项的 VAGUE/MISSING 状态会留在要素记录里供审核参考，用白话告知而非"质量缺口"术语
-        return "已记下当前需求，请核对表单。必填内容已齐，可以提交。未填或不完整的选填项会在要素表单里标注，不影响提交，后续可补充；或由产品经理调研分析后补充。" if not schema_errors(standard, form, required=True) else "当前引导已结束，请在表单中补齐必填内容后提交。"
+        return "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，以后能补；产品经理调研后也可以补。" if not schema_errors(standard, form, required=True) else "我这边问得差不多了。请在下方表单里把标红星※的必填项补齐后提交。"
     field = next(e for e in standard.elements if e.key == target.key)
     value = str(get_value(form, field.field_path) or "")
     snippet = value[:20] + ("…" if len(value) > 20 else "")

@@ -148,7 +148,7 @@ elements:
   ok_when: 列出业务方、承接方、受益方
   vague_hint: 看不出业务方/承接方/受益方
   ask_missing: 这个需求涉及哪些干系人？比如谁提出的业务方、谁承接建设、谁是受益方。
-  ask_l1: 能列一下相关的部门或角色吗？例如「机构业务部提出，科技中心承接，客户经理受益」。
+  ask_l1: 能列一下相关的部门或角色吗？例如「银行渠道部提出，客服部承接，客户经理和渠道产品经理受益」。
 - key: businessRules
   code: B5
   zone: B
@@ -160,7 +160,7 @@ elements:
 - key: upstreamGoal
   code: B6
   zone: B
-  label: 所属战略目标
+  label: 归属的上级目标
   kind: text
   path: elements.B.upstreamGoal
   ok_when: 填写上游业务目标（如公司战略/部门年度目标），便于拆条溯源；可留空
@@ -242,9 +242,9 @@ elements:
     - 经理
     - 同事
   vague_hint: 看不出谁在用、什么时候用
-  ask_missing: 再说说使用场景吧：谁（角色）、在什么时间/频率、用它来做什么？比如「机构业务部客户经理，每天晨会前查各机构持仓」。
+  ask_missing: 再说说使用场景吧：谁（角色）、在什么时间/频率、用它来做什么？比如「银行渠道部客户经理，每天晨会前查各渠道持仓」。
   ask_l1: 记下了。不过「{snippet}」还有点概括——能再具体说说哪些人、在什么时机用吗？
-  ask_l2: 可以这样写：「作为__（角色），在__（时间/频率），需要__（做什么）」。示例：作为机构业务部专员，每周一早上，需要汇总各渠道销量。
+  ask_l2: 可以这样写：「作为__（角色），在__（时间/频率），需要__（做什么）」。示例：作为渠道业务部专员，每周一早上，需要汇总各渠道销量。
 - key: useFrequency
   code: C4
   zone: C
@@ -287,8 +287,8 @@ elements:
   rule:
     min_len: 10
   vague_hint: 看不出系统要做什么
-  ask_missing: 系统需要做什么？描述一下期望的功能行为，比如「按机构汇总前一交易日持仓并支持导出」。
-  ask_l1: 「{snippet}」还没说清系统的行为——系统收到什么、处理成什么、给谁看？
+  ask_missing: 系统需要做什么？描述一下期望的功能行为，比如「按渠道汇总前一交易日持仓并支持导出」。
+  ask_l1: 「{snippet}」还没说清系统要干什么——它收到什么、处理成什么、给谁看？
   ask_l2: 参考句式：「系统应__（动作）__（对象），并支持__（输出）」。
 - key: inputOutput
   code: D2
@@ -311,12 +311,12 @@ elements:
     - 页面
     - 展示
   vague_hint: 缺输入或产出物说明
-  ask_missing: 这个功能的输入数据和产出物分别是什么？比如「输入交易流水，输出按机构汇总的持仓报表」。
+  ask_missing: 这个功能的输入数据和产出物分别是什么？比如「输入交易流水，输出按渠道汇总的持仓报表」。
   ask_l1: 补充一下数据从哪来、结果以什么形式给出（页面/报表/推送/接口）？
 - key: businessRuleMap
   code: D3
   zone: D
-  label: 业务规则映射
+  label: 功能要遵守的规则
   kind: text
   path: elements.D.businessRuleMap
   ok_when: 功能须遵守的 B 区规则细化；可留空
@@ -340,7 +340,7 @@ elements:
 - key: nfrRequirements
   code: D6
   zone: D
-  label: 非功能需求
+  label: 性能与安全要求
   kind: list
   path: elements.D.nfrRequirements
   ok_when: 性能/安全/可用性要求（秒级、脱敏、通过率）；可留空
@@ -458,7 +458,7 @@ granularity:
     - 战略
     - 体系
     - 平台化
-    hint: 这是一个目标级需求，建议先聚焦其中一条可独立受理的子需求，其余可先保存为草稿。
+    hint: 这是一个业务目标级需求，建议先聚焦其中一条可独立受理的子需求，其余可先保存为草稿。
   too_narrow:
     keywords:
     - 加个字段

@@ -219,6 +219,6 @@ async def test_agent_patch_change_log_marks_agent_source(session_factory, user):
 def test_impact_hint_only_on_filled_b_zone_change():
     previous = {"elements": {"B": {"businessGoal": "把客户回访覆盖率从60%提升到80%"}}}
     changed = {"elements": {"B": {"businessGoal": "把客户回访覆盖率从60%提升到90%"}}}
-    assert impact_hints(previous, changed) == ["B 区业务要素已变更，C/D 区的用户与功能要素可能需要联动调整，请确认。"]
+    assert impact_hints(previous, changed) == ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
     assert impact_hints({}, changed) == []  # 首轮填写不算修改
     assert impact_hints(previous, previous) == []
