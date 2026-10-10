@@ -9,14 +9,58 @@ defineProps<{ step: number }>()
 const STEPS = ['表达', '拆解', '追问', '提交'] as const
 </script>
 <style scoped>
-.steps-bar { display: flex; background: linear-gradient(135deg, #1f3a8a, #2f56b8); padding: 2px 16px 10px; }
-.step { flex: 1; text-align: center; font-size: 11px; color: #93a6d8; position: relative; padding-top: 15px; }
-/* 圆圈（::before）抬到连接线（::after）之上，避免线段两端盖住圆点 */
-.step::before { content: ''; position: absolute; z-index: 1; top: 3px; left: 50%; transform: translateX(-50%); width: 9px; height: 9px; border-radius: 50%; background: #4b5f96; }
-.step + .step::after { content: ''; position: absolute; top: 7px; right: 50%; width: 100%; height: 2px; background: #4b5f96; }
-.step.on { color: #dbeafe; font-weight: 600; }
-.step.on::before { background: #60a5fa; }
-.step.done { color: #86efac; }
-.step.done::before { background: #16a34a; }
-.step.done + .step::after { background: #16a34a; }
+/* 白卡浮起：步骤条从深蓝通栏改为页面灰底上的白色圆角卡片，与原生深色导航栏断开层次 */
+.steps-bar {
+  display: flex;
+  margin: 10px 12px 2px;
+  padding: 12px 8px 10px;
+  background: #fff;
+  border: 1px solid #eef0f5;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(31, 58, 138, 0.06);
+  counter-reset: step;
+}
+.step {
+  flex: 1;
+  position: relative;
+  text-align: center;
+  padding-top: 28px;
+  font-size: 12px;
+  color: #9aa4b5;
+  counter-increment: step;
+}
+/* 连接线（::after）在圆点（::before）之下，避免线段两端盖住圆点 */
+.step + .step::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 11px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background: #e3e8f0;
+}
+.step::before {
+  content: counter(step);
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid #d3dae6;
+  color: #9aa4b5;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  box-sizing: border-box;
+}
+.step.on { color: #1f3a8a; font-weight: 600; }
+.step.on::before { background: #1f3a8a; border-color: #1f3a8a; color: #fff; }
+.step.done { color: #5b6b8c; }
+.step.done::before { content: '✓'; background: #fff; border-color: #1f3a8a; color: #1f3a8a; font-size: 11px; }
+.step.done + .step::after { background: #1f3a8a; }
 </style>
