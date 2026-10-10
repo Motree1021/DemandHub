@@ -53,6 +53,24 @@ def test_negative_java_examples(zone, key, value, note):
     assert item.status != "OK" and note in item.note
 
 
+@pytest.mark.parametrize("value", [
+    "零售有效规模管理系统，新增日均规模曲线，方便零售总部专员查看日均线的变化走势",  # 含歧义词「方便」
+    "希望尽快上线，体验会好很多",  # 含多个歧义词
+    "太短",  # 首句较短：原话非空即合格，长度不充分由场景/痛点等要素补全
+])
+def test_raw_content_any_nonblank_is_ok(value):
+    # A8 原始提报文本是系统原样保留的用户原话底稿：非空即 OK，不做歧义词/长度软判质，
+    # 永不成为追问目标（避免"请补充原始提报文本"这类无法回答、且补充也改不了原话的死循环）
+    item = next(e for e in assess(get("TECH"), tech(content=value)) if e.key == "content")
+    assert item.status == "OK"
+
+
+def test_raw_content_blank_is_missing():
+    # 原话为空仍判 MISSING，由提交必填门槛拦截
+    item = next(e for e in assess(get("TECH"), tech(content="   ")) if e.key == "content")
+    assert item.status == "MISSING"
+
+
 @pytest.mark.parametrize("patch", [{"expectDeliveryAt": "0001-01-01"}, {"expectDeliveryAt": "2026-02-30"}, {"expectDeliveryAt": "2026-9-1"}, {"urgency": "HIGH"}, {"title": "长" * 61}, {"ext": {"quantity": True}}, {"ext": {"quantity": float("nan")}}, {"ext": {"quantity": -1}}, {"ext": {"quantity": "12"}}])
 def test_known_bad_values_cannot_enter_draft(patch):
     with pytest.raises(ValueError):

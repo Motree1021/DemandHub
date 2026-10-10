@@ -110,13 +110,18 @@ def filter_form(standard: Standard | None, form: dict, *, validate: bool = True)
 
 
 def business_confirmed(recognition: dict | None) -> bool:
-    """判型结果是否按业务需求门槛生效（PRD §4.3：命中 B 区信号即业务需求；用户确认/改判定稿）。"""
+    """判型结果是否按业务需求门槛生效（PRD §4.3；2026-10-10 口径：业务占优才激活）。
+    business 须 ≥0.5 且高于 user/function 两档——防止「辅助管理层决策」类收益表述把
+    function 为主的日常功能需求误触发 B 区四件套追问；用户确认/改判定稿优先于置信度。"""
     if not recognition:
         return False
     confirmed = recognition.get("confirmed")
     if confirmed is not None:
         return confirmed == "business"
-    return (recognition.get("business") or 0) >= 0.5
+    business = float(recognition.get("business") or 0)
+    if business < 0.5:
+        return False
+    return business > max(float(recognition.get(layer) or 0) for layer in ("user", "function"))
 
 
 def schema_errors(standard: Standard | None, form: dict, *, required: bool = False, active_zones: set[str] | None = None) -> list[str]:
@@ -149,7 +154,12 @@ def assess(standard: Standard, form: dict):
             status, note = "MISSING", "未填写"
         elif field_error(field, value):
             status, note = "VAGUE", field_error(field, value)
-        elif field.kind == "text":
+        elif field.kind == "text" and field.key != "content":
+            # content（原始提报文本）是系统原样保留的用户原话底稿（FR-02/D6），只在首条消息时
+            # 原样回填、之后不再改写。因此：非空即 OK，不做歧义词/长度/可量化等任何软质量降级，
+            # 也永不作为追问目标——否则原话含「方便/尽快」等正常口语、或首句较短时，会冒出
+            # "请补充原始提报文本"这类用户无法回答、且后续补充也改不了原话的死循环追问。
+            # 信息是否充分由可继续更新的场景/痛点/验收等要素承载；空值仍判 MISSING（提交必填拦截）。
             text = value.strip()
             rule = field.rule
             if any(word in text for word in standard.vague_words):

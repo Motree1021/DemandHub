@@ -6,6 +6,7 @@ from app.agent.policy import (
     merge_structured,
     pick_follow_up,
     process,
+    reply_for,
     user_said_skip,
 )
 from app.agent.schemas import ElementStatus, ModelOutput, parse_model_output
@@ -15,6 +16,19 @@ from app.standards.rules import assess
 
 def form():
     return {"title": "渠道报表", "demandTypeCode": "TECH", "content": "客户经理每天需要查渠道报表和导出", "urgency": "NORMAL", "elements": {"A": {"techSubtype": "DATA_RPT"}}}
+
+
+def acd_filled_form():
+    """A/C/D 共12项必填全部填好、B 区留空的表单。"""
+    return {"title": "渠道报表", "demandTypeCode": "TECH", "content": "客户经理每天需要查渠道报表和导出发送给负责人", "urgency": "NORMAL",
+            "elements": {
+                "A": {"techSubtype": "DATA_RPT"},
+                "C": {"userRole": "机构业务部客户经理", "userGoal": "每天晨会前快速查各机构持仓",
+                      "useScenario": "客户经理每个交易日晨会前查各渠道持仓",
+                      "painPoint": "手工汇总20个机构数据每次近1小时还容易错"},
+                "D": {"functionDescription": "按渠道汇总前一交易日持仓并支持导出",
+                      "inputOutput": "输入交易流水，输出按渠道汇总的持仓报表",
+                      "acceptanceCriteria": "每个交易日8:30前可查且与核心系统对账误差为0"}}}
 
 
 @pytest.mark.parametrize("text,expected", [("跳过", True), ("后续补充。", True), ("请跳过", True), ("我选择后续补充", True), ("不要跳过这个问题", False), ("不是不知道，只是需要确认", False), ("用户说‘跳过’是指旧步骤", False), ("系统需要提供跳过按钮", False), ("不知道是否需要新报表", False)])
@@ -106,7 +120,8 @@ def test_process_relocates_nested_urgency_and_moves_on():
     result = process(output, base, {}, [], None, {}, "很紧急，本周要上线")
     assert result["structured"]["urgency"] == "URGENT"
     assert next(e for e in result["elements"] if e["key"] == "urgency")["status"] == "OK"
-    assert result["askedTarget"] == "businessGoal" and "紧急" not in result["reply"]
+    # 无业务判型：A 区填完后先追问 C 区（目标用户），不追问 B 区业务目标
+    assert result["askedTarget"] == "userRole" and "紧急" not in result["reply"]
 
 
 def test_missing_collection_cannot_fake_quality_complete():
@@ -114,7 +129,65 @@ def test_missing_collection_cannot_fake_quality_complete():
     assert len(result["elements"]) == 27  # 29 要素减去 A4/A5 两个 system 快照
     assert not result["canSubmit"] and not result["ready"]
     assert not result["qualityComplete"] and not result["guidanceComplete"]
-    assert result["askedTarget"] == "businessGoal" and "业务目标" in result["reply"]
+    # 无业务判型：先追问 A/C/D，首个缺口是 C 区目标用户，不追问 B 区
+    assert result["askedTarget"] == "userRole" and "给谁用" in result["reply"]
+
+
+def test_business_recognition_follows_acd_before_zone_b():
+    # 业务需求：A/C/D 未齐时仍先追 A/C/D（userRole），B 区沉底
+    value = form()
+    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
+    result = process(ModelOutput(structured={"ext": {"typeRecognition": {"business": 0.9}}}, elements=[]), value, {}, [], None, {}, "报表")
+    assert result["askedTarget"] == "userRole"
+
+
+def test_business_recognition_asks_zone_b_after_acd_complete():
+    # 业务需求且 A/C/D 已齐：才开始追问 B 区业务目标
+    value = acd_filled_form()
+    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
+    result = process(ModelOutput(structured={"ext": {"typeRecognition": {"business": 0.9}}}, elements=[]), value, {}, [], None, {}, "报表")
+    assert result["askedTarget"] == "businessGoal"
+    assert not result["canSubmit"]
+
+
+def test_non_business_never_asks_zone_b_and_can_submit_with_acd():
+    # 日常功能需求：A/C/D 齐即可提交，即使 B 区为空也不追问、可提交
+    result = process(ModelOutput(structured={}, elements=[]), acd_filled_form(), {}, [], None, {}, "报表")
+    assert result["askedTarget"] is None and result["canSubmit"] is True
+
+
+def test_business_goal_first_ask_anchors_user_goal():
+    # 业务目标首次追问锚定已填的用户目标（B1←C2 上下游），避免用户感觉重复提问
+    value = acd_filled_form()
+    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
+    result = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "报表")
+    assert result["askedTarget"] == "businessGoal"
+    assert "用户侧要完成「每天晨会前快速查各机构持仓」" in result["reply"]
+    assert "部门或团队层面想达成什么业务目标" in result["reply"]
+
+
+def test_stakeholders_first_ask_anchors_user_role_and_drops_beneficiary():
+    # 干系人首次追问锚定已填的目标用户（B4←C1），只问业务方/承接方，不再重复问受益方
+    value = acd_filled_form()
+    value["elements"]["B"] = {
+        "businessGoal": "把客户回访覆盖率从60%提升到80%",
+        "businessBackground": "目前回访靠人工统计，覆盖率仅60%，部门考核压力大",
+        "businessValue": "不做则20个网点回访达标无法跟踪，影响部门考核",
+    }
+    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
+    result = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "报表")
+    assert result["askedTarget"] == "stakeholders"
+    assert "主要使用方「机构业务部客户经理」" in result["reply"]
+    assert "谁是受益方" not in result["reply"]
+
+
+def test_anchor_falls_back_to_normal_ask_when_reference_empty():
+    # 关联要素未填（如追问次数耗尽跳过）时回落普通追问模板，不引用空锚点
+    standard = get("TECH")
+    target = ElementStatus(key="stakeholders", status="MISSING", attempts=0)
+    assert "谁是受益方" in reply_for(standard, target, {"elements": {"C": {}}})
+    anchored = reply_for(standard, target, {"elements": {"C": {"userRole": "机构业务部客户经理"}}})
+    assert "主要使用方" in anchored and "谁是受益方" not in anchored
 
 
 @pytest.mark.parametrize("key", ["intruder", "otherType"])
@@ -146,7 +219,8 @@ def test_model_filled_then_claimed_missing_is_not_reasked(claimed):
     result = process(output, base, {}, [], None, {}, "我要做个海报生成智能体")
     assert result["structured"]["title"] == "海报生成智能体"
     assert next(e for e in result["elements"] if e["key"] == "title").get("status") == "OK"
-    assert result["askedTarget"] == "businessGoal"
+    # 标题补齐后 A 区完整，无业务判型先追 C 区目标用户
+    assert result["askedTarget"] == "userRole"
     assert "请补充需求标题" not in result["reply"]
 
 
@@ -166,7 +240,9 @@ def test_only_actual_asked_target_counts_and_stop_at_two():
     assert next(e for e in first if e.key == "acceptanceCriteria").attempts == 0
     second = inherit_and_count(first, current, "useScenario", False, standard=standard, previous_form=form(), form=form())
     assert next(e for e in second if e.key == "useScenario").attempts == 2
-    assert pick_follow_up(standard, second).key == "businessGoal"
+    # useScenario 追问达上限后跳过它；非业务需求不追 B 区，顺延到 C 区更靠前的目标用户
+    nxt = pick_follow_up(standard, second)
+    assert nxt.key != "useScenario" and nxt.key == "userRole"
 
 
 def test_skip_sticky_only_until_field_has_new_value():

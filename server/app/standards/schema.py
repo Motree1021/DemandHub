@@ -46,6 +46,9 @@ class Element(StandardModel):
     ask_missing: str = ""
     ask_l1: str = ""
     ask_l2: str = ""
+    # 追问锚定：首次追问引用已填的关联要素（如 B1←C2 用户目标、B4←C1 目标用户），避免重复追问
+    anchor_key: str = ""
+    ask_anchor: str = ""
 
     @property
     def field_path(self) -> str:

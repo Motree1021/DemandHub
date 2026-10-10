@@ -92,6 +92,7 @@ class GuideService:
             if demand.revision != req.revision:
                 raise BizError(ErrorCode.CONFLICT)
             if not self.llm.available():
+                logger.warning("AI不可用拦截（密钥未配置或冷却中，冷却至 %.0f）", self.llm.cooldown_until)
                 raise BizError(ErrorCode.AI_SERVICE_UNAVAILABLE)
             history = await session_service.messages(self.db, self.user, req.session_id, limit=20)
             previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT" and m.structured_payload), {})
@@ -135,6 +136,7 @@ class GuideService:
                         result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry)
                     except (ValueError, TypeError, KeyError):
                         self.llm.on_failure()
+                        logger.warning("模型输出连续两次解析失败，按AI不可用处理（首次原始输出前80字符：%s）", str(final.raw)[:80])
                         raise LlmUnavailable from None
                     final = repaired
                 self.llm.on_success()

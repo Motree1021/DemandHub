@@ -5,11 +5,11 @@
       <slot v-if="!messages.length && !sending" name="welcome" />
       <div v-for="message in messages" :key="message.id" class="msg-row" :class="message.role.toLowerCase()">
         <div class="ava" :class="message.role === 'USER' ? 'me' : 'ag'">{{ message.role === 'USER' ? '我' : 'AI' }}</div>
-        <div class="msg-bubble"><div class="who">{{ message.role === 'USER' ? '我' : '需求收集智能体' }}</div>{{ message.content }}</div>
+        <div class="msg-bubble">{{ message.content }}</div>
       </div>
       <template v-if="sending">
-        <div class="msg-row user"><div class="ava me">我</div><div class="msg-bubble"><div class="who">我</div>{{ pending?.message }}</div></div>
-        <div class="msg-row assistant"><div class="ava ag">AI</div><div class="msg-bubble"><div class="who">需求收集智能体</div>{{ partialReply || (thinking ? '正在思考和整理…' : '正在处理…') }}</div></div>
+        <div class="msg-row user"><div class="ava me">我</div><div class="msg-bubble">{{ pending?.message }}</div></div>
+        <div class="msg-row assistant"><div class="ava ag">AI</div><div class="msg-bubble">{{ partialReply || (thinking ? '正在思考和整理…' : '正在处理…') }}</div></div>
       </template>
       <p v-if="failure" class="failure">{{ failure }}<br>原输入与请求已保留。可重试恢复已保存结果。</p>
       <div v-if="latest?.granularityHint" class="hint-banner">
@@ -142,7 +142,7 @@ watch(() => [props.demandId, props.sessionId], () => {
 })
 onMounted(() => { restorePending(); loadHistory().catch(() => { /* 首次进入无会话属正常 */ }) })
 onBeforeUnmount(() => { historyGeneration++; runGeneration++; controller?.abort(); clearTimeout(thinkingTimer) })
-defineExpose({ scrollToBottom: scroll })
+defineExpose({ scrollToBottom: scroll, refreshHistory: loadHistory })
 </script>
 <style scoped>
 .chat-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -154,8 +154,6 @@ defineExpose({ scrollToBottom: scroll })
 .ava.me { background: #c7d2fe; color: #312e81; }
 .msg-bubble { background: #fff; border: 1px solid #e5e9f2; border-radius: 12px; border-top-left-radius: 4px; padding: 10px 12px; font-size: 14px; line-height: 1.7; max-width: 82%; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg-row.user .msg-bubble { color: #fff; background: #1f3a8a; border-color: #1f3a8a; border-radius: 12px; border-top-right-radius: 4px; }
-.who { font-size: 12px; color: #999; margin-bottom: 3px; }
-.user .who { color: #bfdbfe; }
 .failure { background: #fff7ed; color: #9a3412; font-size: 12px; padding: 10px; line-height: 1.7; border-radius: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 12px; }
 .chips button { border: 1px solid #a7b8d8; color: #1f3a8a; background: #fff; border-radius: 16px; padding: 7px 12px; font-size: 13px; min-height: 36px; }

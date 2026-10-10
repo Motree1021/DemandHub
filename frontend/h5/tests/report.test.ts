@@ -27,7 +27,7 @@ const standard: Standard = {
 function demand(id: number, extra: Partial<DemandEntity> = {}): DemandEntity {
   return { id, demandNo: null, title: '', demandTypeCode: 'TECH', content: '', urgency: 'NORMAL', expectDeliveryAt: null, ext: {}, fieldSources: { demandTypeCode: 'default' }, revision: 1, status: 'DRAFT', sessionId: null, submitterId: 7, quality: [], ...extra } as DemandEntity
 }
-const PanelStub = defineComponent({ props: ['demandId', 'sessionId', 'revision', 'prepare', 'quality'], emits: ['complete', 'busy', 'edit-field', 'save-draft'], template: '<div data-panel>{{ demandId }} / {{ sessionId }}<slot name="welcome" /></div>' })
+const PanelStub = defineComponent({ props: ['demandId', 'sessionId', 'revision', 'prepare', 'quality', 'businessConfirmed'], emits: ['complete', 'busy', 'edit-field', 'save-draft'], template: '<div data-panel>{{ demandId }} / {{ sessionId }}<slot name="welcome" /></div>' })
 const ActionSheetStub = defineComponent({ props: ['show', 'actions'], emits: ['update:show', 'select'], template: '<div v-if="show" data-action-sheet><button v-for="(action, index) in actions" :key="action.name" @click="$emit(\'select\', action, index)">{{ action.name }}</button></div>' })
 const FieldEditSheetStub = defineComponent({ props: ['show', 'field', 'value'], emits: ['update:show', 'save'], template: '<div v-if="show" data-field-edit />' })
 const wrappers: VueWrapper[] = []
@@ -108,13 +108,22 @@ describe('report 判型改判（方案A）', () => {
       fieldSources: expect.objectContaining({ 'ext.typeRecognition': 'user' })
     }))
   })
-  it('选「只是日常功能需求」写confirmed=none', async () => {
+  it('选「是用户需求」写confirmed=user', async () => {
     route.query = { draftId: 1 }
-    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { business: 0.9 } } }), quality: [], messages: [] })
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { user: 0.8 } } }), quality: [], messages: [] })
     const wrapper = createWrapper(); await flushPromises()
-    await pickType(wrapper, '只是日常功能需求')
+    await pickType(wrapper, '是用户需求')
     expect(mocks.updateDraft).toHaveBeenCalledWith(1, expect.objectContaining({
-      ext: expect.objectContaining({ typeRecognition: expect.objectContaining({ confirmed: 'none' }) })
+      ext: expect.objectContaining({ typeRecognition: expect.objectContaining({ confirmed: 'user' }) })
+    }))
+  })
+  it('选「是功能需求」写confirmed=function', async () => {
+    route.query = { draftId: 1 }
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { function: 0.8 } } }), quality: [], messages: [] })
+    const wrapper = createWrapper(); await flushPromises()
+    await pickType(wrapper, '是功能需求')
+    expect(mocks.updateDraft).toHaveBeenCalledWith(1, expect.objectContaining({
+      ext: expect.objectContaining({ typeRecognition: expect.objectContaining({ confirmed: 'function' }) })
     }))
   })
   it('选「让AI判断」清除confirmed恢复自动判定', async () => {
@@ -125,6 +134,17 @@ describe('report 判型改判（方案A）', () => {
     expect(mocks.updateDraft).toHaveBeenCalledWith(1, expect.objectContaining({
       ext: expect.objectContaining({ typeRecognition: expect.objectContaining({ confirmed: null }) })
     }))
+  })
+  it('业务不占优不激活B区（function更高）；业务占优才传businessConfirmed=true', async () => {
+    // 真实样本：「辅助管理层决策」把 business 推到 0.7，但 function=0.8 最高，按「业务占优才激活」不激活 B 区
+    route.query = { draftId: 1 }
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { business: 0.7, user: 0.7, function: 0.8 } } }), quality: [], messages: [] })
+    const wrapper = createWrapper(); await flushPromises()
+    expect(wrapper.findComponent(PanelStub).props('businessConfirmed')).toBe(false)
+    // 业务明显占优（≥0.5 且高于 user/function）才激活
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { business: 0.9, user: 0.3, function: 0.4 } } }), quality: [], messages: [] })
+    const dominant = createWrapper(); await flushPromises()
+    expect(dominant.findComponent(PanelStub).props('businessConfirmed')).toBe(true)
   })
 })
 
@@ -191,14 +211,26 @@ describe('report 草稿与会话恢复', () => {
     expect(mocks.updateDraft).toHaveBeenCalledWith(1, expect.objectContaining({ expectedRevision: 1, content: '手动修改后才对话', fieldSources: expect.objectContaining({ content: 'user' }) }))
     expect(context).toEqual({ demandId: 1, sessionId: 11, revision: 2 })
   })
-  it('重放旧revision不覆盖更新后的草稿或未保存手改', async () => {
+  it('重放旧revision不覆盖更新后的草稿；手改立即落库后更低的AI回放也不覆盖', async () => {
     route.query = { draftId: 1 }; mocks.getDemand.mockResolvedValue({ demand: demand(1, { title: '新版本', revision: 5, sessionId: 11 }) })
     const wrapper = createWrapper(); await flushPromises()
     const panel = wrapper.findComponent(PanelStub)
     panel.vm.$emit('complete', { demandId: 1, sessionId: 11, revision: 4, structured: { title: '旧回放' }, fieldSources: {}, elements: [] }); await flushPromises()
     expect(await fieldValue(wrapper, titleField)).toBe('新版本')
-    await editField(wrapper, titleField, '未保存手改')
-    panel.vm.$emit('complete', { demandId: 1, sessionId: 11, revision: 6, structured: { title: '模型' }, fieldSources: {}, elements: [] }); await flushPromises()
-    expect(await fieldValue(wrapper, titleField)).toBe('未保存手改')
+    await editField(wrapper, titleField, '已保存手改')
+    expect(mocks.updateDraft).toHaveBeenCalledWith(1, expect.objectContaining({ title: '已保存手改', notifyChanges: true }))
+    panel.vm.$emit('complete', { demandId: 1, sessionId: 11, revision: 5, structured: { title: '模型' }, fieldSources: {}, elements: [] }); await flushPromises()
+    expect(await fieldValue(wrapper, titleField)).toBe('已保存手改')
+  })
+  it('手改要素立即落库并带播报标志，新建未落库草稿保持本地不触发保存', async () => {
+    route.query = { draftId: 1 }; mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11 }) })
+    const wrapper = createWrapper(); await flushPromises()
+    await editField(wrapper, titleField, '手改标题')
+    // 已有草稿：立即保存并请求服务端往会话写播报消息
+    expect(mocks.updateDraft).toHaveBeenCalledWith(1, expect.objectContaining({ title: '手改标题', notifyChanges: true }))
+    const fresh = createWrapper(); await flushPromises()
+    await editField(fresh, titleField, '新建草稿的手改')
+    // 新建草稿（无会话可播报）：不立即保存，待首次发送对话时统一持久化
+    expect(mocks.createDraft).not.toHaveBeenCalled()
   })
 })

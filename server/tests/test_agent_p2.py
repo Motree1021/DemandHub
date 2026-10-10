@@ -54,7 +54,14 @@ def signals_output(business, user_conf, function):
 
 # ---- FR-01/FR-03 判型 ----
 
-@pytest.mark.parametrize("business,user_conf,function,expected", [(0.9, 0.4, 0.3, True), (0.2, 0.9, 0.5, False), (0.1, 0.3, 0.8, False)])
+@pytest.mark.parametrize("business,user_conf,function,expected", [
+    (0.9, 0.4, 0.3, True),      # 业务明显占优
+    (0.2, 0.9, 0.5, False),     # 低于 0.5 门槛
+    (0.1, 0.3, 0.8, False),
+    # 2026-10-10 口径：业务占优才激活——真实样本「辅助管理层做决策」收益表述推高 business，但 function 最高，不激活 B 区
+    (0.7, 0.7, 0.8, False),
+    (0.8, 0.3, 0.8, False),     # 与其他层并列最高（未严格占优）不激活，边界交改判逃生口
+])
 def test_type_signals_three_layers_recognized(business, user_conf, function, expected):
     result = process(signals_output(business, user_conf, function), FORM, {}, [], None, {}, "部门年度考核指标需要系统支撑")
     recognition = result["typeRecognition"]
@@ -66,6 +73,37 @@ def test_type_signals_three_layers_recognized(business, user_conf, function, exp
 def test_type_signals_malformed_is_contract_error():
     with pytest.raises(ValueError):
         parse_model_output('{"structured":{},"elements":[],"typeSignals":{"business":{"confidence":1.5}}}')
+
+
+# ---- 2026-10-10 判型三档化回归样本（用户拍板的三条真实需求）----
+
+def signals(business, user_conf, function):
+    return parse_model_output(json.dumps({"structured": {}, "elements": [], "typeSignals": {
+        "business": {"confidence": business, "evidence": ""}, "user": {"confidence": user_conf, "evidence": ""}, "function": {"confidence": function, "evidence": ""}}}, ensure_ascii=False))
+
+
+@pytest.mark.parametrize("business,user_conf,function,expect_biz", [
+    # 需求1 语音生成智能体：用户故事句式（作为X…当…时我可以…），user 主句级占优 → 用户需求，不激活 B 区
+    (0.2, 0.85, 0.6, False),
+    # 需求2 日均规模曲线：存量改动主句（新增X计算Y），function 占优 → 功能需求
+    (0.6, 0.6, 0.8, False),
+    # 需求3 系统改名：纯功能语言 → 功能需求
+    (0.1, 0.2, 0.9, False),
+])
+def test_three_real_demand_samples_classification(business, user_conf, function, expect_biz):
+    result = process(signals(business, user_conf, function), FORM, {}, [], None, {}, "样本")
+    recognition = result["typeRecognition"]
+    assert business_confirmed(recognition) is expect_biz
+
+
+def test_confirmed_user_and_function_are_final_and_non_business():
+    # 改判四选一：confirmed=user/function 定稿不被模型覆盖，且按非业务处理（B 区不激活）
+    for confirmed in ("user", "function"):
+        prev = {"ext": {"typeRecognition": {"business": 0.9, "user": 0.3, "function": 0.2, "confirmed": confirmed}}}
+        result = process(signals(0.9, 0.3, 0.2), prev, {}, [], None, {}, "样本")
+        recognition = result["typeRecognition"]
+        assert recognition["confirmed"] == confirmed
+        assert not business_confirmed(recognition)
 
 
 async def test_user_override_type_keeps_confidence_and_marks_user(session_factory, user):

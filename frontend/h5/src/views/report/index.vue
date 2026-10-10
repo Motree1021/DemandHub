@@ -11,7 +11,6 @@
             <div class="msg-row assistant">
               <div class="ava ag">AI</div>
               <div class="msg-bubble">
-                <div class="who">需求收集智能体</div>
                 你好，我是需求收集助手，负责帮你把需求提报清楚。你可以直接说一句话诉求、整段粘贴整理好的文字，用输入法语音转文字也行。我会自动拆解成要素表单，缺什么会主动问你。先试试：
                 <div class="entry-opts">
                   <button type="button" class="opt primary" @click="focusInput">我有一个清晰的需求要提报</button>
@@ -23,17 +22,16 @@
             <template v-if="fuzzyGuide">
               <div class="msg-row user">
                 <div class="ava me">我</div>
-                <div class="msg-bubble"><div class="who">我</div>我只有一个模糊想法，请一步步帮我想清楚</div>
+                <div class="msg-bubble">我只有一个模糊想法，请一步步帮我想清楚</div>
               </div>
               <div class="msg-row assistant">
                 <div class="ava ag">AI</div>
-                <div class="msg-bubble"><div class="who">需求收集智能体</div>没关系，我们一步步想清楚。先用大白话说说：是谁、在什么场景下、遇到了什么麻烦？现在是怎么对付的？哪怕说得零散也没关系，我会接着追问帮你补齐。</div>
+                <div class="msg-bubble">没关系，我们一步步想清楚。先用大白话说说：是谁、在什么场景下、遇到了什么麻烦？现在是怎么对付的？哪怕说得零散也没关系，我会接着追问帮你补齐。</div>
               </div>
             </template>
             <div v-if="examplesVisible" class="msg-row assistant">
               <div class="ava ag">AI</div>
               <div class="msg-bubble">
-                <div class="who">需求收集智能体</div>
                 <p class="example-tip">把目标、场景、功能、验收写进一段话，我一次就能拆解完整。参考下面两个示例的写法，在输入框写出你自己的需求后发送：</p>
                 <div v-for="example in EXAMPLES" :key="example.title" class="example-card">
                   <strong>{{ example.title }}</strong>
@@ -45,7 +43,7 @@
         </agent-chat-panel>
       </template>
       <field-edit-sheet v-model:show="fieldEditVisible" :field="editingField" :value="editingValue" @save="onFieldEditSave" />
-      <van-action-sheet v-model:show="typeSheetVisible" :actions="typeActions" cancel-text="取消" description="归类影响提交要求：业务需求需补齐业务目标/背景/价值/干系人；日常功能需求 12 项必填齐即可提交。" close-on-click-action @select="onTypeSelect" />
+      <van-action-sheet v-model:show="typeSheetVisible" :actions="typeActions" cancel-text="取消" description="归类影响提交要求：业务需求需补齐业务目标/背景/价值/干系人；用户需求与功能需求 12 项必填齐即可提交。" close-on-click-action @select="onTypeSelect" />
     </div>
   </app-layout>
 </template>
@@ -78,13 +76,14 @@ const EXAMPLES = [
   { title: '示例一 · 完整型（目标/场景/功能/验收都带）', text: '我们部门每天晨会要统计各渠道销量，现在手工从三个系统导数据拼 Excel，要 40 分钟还容易错。希望做一个自动报表，每天早上 8 点前生成，包含各渠道销量明细和排名，自动推送企微群；验收标准是每个交易日 8:00 前生成、数据与核心系统一致。' },
   { title: '示例二 · 简洁型（目标/场景/功能/验收精简）', text: '客户经理每月要导出客户持仓清单发给客户，希望系统每月末自动生成 Excel 并邮件推送，验收是每月最后一天 18:00 前发出、覆盖全部客户。' },
 ]
-// FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；业务需求命中后 B 区必填门槛生效（对齐服务端 business_confirmed）
+// FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；业务占优才激活 B 区必填门槛（对齐服务端 business_confirmed）
 const typeRecognition = computed(() => form.ext.typeRecognition as TypeRecognition | undefined)
 const businessConfirmed = computed(() => {
   const recognition = typeRecognition.value
   if (!recognition) return false
   if (recognition.confirmed != null) return recognition.confirmed === 'business'
-  return (recognition.business ?? 0) >= 0.5
+  const business = recognition.business ?? 0
+  return business >= 0.5 && business > Math.max(recognition.user ?? 0, recognition.function ?? 0)
 })
 // 步骤条推导：表达→拆解→追问→提交（方案A：判型由 AI 自动生效，无确认步骤）
 const step = computed(() => {
@@ -154,18 +153,24 @@ function manualEdit(field: StandardFieldDefinition, value: unknown) {
 function openFieldEdit(field: StandardFieldDefinition) {
   editingField.value = field; editingValue.value = readField(form, field); fieldEditVisible.value = true
 }
-function onFieldEditSave(field: StandardFieldDefinition, value: unknown) { manualEdit(field, value) }
+function onFieldEditSave(field: StandardFieldDefinition, value: unknown) {
+  manualEdit(field, value)
+  // 手工改要素立即落库（FR-06）：带播报标志让服务端往会话写一条「已更新…」消息，并刷新聊天；
+  // 未落库的新建草稿无会话可播报，保持本地改动待首次发送时保存
+  if (!draftId.value) return
+  void save(true).then(() => panelRef.value?.refreshHistory?.()).catch(() => { /* 错误已展示 */ })
+}
 function recordError(value: unknown) {
   error.value = value instanceof Error ? value.message : '操作失败，请重试'
   conflict.value = value instanceof ApiError && value.code === 409
 }
-async function save(): Promise<DemandEntity> {
+async function save(notifyChanges = false): Promise<DemandEntity> {
   if (savePromise) return savePromise
   if (!dirty.value && savedDemand) return savedDemand
   saving.value = true; error.value = ''
   savePromise = (async () => {
     let demand: DemandEntity
-    if (draftId.value) demand = await updateDraft(draftId.value, { ...snapshot(), expectedRevision: revision.value })
+    if (draftId.value) demand = await updateDraft(draftId.value, { ...snapshot(), expectedRevision: revision.value, notifyChanges })
     else {
       // 创建失败后的重试保持原ID和原请求内容，避免重复草稿和输入冲突。
       createPayload ||= { ...snapshot(), clientRequestId }
@@ -191,19 +196,20 @@ async function prepareAgent() {
   if (!sessionId.value) sessionId.value = (await createAgentSession(demand.id)).id
   return { demandId: demand.id, sessionId: sessionId.value, revision: revision.value }
 }
-// FR-01 判型改判（方案A：AI 自动判型生效，用户从要素卡「归类」标签打开三选项）：写回 confirmed 并立即保存，下一轮按新门槛追问
+// FR-01 判型改判（方案A：AI 自动判型生效，用户从要素卡「归类」标签打开四选项，2026-10-10 三档化）：写回 confirmed 并立即保存，下一轮按新门槛追问
 const typeSheetVisible = ref(false)
 const typeActions = [
   { name: '是业务需求', subname: '涉及业务目标/考核指标，或需要跨部门协作' },
-  { name: '只是日常功能需求', subname: '某个系统功能的日常改进' },
+  { name: '是用户需求', subname: '某类角色要完成的新任务，解决他的使用困难' },
+  { name: '是功能需求', subname: '对系统已有功能的日常调整或小改进' },
   { name: '让 AI 判断', subname: '按对话内容自动判定，随时可再改' },
 ]
-function onTypeSelect(_action: unknown, index: number) { onConfirmType((['business', 'none', null] as const)[index]) }
-async function onConfirmType(confirmed: 'business' | 'none' | null) {
+function onTypeSelect(_action: unknown, index: number) { onConfirmType((['business', 'user', 'function', null] as const)[index]) }
+async function onConfirmType(confirmed: 'business' | 'user' | 'function' | null) {
   form.ext.typeRecognition = { ...(typeRecognition.value || {}), confirmed }
   form.fieldSources['ext.typeRecognition'] = 'user'
   dirty.value = true
-  showToast(confirmed === 'business' ? '已确认为业务需求，「业务目标/背景/价值」纳入必填' : confirmed === 'none' ? '已记录，按日常功能需求继续' : '已恢复 AI 自动判断')
+  showToast(confirmed === 'business' ? '已确认为业务需求，「业务目标/背景/价值」纳入必填' : confirmed === 'user' ? '已确认为用户需求' : confirmed === 'function' ? '已确认为功能需求' : '已恢复 AI 自动判断')
   try { await save() } catch { /* 错误已展示，判型结果保留在表单中可重试 */ }
 }
 function applyAgent(payload: GuidePayload) {
@@ -228,7 +234,7 @@ async function submit() {
     recordError(value)
     // 逃生口：AI 自动判型（未人工确认）被 B 区必填拦截时，指引改判入口
     if (value instanceof ApiError && value.code === 400 && businessConfirmed.value && typeRecognition.value?.confirmed == null) {
-      error.value += ' 若本需求不涉及业务目标/考核，可点要素表单顶部的「归类」标签改判为日常功能需求。'
+      error.value += ' 若本需求不涉及业务目标/考核，可点开聊天里的「需求要素表单」卡片，点「归类」标签改判为用户需求或功能需求。'
     }
   }
   finally { submitting.value = false }
@@ -285,8 +291,6 @@ onMounted(initialize)
 .ava.me { background: #c7d2fe; color: #312e81; }
 .msg-bubble { background: #fff; border: 1px solid #e5e9f2; border-radius: 12px; border-top-left-radius: 4px; padding: 10px 12px; font-size: 14px; line-height: 1.7; max-width: 88%; overflow-wrap: anywhere; }
 .msg-row.user .msg-bubble { color: #fff; background: #1f3a8a; border-color: #1f3a8a; border-radius: 12px; border-top-right-radius: 4px; }
-.who { font-size: 12px; color: #999; margin-bottom: 3px; }
-.msg-row.user .who { color: #bfdbfe; }
 .entry-opts { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
 .opt { border: 1px solid #a7b8d8; color: #1f3a8a; background: #fff; border-radius: 16px; padding: 9px 14px; font-size: 13px; text-align: left; line-height: 1.5; min-height: 40px; }
 .opt.primary { background: #1f3a8a; border-color: #1f3a8a; color: #fff; }

@@ -37,6 +37,8 @@ class CreateDraft(FormPayload):
 
 class UpdateDraft(FormPayload):
     expected_revision: int = Field(ge=0)
+    # 手工改要素保存后往提报会话写一条播报消息（FR-06）；AI 链路与其余保存不带此标志
+    notify_changes: bool = False
 
 
 class SubmitDraft(ApiModel):

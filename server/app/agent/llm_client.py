@@ -72,8 +72,10 @@ class ArkClient:
                 self.thinking_supported = False
                 logger.warning("模型端点不支持thinking扩展，后续请求省略该参数")
                 return await self.client.chat.completions.create(**self._options(messages, stream=stream))
-        except (APIError, HTTPError):
+        except (APIError, HTTPError) as error:
             self.on_failure()
+            # 1401 对用户是黑盒，必须留痕：记录异常类型/详情/连续失败数，供排查瞬时故障与冷却级联
+            logger.warning("LLM请求失败 consecutive=%s %s: %s", self.consecutive_failures, type(error).__name__, str(error)[:300])
             raise LlmUnavailable from None
 
     async def stream_json(self, messages):
@@ -87,8 +89,9 @@ class ArkClient:
                     for choice in chunk.choices:
                         raw += choice.delta.content or ""
             yield StreamEvent(kind="final", raw=raw, usage=usage)
-        except (APIError, HTTPError):
+        except (APIError, HTTPError) as error:
             self.on_failure()
+            logger.warning("LLM流中断 consecutive=%s %s: %s", self.consecutive_failures, type(error).__name__, str(error)[:300])
             raise LlmUnavailable from None
 
     async def complete_json(self, messages):

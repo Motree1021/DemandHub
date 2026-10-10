@@ -10,6 +10,7 @@ from app.core.deps import is_admin
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
 from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, PromptVersion, now
+from app.services import session_service
 from app.services.demand_no import next_no
 from app.standards import rules
 from app.standards.loader import ensure_snapshot
@@ -159,6 +160,49 @@ def write_change_logs(db, demand: Demand, before: dict, after: dict, sources: di
                                source=sources.get(path) or "user", changed_by=user_id))
 
 
+# 手工改要素播报的兜底标签（标准要素优先取 yaml label，措辞与 tech.yaml 一致）
+TOP_LABELS = {"title": "需求标题", "demandTypeCode": "需求类型", "content": "原始提报文本",
+              "urgency": "紧急程度", "expectDeliveryAt": "期望交付时间"}
+
+
+def _display_value(element, value) -> str:
+    """播报值转可读文字：enum 转标签、列表逐项拼接，其余原样。"""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "、".join(_display_value(element, item) for item in value)
+    if isinstance(value, str) and element is not None and element.kind == "enum":
+        return element.options.get(value, value)
+    return str(value)
+
+
+def _clip_text(text: str, limit: int = 50) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def describe_changes(std: Standard | None, before: dict, after: dict) -> str:
+    """手工改要素的聊天播报（FR-06）：与 write_change_logs 同源 diff，保留位与派生摘要不播报。"""
+    elements = {item.field_path: item for item in std.elements} if std else {}
+    lines = []
+    for path, new in paths(after).items():
+        if path in {f"ext.{key}" for key in RESERVED_EXT_KEYS}:
+            continue
+        old = rules.get_value(before, path)
+        if old == new:
+            continue
+        element = elements.get(path)
+        label = element.label if element else TOP_LABELS.get(path, path.rsplit(".", 1)[-1])
+        old_text, new_text = _clip_text(_display_value(element, old)), _clip_text(_display_value(element, new))
+        if rules.blank(new):
+            lines.append(f"你已手动清空了「{label}」")
+        elif rules.blank(old):
+            lines.append(f"你已手动填写了「{label}」：{new_text}")
+        else:
+            lines.append(f"你已手动更新了「{label}」：由「{old_text}」改为「{new_text}」")
+    return "\n".join(lines)
+
+
 def with_legacy_elements(payload: dict) -> dict:
     """旧六要素 ext 手填兼容（P4 前 H5 表单）：映射为五区 elements，显式 elements 同 key 优先。"""
     legacy = elements_from_legacy(payload.get("ext"))
@@ -204,7 +248,7 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
         merged["ext"]["typeRecognition"] = {**old_recognition, **new_recognition}
     if "elements" in patch:
         merged["elements"] = merge_elements(before["elements"], patch.get("elements"))
-    form, _ = normalized(merged)
+    form, std = normalized(merged)
     sources = dict(demand.field_sources or {})
     requested = payload.get("fieldSources") or {}
     for path, value in paths(patch).items():
@@ -215,6 +259,11 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
             sources[path] = "user"
     assign(demand, form, sources)
     write_change_logs(db, demand, before, form, sources, user.id)
+    if payload.get("notifyChanges") and demand.session_id is not None:
+        # 手工改要素播报（FR-06）：与留痕同源 diff 写入会话，让用户与 AI 都感知本次手改内容
+        text = describe_changes(std, before, form)
+        if text:
+            await session_service.append(db, demand.session_id, "ASSISTANT", text)
     demand.revision += 1
     demand.updated_at = now()
     await db.flush()

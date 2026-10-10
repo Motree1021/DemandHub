@@ -95,3 +95,75 @@ async def test_history_snapshot_survives_live_standard_change(client, auth_heade
     detail = await client.get(f"/demandhub-api/demand/{draft['id']}", headers=auth_headers)
     assert detail.json()["data"]["standard"]["version"] == original.version
     assert detail.json()["data"]["standard"]["name"] == original.name
+
+
+async def _draft_with_session(session_factory, user, key):
+    """建草稿并绑定提报会话（播报目标），返回 (demand_id, session_id)。"""
+    from app.services import session_service
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.create_draft(db, user, {"clientRequestId": key, "demandTypeCode": "TECH",
+                                                      "title": "语音播报优化", "content": "整理需求"})
+            session = await session_service.create(db, user, "SUBMIT_GUIDE", d.id)
+            return d.id, session.id
+
+
+async def _last_message(session_factory, user, session_id):
+    from app.services import session_service
+    async with session_factory() as db:
+        return (await session_service.messages(db, user, session_id))[-1]
+
+
+async def test_manual_change_broadcast_filled_and_updated(session_factory, user):
+    demand_id, session_id = await _draft_with_session(session_factory, user, "broadcast-1")
+    async with session_factory() as db:
+        async with db.begin():
+            await service.update_draft(db, user, demand_id, {"expectedRevision": 0,
+                "elements": {"D": {"acceptanceCriteria": "音色更具特色"}}, "notifyChanges": True})
+    message = await _last_message(session_factory, user, session_id)
+    assert message.role == "ASSISTANT"
+    assert "你已手动填写了「验收标准」：音色更具特色" in message.content
+    async with session_factory() as db:
+        async with db.begin():
+            await service.update_draft(db, user, demand_id, {"expectedRevision": 1,
+                "elements": {"D": {"acceptanceCriteria": "发音准确，多音字、金融术语都能读对"}}, "notifyChanges": True})
+    message = await _last_message(session_factory, user, session_id)
+    assert "你已手动更新了「验收标准」：由「音色更具特色」改为「发音准确，多音字、金融术语都能读对」" in message.content
+
+
+async def test_manual_change_broadcast_enum_label_and_clear(session_factory, user):
+    demand_id, session_id = await _draft_with_session(session_factory, user, "broadcast-2")
+    async with session_factory() as db:
+        async with db.begin():
+            await service.update_draft(db, user, demand_id, {"expectedRevision": 0, "urgency": "NORMAL",
+                "elements": {"C": {"userRole": "客户经理"}}})
+    async with session_factory() as db:
+        async with db.begin():
+            await service.update_draft(db, user, demand_id, {"expectedRevision": 1, "urgency": "URGENT",
+                "elements": {"C": {"userRole": None}}, "notifyChanges": True})
+    message = await _last_message(session_factory, user, session_id)
+    # enum 播报标签而非代码；多项改动逐行列出
+    assert "你已手动更新了「紧急程度」：由「普通」改为「紧急」" in message.content
+    assert "你已手动清空了「目标用户角色」" in message.content
+
+
+async def test_manual_change_broadcast_guards(session_factory, user):
+    from app.db.models import AgentMessage
+    demand_id, session_id = await _draft_with_session(session_factory, user, "broadcast-3")
+    async with session_factory() as db:
+        async with db.begin():
+            await service.update_draft(db, user, demand_id, {"expectedRevision": 0,
+                "elements": {"D": {"acceptanceCriteria": "连续7天对账为0"}}})
+    async with session_factory() as db:
+        assert (await db.execute(select(func.count()).select_from(AgentMessage)
+                                 .where(AgentMessage.session_id == session_id))).scalar_one() == 0
+    # 无会话草稿带播报标志：只保存不播报、不报错
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.create_draft(db, user, {"clientRequestId": "broadcast-4", "demandTypeCode": "TECH",
+                                                      "title": "无会话草稿", "content": "x"})
+            orphan_id = d.id
+    async with session_factory() as db:
+        async with db.begin():
+            await service.update_draft(db, user, orphan_id, {"expectedRevision": 0,
+                "elements": {"D": {"acceptanceCriteria": "y"}}, "notifyChanges": True})

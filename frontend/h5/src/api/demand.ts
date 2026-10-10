@@ -34,7 +34,7 @@ export interface AdminQuery extends DemandQuery { type?: string; from?: string; 
 export const getStandards = (): Promise<StandardSummary[]> => get('/standards')
 export const getStandard = (type: string): Promise<Standard> => get(`/standards/${type}`)
 export const createDraft = (data: DemandForm & { clientRequestId: string }): Promise<DemandEntity> => post('/demand', data)
-export const updateDraft = (id: number, data: DemandForm & { expectedRevision: number }): Promise<DemandEntity> => put(`/demand/${id}`, data)
+export const updateDraft = (id: number, data: DemandForm & { expectedRevision: number; notifyChanges?: boolean }): Promise<DemandEntity> => put(`/demand/${id}`, data)
 export const submitDemand = (id: number, expectedRevision: number): Promise<DemandEntity> => post(`/demand/${id}/submit`, { expectedRevision })
 export const closeDemand = (id: number, reason: string): Promise<DemandEntity> => post(`/demand/${id}/close`, { reason })
 export function nonEmptyQuery<T extends object>(query: T): Partial<T> {

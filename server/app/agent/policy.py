@@ -187,13 +187,31 @@ def compute_missing(standard, form):
     return [e.key for e in standard.elements if e.required and not e.system and blank(get_value(form, e.field_path))]
 
 
-def pick_follow_up(standard, elements):
+def pick_follow_up(standard, elements, *, business: bool = False):
+    """选下一个追问目标。
+
+    追问顺序：A/C/D 必填先问完（用户先补"给谁用、什么场景、痛点、验收"等具体信息），
+    B 区业务要素排最后；且 B 区仅在判型为业务需求（business=True）时才追问，
+    日常功能需求完全不问 B 区（与提交门槛 active_zones 口径一致）。
+    """
     by_key = {element.key: element for element in elements}
+    field_of = {element.key: element for element in standard.elements}
     required = [e.key for e in standard.elements if e.required and not e.system]
-    for key in required + standard.follow_up_order:
-        element = by_key[key]
-        if element.status not in {"OK", "SKIP"} and element.attempts < standard.max_attempts:
-            return element
+
+    def eligible(key):
+        field = field_of.get(key)
+        if field is None:
+            return False
+        if field.zone == "B" and not business:
+            return False
+        element = by_key.get(key)
+        return element is not None and element.status not in {"OK", "SKIP"} and element.attempts < standard.max_attempts
+
+    # 稳定排序：B 区沉底，其余（A/C/D 及 MATL/TRAIN 无分区要素）保持 yaml 原顺序在前
+    ordered = sorted(required, key=lambda k: 1 if field_of[k].zone == "B" else 0)
+    for key in ordered + standard.follow_up_order:
+        if eligible(key):
+            return by_key[key]
     return None
 
 
@@ -213,6 +231,22 @@ def quick_replies(standard, target):
     return result
 
 
+def anchored_template(standard, field, form):
+    """首次追问锚定（2026-10-10 用户拍板）：引用已填的关联要素组织问句——
+    B1 业务目标←C2 用户目标（上下游因果）、B4 干系人←C1 目标用户（受益方可由使用者推导），
+    关联要素为空或未配置时返回空串，回落到普通追问模板。"""
+    if not field.ask_anchor or not field.anchor_key:
+        return ""
+    anchor_field = next((e for e in standard.elements if e.key == field.anchor_key), None)
+    if anchor_field is None:
+        return ""
+    anchor_value = str(get_value(form, anchor_field.field_path) or "").strip()
+    if not anchor_value:
+        return ""
+    snippet = anchor_value[:20] + ("…" if len(anchor_value) > 20 else "")
+    return field.ask_anchor.replace("{anchor}", snippet)
+
+
 def reply_for(standard, target, form):
     if target is None:
         # 必填已齐、引导结束：选填项的 VAGUE/MISSING 状态会留在要素记录里供审核参考，用白话告知而非"质量缺口"术语
@@ -222,10 +256,8 @@ def reply_for(standard, target, form):
     snippet = value[:20] + ("…" if len(value) > 20 else "")
     if target.attempts >= 1:
         template = field.ask_l2 or field.ask_l1 or field.ask_missing
-    elif target.status == "MISSING":
-        template = field.ask_missing or field.ask_l1
     else:
-        template = field.ask_l1 or field.ask_missing
+        template = anchored_template(standard, field, form) or (field.ask_missing or field.ask_l1 if target.status == "MISSING" else field.ask_l1 or field.ask_missing)
     template = template or f"请补充{field.label}，以便把需求记录清楚。"
     reply = template.replace("{snippet}", snippet)
     if target.attempts >= 1 and not field.required:
@@ -245,9 +277,11 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         field_sources["ext.typeRecognition"] = "user" if prev_confirmed is not None else "agent"
     curr = complete_elements(standard, merged, output.elements)
     curr = inherit_and_count(prev, curr, prev_target, user_said_skip(standard, text), standard=standard, previous_form=previous_form, form=merged)
-    target = pick_follow_up(standard, curr)
     # B 区必填按判型门槛生效（PRD §4.3、FR-03 分支）：业务需求全量四区，否则 A/C/D
-    active_zones = {"A", "C", "D"} | ({"B"} if business_confirmed(recognition) else set())
+    is_business = business_confirmed(recognition)
+    # 追问顺序与提交门槛共用同一判型口径：业务需求才追问 B 区，且 A/C/D 先问完再问 B
+    target = pick_follow_up(standard, curr, business=is_business)
+    active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
     can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
     granularity = detect_granularity(standard, merged, text)
     impacts = impact_hints(previous_form, merged)
