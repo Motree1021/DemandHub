@@ -3,13 +3,15 @@
     <div class="card-title" @click="collapsed = !collapsed">
       <van-icon name="description" />
       <span>需求要素表单（实时）</span>
-      <small v-if="collapsed && isLight">轻量提报 {{ lightFilled }}/4</small>
+      <small v-if="collapsed && isLight"><i class="mode-pill">轻量</i>必填 {{ lightFilled }}/4</small>
       <small v-else-if="collapsed">必填 {{ baseFilled }}/{{ baseTotal }}<template v-if="businessConfirmed"> · 业务 {{ bizFilled }}/{{ bizTotal }}</template></small>
       <small v-else>{{ isLight ? '轻量提报 · ' : '' }}点任意一项可直接修改</small>
       <van-icon :name="collapsed ? 'arrow-down' : 'arrow-up'" class="fold" />
     </div>
     <button v-if="recognition && !collapsed" type="button" class="type-row" :disabled="disabled" @click="emit('edit-type')">
       <van-tag :type="typeLabel === '业务需求' ? 'danger' : 'primary'" plain>归类：{{ typeLabel }}</van-tag>
+      <!-- 方案④口径显性化：归类与口径两把尺子并排可见，用户不再困惑「同为功能需求待遇为何不同」 -->
+      <van-tag :type="isLight ? 'warning' : 'default'" plain>{{ isLight ? '轻量提报' : '常规提报' }}</van-tag>
       <small>{{ recognition.confirmed ? '已确认' : 'AI 判断' }} · 点我可改</small>
     </button>
     <template v-if="!collapsed">
@@ -117,6 +119,8 @@ function summary(field: StandardField): string {
 .snapshot-card { background: #fff; border: 1px solid #e5e9f2; border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
 .card-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #1f3a8a; margin-bottom: 6px; cursor: pointer; user-select: none; }
 .card-title small { font-weight: 400; color: #999; margin-left: auto; }
+/* 折叠态轻量口径迷你标签（方案②）：与展开态「轻量提报」warning 标签同琥珀色系，去掉文本拼接的「·」 */
+.card-title small .mode-pill { font-style: normal; display: inline-block; background: #fff7e6; color: #d48806; border-radius: 4px; padding: 0 4px; font-size: 10px; line-height: 14px; margin-right: 4px; vertical-align: 1px; }
 .card-title .fold { color: #94a3b8; }
 .type-row { display: flex; align-items: center; gap: 6px; border: 0; background: none; padding: 2px 0 6px; cursor: pointer; }
 .type-row small { color: #94a3b8; font-size: 11px; }

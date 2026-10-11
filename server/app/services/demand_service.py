@@ -354,6 +354,39 @@ async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
     return demand
 
 
+async def change_mode(db, user, demand_id: int, expected_revision: int, level: str) -> Demand:
+    """提报口径改判（2026-10-11 方案④口径显性化）：轻量↔常规双向，由提报人主动发起。
+
+    - AI 判定保持单向升不降（merge_mode_signal standard 粘性）；用户手动定过（origin=user）后 AI 双向不翻转
+    - 打回补充期间（ext.returnReason 存在）不可切换为轻量：打回按 12 项完整口径补齐，重提清除后恢复自由
+    - 已填的 C/D 数据保留不清除，提交门槛随口径切换（light 只拦 4 项最小集）
+    - 会话注入 kind=modeChange 播报（进对话上下文，AI 后续轮次可见；不参与质量快照回放）
+    """
+    demand = await get_owned_draft(db, user, demand_id, for_update=True)
+    assert_editable(demand, expected_revision)
+    before_level = rules.demand_mode(form_of(demand))
+    if level == before_level:
+        raise BizError(ErrorCode.PARAM_INVALID, "提报口径未变化")
+    if level == "light" and (demand.ext or {}).get("returnReason"):
+        raise BizError(ErrorCode.PARAM_INVALID, "打回补充期间不可切换为轻量，请按打回原因补齐后重新提交")
+    ext = dict(demand.ext or {})
+    old_mode = ext.get("mode")
+    ext["mode"] = {"level": level, "evidence": "提报人手动调整提报口径", "origin": "user"}
+    demand.ext = ext
+    demand.revision += 1
+    demand.updated_at = now()
+    db.add(DemandChangeLog(demand_id=demand.id, field_key="ext.mode", old_value=encode(old_mode),
+                           new_value=encode(ext["mode"]), source="user", changed_by=user.id))
+    if demand.session_id is not None:
+        notice = ("你已把提报口径从「轻量提报」改为「常规提报」。我会按常规需求把该问的信息问齐，之前填的内容都保留。"
+                  if level == "standard" else
+                  "你已把提报口径从「常规提报」改为「轻量提报」。只需确认四项关键信息：标题、你的原话、紧急程度、期望效果，其余不再追问，之前填的内容都保留。")
+        await session_service.append(db, demand.session_id, "ASSISTANT", notice,
+                                     {"kind": "modeChange", "from": before_level, "to": level})
+    await db.flush()
+    return demand
+
+
 async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
     demand = await get_owned_draft(db, user, demand_id, for_update=True)
     if demand.status == "SUBMITTED":

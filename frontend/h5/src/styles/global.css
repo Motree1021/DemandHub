@@ -1,11 +1,17 @@
-/* 全局样式：宽屏（PC/平板浏览器直接打开）下保持手机壳效果，壳内布局不变 */
+/* 全局样式：宽屏（平板/PC 浏览器直接打开）下分级限宽居中，壳内布局不变。
+   断点（2026-10-11 方案二拍板）：手机 <520px 全宽流式；平板竖屏 520~1023 壳 640px；
+   平板横屏/桌面 ≥1024 壳 720px。壳宽集中在 --shell-width（手机档为 100% 即全宽），
+   Vant 固定定位组件统一用 calc(50% - var(--shell-width) / 2) 跟随，组件内部均流式无需改。 */
+:root { --shell-width: 100%; }
+
 @media (min-width: 520px) {
+  :root { --shell-width: 640px; }
   body {
     background: radial-gradient(1200px 700px at 70% -10%, #1e3a8a 0%, #0f172a 55%, #0b1120 100%);
     background-attachment: fixed;
   }
   #app {
-    max-width: 480px;
+    max-width: var(--shell-width);
     margin: 0 auto;
     min-height: 100vh;
     min-height: 100dvh;
@@ -16,8 +22,12 @@
   .van-tabbar--fixed,
   .van-popup--bottom,
   .van-overlay {
-    left: calc(50% - 240px) !important;
-    right: calc(50% - 240px) !important;
+    left: calc(50% - var(--shell-width) / 2) !important;
+    right: calc(50% - var(--shell-width) / 2) !important;
     width: auto !important;
   }
+}
+
+@media (min-width: 1024px) {
+  :root { --shell-width: 720px; }
 }

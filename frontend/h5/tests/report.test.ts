@@ -6,7 +6,7 @@ import Report from '@/views/report/index.vue'
 import { ApiError } from '@/api/request'
 import type { DemandEntity, Standard } from '@/api/demand'
 
-const mocks = vi.hoisted(() => ({ getDemand: vi.fn(), getStandard: vi.fn(), createDraft: vi.fn(), updateDraft: vi.fn(), submitDemand: vi.fn(), createAgentSession: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getDemand: vi.fn(), getStandard: vi.fn(), createDraft: vi.fn(), updateDraft: vi.fn(), submitDemand: vi.fn(), createAgentSession: vi.fn(), changeDemandMode: vi.fn() }))
 vi.mock('@/api/demand', async importOriginal => ({ ...await importOriginal<typeof import('@/api/demand')>(), ...mocks }))
 vi.mock('@/api/agent', () => ({ createAgentSession: mocks.createAgentSession }))
 vi.mock('@/store/user', () => ({ useUserStore: () => ({ userInfo: { id: 7, isAdmin: false } }) }))
@@ -27,12 +27,13 @@ const standard: Standard = {
 function demand(id: number, extra: Partial<DemandEntity> = {}): DemandEntity {
   return { id, demandNo: null, title: '', demandTypeCode: 'TECH', content: '', urgency: 'NORMAL', expectDeliveryAt: null, ext: {}, fieldSources: { demandTypeCode: 'default' }, revision: 1, status: 'DRAFT', sessionId: null, submitterId: 7, quality: [], ...extra } as DemandEntity
 }
-const PanelStub = defineComponent({ props: ['demandId', 'sessionId', 'revision', 'prepare', 'quality', 'businessConfirmed'], emits: ['complete', 'busy', 'edit-field', 'save-draft', 'submit'], template: '<div data-panel>{{ demandId }} / {{ sessionId }}<slot name="welcome" /></div>' })
-const ActionSheetStub = defineComponent({ props: ['show', 'actions'], emits: ['update:show', 'select'], template: '<div v-if="show" data-action-sheet><button v-for="(action, index) in actions" :key="action.name" @click="$emit(\'select\', action, index)">{{ action.name }}</button></div>' })
+const PanelStub = defineComponent({ props: ['demandId', 'sessionId', 'revision', 'prepare', 'quality', 'businessConfirmed'], emits: ['complete', 'busy', 'edit-field', 'save-draft', 'submit', 'edit-type'], template: '<div data-panel>{{ demandId }} / {{ sessionId }}<slot name="welcome" /></div>' })
+// 方案④：van-action-sheet 升级为 van-popup 双组面板（归类+口径）；stub 留在原地不 teleport，便于 findAll 定位按钮
+const PopupStub = defineComponent({ props: ['show'], emits: ['update:show'], template: '<div v-if="show" data-popup><slot /></div>' })
 const FieldEditSheetStub = defineComponent({ props: ['show', 'field', 'value', 'saving'], emits: ['update:show', 'save', 'busy'], template: '<div v-if="show" data-field-edit />' })
 const wrappers: VueWrapper[] = []
 function createWrapper() {
-  const wrapper = mount(Report, { global: { plugins: [Vant], stubs: { AppLayout: { template: '<div><slot /></div>' }, AgentChatPanel: PanelStub, FieldEditSheet: FieldEditSheetStub, 'van-action-sheet': ActionSheetStub } } })
+  const wrapper = mount(Report, { global: { plugins: [Vant], stubs: { AppLayout: { template: '<div><slot /></div>' }, AgentChatPanel: PanelStub, FieldEditSheet: FieldEditSheetStub, 'van-popup': PopupStub } } })
   wrappers.push(wrapper); return wrapper
 }
 async function clickButton(wrapper: VueWrapper, label: string) { await wrapper.findAll('button').find(button => button.text().includes(label))!.trigger('click'); await flushPromises() }
@@ -71,6 +72,8 @@ beforeEach(() => {
   mocks.getStandard.mockResolvedValue(standard)
   mocks.createAgentSession.mockImplementation(async id => ({ id: id + 10, demandId: id, status: 'ACTIVE' }))
   mocks.updateDraft.mockImplementation(async (id, payload) => demand(id, { ...payload, revision: payload.expectedRevision + 1 }))
+  mocks.changeDemandMode.mockImplementation(async (id: number, expectedRevision: number, level: 'light' | 'standard') =>
+    demand(id, { revision: expectedRevision + 1, ext: { mode: { level, origin: 'user' } } }))
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
@@ -113,9 +116,10 @@ describe('report 对话页骨架', () => {
 })
 
 describe('report 判型改判（方案A）', () => {
+  // 面板按钮文本=名称+副说明拼接，按 strong 标题精确定位
   async function pickType(wrapper: VueWrapper, name: string) {
     wrapper.findComponent(PanelStub).vm.$emit('edit-type'); await flushPromises()
-    await wrapper.findAll('[data-action-sheet] button').find(button => button.text() === name)!.trigger('click'); await flushPromises()
+    await wrapper.findAll('[data-type-option]').find(button => button.find('strong').text() === name)!.trigger('click'); await flushPromises()
   }
   it('选「是业务需求」写confirmed=business并保存，来源标user', async () => {
     route.query = { draftId: 1 }
@@ -176,10 +180,59 @@ describe('report 判型改判（方案A）', () => {
     wrapper.findComponent(PanelStub).vm.$emit('edit-field', field); await flushPromises()
     wrapper.findComponent(FieldEditSheetStub).vm.$emit('save', field, '改动'); await flushPromises()
     wrapper.findComponent(PanelStub).vm.$emit('edit-type'); await flushPromises()
-    await wrapper.findAll('[data-action-sheet] button').find(button => button.text() === '是业务需求')!.trigger('click'); await flushPromises()
+    await wrapper.findAll('[data-type-option]').find(button => button.find('strong').text() === '是业务需求')!.trigger('click'); await flushPromises()
     const saved = mocks.updateDraft.mock.calls.at(-1)?.[1] as { ext?: { typeRecognition?: { confirmed?: string } } }
     expect(saved?.ext?.typeRecognition?.confirmed).toBeUndefined()  // 改判未产生新保存，唯一一笔是手改落库在途请求
     expect(mocks.updateDraft).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('report 口径改判（方案④：轻量↔常规双标签与改判弹层）', () => {
+  function openPanel(wrapper: VueWrapper) {
+    wrapper.findComponent(PanelStub).vm.$emit('edit-type')
+  }
+  it('常规草稿点「轻量提报」：调改判接口并按响应刷新表单口径', async () => {
+    route.query = { draftId: 1 }
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { mode: { level: 'standard', evidence: 'AI 判定' } } }), quality: [], messages: [] })
+    const wrapper = createWrapper(); await flushPromises()
+    openPanel(wrapper); await flushPromises()
+    // 面板可见：双组结构 + 当前口径勾选在常规
+    expect(wrapper.text()).toContain('归类与提报口径')
+    expect(wrapper.find('[data-mode-option="standard"]').classes()).toContain('active')
+    expect(wrapper.find('[data-mode-option="light"]').classes()).not.toContain('active')
+    await wrapper.find('[data-mode-option="light"]').trigger('click'); await flushPromises()
+    expect(mocks.changeDemandMode).toHaveBeenCalledWith(1, 1, 'light')
+    // 响应刷新表单：口径已切换、面板关闭
+    expect(wrapper.findComponent(PopupStub).props('show')).toBe(false)
+    expect(wrapper.text()).not.toContain('归类与提报口径')
+  })
+  it('light 草稿面板勾选轻量；点当前口径项直接关面板不调接口', async () => {
+    route.query = { draftId: 1 }
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { mode: { level: 'light', evidence: '换logo' } } }), quality: [], messages: [] })
+    const wrapper = createWrapper(); await flushPromises()
+    openPanel(wrapper); await flushPromises()
+    expect(wrapper.find('[data-mode-option="light"]').classes()).toContain('active')
+    await wrapper.find('[data-mode-option="light"]').trigger('click'); await flushPromises()
+    expect(mocks.changeDemandMode).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(PopupStub).props('show')).toBe(false)
+  })
+  it('打回补充期间轻量口径置灰并提示不可切换', async () => {
+    route.query = { draftId: 1 }
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, status: 'NEED_INFO',
+      ext: { mode: { level: 'standard', evidence: '管理员打回待补充' }, returnReason: { reason: '还缺使用场景', returnedBy: '管理员' } } }), quality: [], messages: [] })
+    const wrapper = createWrapper(); await flushPromises()
+    openPanel(wrapper); await flushPromises()
+    const light = wrapper.find('[data-mode-option="light"]')
+    expect((light.element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.find('.lock-hint').text()).toContain('打回补充期间不可切换为轻量')
+    expect(mocks.changeDemandMode).not.toHaveBeenCalled()
+  })
+  it('新建未保存草稿点口径项：提示先发送需求，不调接口', async () => {
+    const wrapper = createWrapper(); await flushPromises()
+    openPanel(wrapper); await flushPromises()
+    await wrapper.find('[data-mode-option="light"]').trigger('click'); await flushPromises()
+    expect(mocks.changeDemandMode).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(PopupStub).props('show')).toBe(false)
   })
 })
 

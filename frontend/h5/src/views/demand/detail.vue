@@ -2,7 +2,7 @@
   <app-layout>
     <van-loading v-if="loading" class="page-loading">加载详情…</van-loading>
     <template v-else-if="detail">
-      <div class="detail-card header"><div class="number">{{ demand.demandNo || `草稿 #${demand.id}` }}</div><h1>{{ demand.title || '未命名草稿' }}</h1><div class="tags"><van-tag type="primary" plain>{{ statusLabel(demand.status) }}</van-tag><van-tag plain>{{ detail.standard?.name || typeLabel(demand.demandTypeCode) }}</van-tag><van-tag :type="demand.urgency === 'NORMAL' ? 'default' : 'danger'">{{ urgencyLabel(demand.urgency) }}</van-tag></div><div class="meta"><span>期望交付：{{ demand.expectDeliveryAt || '未填写' }}</span><span>{{ demand.status === 'DRAFT' ? '保存' : '提交' }}时间：{{ fmtTime(demand.submittedAt || demand.updatedAt) }}</span><span v-if="demand.submitterName">提报人：{{ demand.submitterName }} {{ demand.submitterDept || '' }}</span></div></div>
+      <div class="detail-card header"><div class="number">{{ demand.demandNo || `草稿 #${demand.id}` }}</div><h1>{{ demand.title || '未命名草稿' }}</h1><div class="tags"><van-tag type="primary" plain>{{ statusLabel(demand.status) }}</van-tag><van-tag plain>{{ detail.standard?.name || typeLabel(demand.demandTypeCode) }}</van-tag><van-tag v-if="isLight" type="success" plain>轻量提报</van-tag><van-tag :type="demand.urgency === 'NORMAL' ? 'default' : 'danger'">{{ urgencyLabel(demand.urgency) }}</van-tag></div><div class="meta"><span>期望交付：{{ demand.expectDeliveryAt || '未填写' }}</span><span>{{ demand.status === 'DRAFT' ? '保存' : '提交' }}时间：{{ fmtTime(demand.submittedAt || demand.updatedAt) }}</span><span v-if="demand.submitterName">提报人：{{ demand.submitterName }} {{ demand.submitterDept || '' }}</span></div></div>
       <div class="detail-card"><h2>需求概述</h2><template v-if="overviewRows.length"><div v-for="row in overviewRows" :key="row.key" class="ov-row"><strong>{{ row.label }}</strong><p>{{ row.text }}</p></div></template><template v-else><p class="content">{{ demand.content || '尚未填写' }}</p><template v-if="userSupplements.length"><h3 class="supp-title">后续对话中的补充原话</h3><div v-for="m in userSupplements" :key="m.id" class="supp-row"><small>{{ fmtTime(m.createdAt) }}</small><p>{{ m.content }}</p></div></template></template></div>
       <div v-if="attachments.length" class="detail-card">
         <h2>附件（{{ attachments.length }}）</h2>
@@ -45,7 +45,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import AppLayout from '@/components/AppLayout.vue'
 import QualityList from '@/components/QualityList.vue'
-import { getDemand, closeDemand, downloadMarkdown, deleteAttachment, downloadAttachment, fmtSize, parseAttachmentPayload, returnDemand, returnReasonOf, type DemandAttachment, type DemandDetail, type StandardField } from '@/api/demand'
+import { getDemand, closeDemand, downloadMarkdown, deleteAttachment, downloadAttachment, fmtSize, parseAttachmentPayload, returnDemand, returnReasonOf, demandModeOf, type DemandAttachment, type DemandDetail, type StandardField } from '@/api/demand'
 import { useUserStore } from '@/store/user'
 import { allFields, fieldPath, readField } from '@/utils/form'
 import { fmtTime, statusLabel, typeLabel, urgencyLabel } from '@/utils/format'
@@ -54,6 +54,8 @@ const detail = ref<DemandDetail | null>(null); const loading = ref(true); const 
 const expanded = ref<string[]>([]); const closeVisible = ref(false); const reason = ref('')
 const returnVisible = ref(false); const returnReasonText = ref('')
 const demand = computed(() => detail.value!.demand)
+// 方案④口径显性化：快速通道需求详情页可见口径，与列表「轻量」角标同源
+const isLight = computed(() => demandModeOf(demand.value) === 'light')
 // 需求概述：AI 每轮基于最新表单重写的四段式摘要（ext.overview），固定顺序固定标签；旧草稿无概述时回退展示 A8 原文与补充原话
 const OVERVIEW_LABELS: Record<string, string> = { problem: '问题/机会', userScene: '用户&场景', goal: '目标&期望效果', acceptance: '验收标准' }
 const overviewRows = computed(() => {

@@ -120,11 +120,16 @@ def merge_type_signals(signals: TypeSignalsOutput | None, form: dict) -> dict | 
 
 def merge_mode_signal(signal: ModeSignalOutput | None, form: dict) -> dict | None:
     """轻重判定票与既有 ext.mode 合并（2026-10-11 方案②）：standard 粘性——判定过 standard 后
-    模型不得再降回 light（防止对话后期把已按常规口径追问的需求悄悄放宽）；未判定时缺省 standard。"""
+    模型不得再降回 light（防止对话后期把已按常规口径追问的需求悄悄放宽）；未判定时缺省 standard。
+    方案④（2026-10-11 口径改判）：origin=user 为提报人手动定过的口径，AI 双向粘性不得翻转。"""
     prev = (form.get("ext") or {}).get("mode") or {}
     prev_level = prev.get("level") if isinstance(prev, dict) else None
     if signal is None:
-        return {"level": prev_level, "evidence": prev.get("evidence", "")} if prev_level else None
+        # 本轮未输出轻重票：原样保留旧判定（含 origin 标记，丢了会导致下一轮 AI 不粘用户口径）
+        return dict(prev) if prev_level else None
+    if prev.get("origin") == "user" and prev_level:
+        # 用户手动改判后 AI 不得翻转（对称归类 confirmed）：想换口径走「归类」弹层的口径项
+        return {"level": prev_level, "evidence": prev.get("evidence", ""), "origin": "user"}
     if prev_level == "standard":
         return {"level": "standard", "evidence": prev.get("evidence") or signal.evidence}
     return {"level": signal.level, "evidence": signal.evidence}
@@ -335,6 +340,9 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     light = (mode or {}).get("level") == "light"
     # light→standard 升级当轮播报：告知口径变化，避免用户困惑为何突然多问几项
     mode_upgraded = prev_mode_level == "light" and not light
+    # 首判轻量当轮播报（方案④口径显性化）：与升级播报对称——此前判轻量一声不吭，
+    # 用户不知道为何只问 4 项、也不知道 AI 做过"小改动"判断；用户手动定过口径（origin=user）不播
+    mode_first_light = prev_mode_level is None and light
     curr = complete_elements(standard, merged, output.elements, light=light)
     curr = inherit_and_count(prev, curr, prev_target, user_said_skip(standard, text), standard=standard, previous_form=previous_form, form=merged)
     # B 区必填按判型门槛生效（PRD §4.3、FR-03 分支）：业务需求全量四区，否则 A/C/D
@@ -352,6 +360,8 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     reply = reply_for(standard, target, merged, light=light, business=is_business)
     if mode_upgraded:
         reply = "这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。" + reply
+    if mode_first_light:
+        reply = "这个需求听起来是个小改动，我按轻量提报帮你登记，只确认几项关键信息就行。" + reply
     if impacts:
         reply = " ".join(impacts) + " " + reply
     if granularity:

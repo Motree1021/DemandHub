@@ -54,6 +54,11 @@ class CloseDemand(ApiModel):
     reason: str = Field(min_length=1, max_length=256)
 
 
+class ChangeMode(ApiModel):
+    expected_revision: int = Field(ge=0)
+    level: Literal["light", "standard"]
+
+
 @router.post("")
 async def create(payload: CreateDraft, user=Depends(get_current_user), db=Depends(get_db)):
     async with db.begin():
@@ -106,6 +111,17 @@ async def close(
 ):
     async with db.begin():
         demand = await service.close(db, user, demand_id, payload.reason)
+        result = await service.serialize_with_logs(db, demand)
+    return ok(result)
+
+
+# 提报口径改判（2026-10-11 方案④）：轻量↔常规双向，打回补充期间禁降轻量；响应同 PUT /demand 便于前端 applyDemand 刷新
+@router.post("/{demand_id}/mode")
+async def change_mode(
+    demand_id: int, payload: ChangeMode, user=Depends(get_current_user), db=Depends(get_db)
+):
+    async with db.begin():
+        demand = await service.change_mode(db, user, demand_id, payload.expected_revision, payload.level)
         result = await service.serialize_with_logs(db, demand)
     return ok(result)
 

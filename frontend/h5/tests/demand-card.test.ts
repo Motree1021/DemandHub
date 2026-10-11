@@ -47,3 +47,12 @@ describe('DemandCard 待补充（方案③ NEED_INFO）', () => {
     expect(wrapper.emitted('close')).toEqual([[7]])
   })
 })
+
+describe('DemandCard 轻量角标（方案④口径显性化）', () => {
+  it('light 需求显示「轻量」角标，standard 不显示', () => {
+    const light = mount(DemandCard, { props: { demand: entity({ ext: { mode: { level: 'light', evidence: '换logo' } } }) }, global: { plugins: [Vant] } })
+    expect(light.find('.badge.light').text()).toBe('轻量')
+    const standard = mount(DemandCard, { props: { demand: entity() }, global: { plugins: [Vant] } })
+    expect(standard.find('.badge.light').exists()).toBe(false)
+  })
+})

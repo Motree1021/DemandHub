@@ -79,6 +79,21 @@ describe('FormSnapshotCard 要素实时卡', () => {
     await wrapper.find('.type-row').trigger('click')
     expect(wrapper.emitted('edit-type')).toBeTruthy()
   })
+  it('归类行双标签（方案④）：口径与归类并排，light 显示「轻量提报」、standard 显示「常规提报」', () => {
+    const mountWithMode = (mode: unknown) => {
+      const value = form()
+      value.ext = { typeRecognition: { business: 0.9 }, ...(mode ? { mode } : {}) }
+      return mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: value, businessConfirmed: true }, global: { stubs } })
+    }
+    const light = mountWithMode({ level: 'light', evidence: '换logo' })
+    expect(light.text()).toContain('归类：业务需求')
+    expect(light.text()).toContain('轻量提报')
+    expect(light.text()).not.toContain('常规提报')
+    const standardMode = mountWithMode({ level: 'standard', evidence: '新功能' })
+    expect(standardMode.text()).toContain('常规提报')
+    // 无 mode（未判定）缺省常规口径，双标签仍完整
+    expect(mountWithMode(undefined).text()).toContain('常规提报')
+  })
   it('用户确认过的归类显示"已确认"；未产生判型数据不渲染标签', () => {
     const value = form()
     value.ext = { typeRecognition: { business: 0.2, confirmed: 'function' as const } }
@@ -149,20 +164,21 @@ describe('FormSnapshotCard 要素实时卡', () => {
     expect(wrapper.find('.zone').exists()).toBe(false)
     expect(wrapper.find('.type-row').exists()).toBe(false)
   })
-  // 微需求快速通道（方案②）：AI 判 mode=light 时折叠态显示「轻量提报 X/4」，红星只标最小集
+  // 微需求快速通道（方案②）：AI 判 mode=light 时折叠态显示「轻量提报·必填 X/4」，红星只标最小集
   const lightStandard: Standard = {
     ...standard,
     elements: [...standard.elements,
       { key: 'content', label: '原始提报文本', kind: 'text', zone: 'A', required: true },
       { key: 'acceptanceCriteria', label: '期望效果', kind: 'text', zone: 'D', path: 'elements.D.acceptanceCriteria', required: true }]
   }
-  it('light 模式：折叠态显示「轻量提报 X/4」，不显示常规必填进度', () => {
+  it('light 模式：折叠态显示「轻量」迷你标签+「必填 X/4」，不显示常规必填进度', () => {
     const value = form()
     value.ext = { mode: { level: 'light' } }
     const wrapper = mount(FormSnapshotCard, { props: { standard: lightStandard, form: value }, global: { stubs } })
-    // 标题+紧急程度已填，原话/期望效果待补 → 2/4；常规「必填 X/Y」进度不再显示
-    expect(wrapper.text()).toContain('轻量提报 2/4')
-    expect(wrapper.text()).not.toContain('必填 ')
+    // 标题+紧急程度已填，原话/期望效果待补 → 2/4；口径用色块标签展示而非文本「·」拼接
+    expect(wrapper.find('.mode-pill').text()).toBe('轻量')
+    expect(wrapper.text()).toContain('必填 2/4')
+    expect(wrapper.text()).not.toContain('必填 3/7')
   })
   it('light 模式：红星只标最小集4项（标题/原话/紧急程度/期望效果），C/D其余与B区不标星', () => {
     const value = form()

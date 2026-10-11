@@ -43,7 +43,28 @@
         </agent-chat-panel>
       </template>
       <field-edit-sheet v-model:show="fieldEditVisible" :field="editingField" :value="editingValue" :saving="saving" @save="onFieldEditSave" @busy="showToast('正在保存，请稍候再确认修改')" />
-      <van-action-sheet v-model:show="typeSheetVisible" :actions="typeActions" cancel-text="取消" description="归类影响提交要求：业务需求需补齐业务目标/背景/价值/干系人；用户需求与功能需求 12 项必填齐即可提交。" close-on-click-action @select="onTypeSelect" />
+      <!-- 归类与提报口径改判面板（方案④）：归类决定要不要填业务目标等信息，口径决定填 4 项还是 12 项，两把尺子并排可改 -->
+      <van-popup v-model:show="typeSheetVisible" round position="bottom" teleport="body" class="type-panel">
+        <h3 class="panel-title">归类与提报口径</h3>
+        <p class="panel-desc">归类决定要不要填业务目标等信息；提报口径决定要填几项：轻量只确认 4 项关键信息，常规按 12 项完整口径问齐。改动会立即保存。</p>
+        <h4 class="group-title">需求归类</h4>
+        <button v-for="(action, index) in typeActions" :key="action.name" type="button" class="panel-opt" data-type-option
+                :class="{ active: activeTypeIndex === index }" @click="onTypeSelect(action, index)">
+          <span><strong>{{ action.name }}</strong><small>{{ action.subname }}</small></span>
+          <van-icon v-if="activeTypeIndex === index" name="success" color="#1f3a8a" />
+        </button>
+        <h4 class="group-title">提报口径</h4>
+        <button type="button" class="panel-opt" data-mode-option="light" :class="{ active: isLight }" :disabled="modeLocked" @click="onConfirmMode('light')">
+          <span><strong>轻量提报</strong><small>小改动（如换图片、调文字），只确认 4 项关键信息</small></span>
+          <van-icon v-if="isLight" name="success" color="#1f3a8a" />
+        </button>
+        <button type="button" class="panel-opt" data-mode-option="standard" :class="{ active: !isLight }" @click="onConfirmMode('standard')">
+          <span><strong>常规提报</strong><small>按 12 项完整口径填写，信息更全便于评估</small></span>
+          <van-icon v-if="!isLight" name="success" color="#1f3a8a" />
+        </button>
+        <p v-if="modeLocked" class="lock-hint">打回补充期间不可切换为轻量，请按打回原因补齐后重新提交。</p>
+        <van-button block plain type="primary" class="panel-done" @click="typeSheetVisible = false">完成</van-button>
+      </van-popup>
     </div>
   </app-layout>
 </template>
@@ -55,7 +76,7 @@ import AppLayout from '@/components/AppLayout.vue'
 import StepsBar from '@/components/StepsBar.vue'
 import AgentChatPanel from '@/components/AgentChatPanel.vue'
 import FieldEditSheet from '@/components/FieldEditSheet.vue'
-import { createDraft, updateDraft, submitDemand, getDemand, getStandard, isReplayablePayload, demandModeOf, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
+import { createDraft, updateDraft, submitDemand, getDemand, getStandard, isReplayablePayload, demandModeOf, returnReasonOf, changeDemandMode, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
 import { createAgentSession, type GuidePayload } from '@/api/agent'
 import { ApiError } from '@/api/request'
 import { useUserStore } from '@/store/user'
@@ -202,6 +223,7 @@ async function prepareAgent() {
   return { demandId: demand.id, sessionId: sessionId.value, revision: revision.value }
 }
 // FR-01 判型改判（方案A：AI 自动判型生效，用户从要素卡「归类」标签打开四选项，2026-10-10 三档化）：写回 confirmed 并立即保存，下一轮按新门槛追问
+// 方案④（2026-10-11）：弹层升级为「归类+提报口径」双组面板——口径（轻量↔常规）与归类是两把独立的尺子，并排可见可改
 const typeSheetVisible = ref(false)
 const typeActions = [
   { name: '是业务需求', subname: '涉及业务目标/考核指标，或需要跨部门协作' },
@@ -209,9 +231,26 @@ const typeActions = [
   { name: '是功能需求', subname: '对系统已有功能的日常调整或小改进' },
   { name: '让 AI 判断', subname: '按对话内容自动判定，随时可再改' },
 ]
+// 面板选中态：confirmed 有值勾对应档，null 勾「让 AI 判断」
+const activeTypeIndex = computed(() => {
+  const confirmed = typeRecognition.value?.confirmed
+  return confirmed == null ? 3 : ['business', 'user', 'function'].indexOf(confirmed)
+})
 function onTypeSelect(_action: unknown, index: number) {
   if (locked.value) { showToast('正在保存，请稍候再改归类'); typeSheetVisible.value = false; return }
   onConfirmType((['business', 'user', 'function', null] as const)[index])
+}
+// 打回补充期间锁定轻量口径：打回按 12 项完整口径补齐，重提清除 returnReason 后恢复自由
+const modeLocked = computed(() => savedDemand?.status === 'NEED_INFO' && !!returnReasonOf(form))
+async function onConfirmMode(level: 'light' | 'standard') {
+  if (locked.value) { typeSheetVisible.value = false; return }
+  if (level === (isLight.value ? 'light' : 'standard')) { typeSheetVisible.value = false; return } // 同口径点按视为关闭面板
+  if (!draftId.value) { showToast('先发送需求内容，再调整提报口径'); typeSheetVisible.value = false; return }
+  try {
+    applyDemand(await changeDemandMode(draftId.value, revision.value, level))
+    typeSheetVisible.value = false
+    showToast(level === 'light' ? '已切换为轻量提报，只需确认四项关键信息' : '已切换为常规提报，我会按完整口径问齐')
+  } catch (value) { recordError(value) }
 }
 async function onConfirmType(confirmed: 'business' | 'user' | 'function' | null) {
   form.ext.typeRecognition = { ...(typeRecognition.value || {}), confirmed }
@@ -320,4 +359,17 @@ onMounted(initialize)
 .example-card { border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
 .example-card strong { font-size: 13px; color: #3730a3; }
 .example-card p { font-size: 13px; line-height: 1.8; color: #444; margin: 8px 0 0; white-space: pre-wrap; }
+/* 归类与提报口径面板（方案④）：底部圆角弹层，宽屏下限宽居中与页面壳一致 */
+.type-panel { width: 100%; max-width: var(--shell-width); left: 50%; transform: translateX(-50%); padding: 18px 16px calc(16px + env(safe-area-inset-bottom)); box-sizing: border-box; }
+.panel-title { font-size: 16px; color: #1f2937; text-align: center; margin: 0 0 6px; }
+.panel-desc { font-size: 12px; color: #6b7280; line-height: 1.6; margin: 0; }
+.group-title { font-size: 13px; color: #1f3a8a; margin: 14px 2px 2px; }
+.panel-opt { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; margin-top: 8px; text-align: left; }
+.panel-opt.active { border-color: #1f3a8a; background: #eef2ff; }
+.panel-opt > span { display: flex; flex-direction: column; gap: 2px; }
+.panel-opt strong { font-size: 14px; color: #1f2937; }
+.panel-opt small { font-size: 12px; color: #6b7280; line-height: 1.5; }
+.panel-opt:disabled { opacity: 0.5; }
+.lock-hint { font-size: 12px; color: #b45309; background: #fef3c7; border-radius: 8px; padding: 8px 10px; margin: 10px 0 0; line-height: 1.6; }
+.panel-done { margin-top: 14px; }
 </style>

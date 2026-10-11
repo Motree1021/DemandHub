@@ -34,6 +34,21 @@ function changeLog(id: number, source: string, fieldKey: string, oldValue: strin
   return { id, demandId: 1, fieldKey, oldValue, newValue, source, operatorId: 1, operatorName: '管理员', createdAt: '2026-10-08T09:32:00' }
 }
 
+describe('demand detail 口径标签（方案④口径显性化）', () => {
+  beforeEach(() => vi.clearAllMocks())
+  function createWrapper(): VueWrapper {
+    return mount(Detail, { global: { plugins: [Vant], stubs: { AppLayout: { template: '<div><slot /></div>' }, QualityList: QualityListStub } } })
+  }
+  it('light 需求头部显示「轻量提报」标签，standard 不显示', async () => {
+    mocks.getDemand.mockResolvedValue({ demand: entity({ ext: { mode: { level: 'light', evidence: '换logo' } } }), quality: [], messages: [] })
+    const wrapper = createWrapper(); await flushPromises()
+    expect(wrapper.text()).toContain('轻量提报')
+    mocks.getDemand.mockResolvedValue({ demand: entity(), quality: [], messages: [] })
+    const plain = createWrapper(); await flushPromises()
+    expect(plain.text()).not.toContain('轻量提报')
+  })
+})
+
 describe('demand detail 提报人补充原话（方案乙）', () => {
   beforeEach(() => vi.clearAllMocks())
   function createWrapper(): VueWrapper {

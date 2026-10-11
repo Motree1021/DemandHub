@@ -5,6 +5,8 @@
       <div class="badges">
         <span class="badge status">{{ statusLabel(demand.status) }}</span>
         <span class="badge type">{{ typeLabel(demand.demandTypeCode) }}</span>
+        <!-- 方案④口径显性化：快速通道需求列表可见，管理员一眼区分哪些走了轻量提报 -->
+        <span v-if="isLight" class="badge light">轻量</span>
         <span v-if="demand.urgency === 'URGENT' || demand.urgency === 'CRITICAL'" class="badge urgent">{{ urgencyLabel(demand.urgency) }}</span>
       </div>
       <h3>{{ demand.title || '未命名草稿' }}</h3>
@@ -23,11 +25,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DemandEntity } from '@/api/demand'
+import { demandModeOf } from '@/api/demand'
 import { statusLabel, typeLabel, urgencyLabel, fmtTime } from '@/utils/format'
 const props = defineProps<{ demand: DemandEntity; showSubmitter?: boolean; continuable?: boolean }>()
 const emit = defineEmits<{ (event: 'open', id: number): void; (event: 'continue', id: number): void; (event: 'close', id: number): void }>()
 // 状态图标与配色（st-* 类）一一对应：草稿=编辑中、已提交=已通过、待补充=被打回、已撤销=已回收
 const statusIcon = computed(() => ({ DRAFT: 'edit', SUBMITTED: 'passed', NEED_INFO: 'replay', CLOSED: 'revoke' } as Record<string, string>)[props.demand.status || ''] || 'records')
+const isLight = computed(() => demandModeOf(props.demand) === 'light')
 </script>
 <style scoped>
 /* 状态配色：草稿=橙黄、已提交=品牌蓝、待补充=橙红（被打回需行动）、已撤销=灰；左边框/图标/徽章/圆点共用一组变量 */
@@ -46,6 +50,9 @@ const statusIcon = computed(() => ({ DRAFT: 'edit', SUBMITTED: 'passed', NEED_IN
 .badge.status { background: var(--accent-tint); color: var(--accent-deep); font-weight: 600; }
 .badge.type { background: #f3f4f6; color: #6b7280; }
 .badge.urgent { background: #fee2e2; color: #b91c1c; font-weight: 600; }
+.badge.light { background: #ecfdf5; color: #047857; font-weight: 600; }
+/* 已撤销卡片整体灰色化：轻量徽章随状态色降调 */
+.demand-card.st-closed .badge.light { background: var(--accent-tint); color: var(--accent-deep); }
 .demand-card h3 { font-size: 15px; font-weight: 600; margin: 8px 0 6px; color: #1f2937; overflow-wrap: anywhere; }
 .preview { margin: 0 0 8px; color: #6b7280; font-size: 13px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .card-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; color: #9ca3af; }

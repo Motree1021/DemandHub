@@ -95,10 +95,10 @@ class GuideService:
                 logger.warning("AI不可用拦截（密钥未配置或冷却中，冷却至 %.0f）", self.llm.cooldown_until)
                 raise BizError(ErrorCode.AI_SERVICE_UNAVAILABLE)
             history = await session_service.messages(self.db, self.user, req.session_id, limit=20)
-            # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报不是模型产物，误用会丢要素状态
+            # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报不是模型产物，误用会丢要素状态
             previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT"
                              and m.structured_payload
-                             and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice")), {})
+                             and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice", "modeChange")), {})
             form = demand_form(demand)
             sources = deepcopy(demand.field_sources or {})
             # FR-02/D6 原文保真：content 为空时本轮消息原文即 A8 底稿（来源 user，模型不得改写）

@@ -34,5 +34,5 @@ async function login() {
 function goBack() { if (history.length > 1) history.back(); else showToast('请关闭此页面，从创金零售重新进入') }
 </script>
 <style scoped>
-.auth-page { max-width: 480px; margin: auto; padding: 64px 28px 24px; text-align: center; }.auth-page h1 { color: #1f3a8a; margin-bottom: 8px; }.subtitle { color: #777; font-size: 13px; margin-bottom: 36px; }.auth-page p { line-height: 1.8; color: #666; }.dev-login { margin-top: 40px; }.dev-login .van-button { margin-top: 16px; }
+.auth-page { max-width: var(--shell-width); margin: auto; padding: 64px 28px 24px; text-align: center; }.auth-page h1 { color: #1f3a8a; margin-bottom: 8px; }.subtitle { color: #777; font-size: 13px; margin-bottom: 36px; }.auth-page p { line-height: 1.8; color: #666; }.dev-login { margin-top: 40px; }.dev-login .van-button { margin-top: 16px; }
 </style>

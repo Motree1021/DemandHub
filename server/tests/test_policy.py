@@ -365,7 +365,26 @@ def test_light_mode_minimal_set_can_submit_without_acd():
     # C/D 12 项大片缺失（目标用户/功能描述等全空）不追问不拦截，最小集齐即可提交
     assert result["askedTarget"] is None and result["canSubmit"] is True
     assert next(e for e in result["elements"] if e["key"] == "userRole")["status"] == "MISSING"
-    assert result["reply"].startswith("都记好了")
+    # 方案④首判轻量播报：此前判轻量一声不吭，用户不知道为何只问 4 项；现当轮回复前置白话说明
+    assert result["reply"].startswith("这个需求听起来是个小改动，我按轻量提报帮你登记")
+    assert "都记好了" in result["reply"]
+
+
+def test_light_first_judgment_announcement_once_only():
+    """首判播报只在第一次判轻量时出现：次轮再判 light 不重复、用户手动定过口径不播。"""
+    output = ModelOutput(structured={}, elements=[], mode_signal=ModeSignalOutput(level="light", evidence="换logo"))
+    # 次轮（prev 已是 light）：不播
+    prev = light_form(urgency="NORMAL")
+    prev["ext"] = {"mode": {"level": "light", "evidence": "换logo"}}
+    again = process(output, prev, {}, [], None, {}, "还是换logo，别的没补充")
+    assert "我按轻量提报帮你登记" not in again["reply"]
+    # 用户手动定过口径（origin=user）：AI 不翻转也不播
+    manual = light_form(urgency="NORMAL")
+    manual["ext"] = {"mode": {"level": "light", "evidence": "提报人手动调整提报口径", "origin": "user"}}
+    result = process(ModelOutput(structured={}, elements=[], mode_signal=ModeSignalOutput(level="standard", evidence="模型又觉得不小")),
+                     manual, {}, [], None, {}, "就换个logo，别的都不用动")
+    assert result["mode"]["level"] == "light" and result["mode"]["origin"] == "user"
+    assert "我按轻量提报帮你登记" not in result["reply"]
 
 
 def test_light_mode_asks_urgency_before_any_template_field():
