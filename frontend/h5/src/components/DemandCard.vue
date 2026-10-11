@@ -13,8 +13,8 @@
         <span class="meta-left"><i class="dot" aria-hidden="true" />{{ demand.demandNo || `草稿 #${demand.id}` }}<template v-if="showSubmitter"> · {{ demand.submitterName || '未提交' }}{{ demand.submitterDept ? ` ${demand.submitterDept}` : '' }}</template></span>
         <span class="meta-time">{{ fmtTime(demand.submittedAt || demand.updatedAt) }}</span>
       </div>
-      <div v-if="continuable && demand.status === 'DRAFT'" class="ops">
-        <button class="continue" type="button" @click.stop="emit('continue', demand.id)">继续提报 ›</button>
+      <div v-if="continuable && (demand.status === 'DRAFT' || demand.status === 'NEED_INFO')" class="ops">
+        <button class="continue" type="button" @click.stop="emit('continue', demand.id)">{{ demand.status === 'NEED_INFO' ? '去补充 ›' : '继续提报 ›' }}</button>
         <button class="close-btn" type="button" @click.stop="emit('close', demand.id)">撤销</button>
       </div>
     </div>
@@ -26,15 +26,16 @@ import type { DemandEntity } from '@/api/demand'
 import { statusLabel, typeLabel, urgencyLabel, fmtTime } from '@/utils/format'
 const props = defineProps<{ demand: DemandEntity; showSubmitter?: boolean; continuable?: boolean }>()
 const emit = defineEmits<{ (event: 'open', id: number): void; (event: 'continue', id: number): void; (event: 'close', id: number): void }>()
-// 状态图标与配色（st-* 类）一一对应：草稿=编辑中、已提交=已通过、已撤销=已回收
-const statusIcon = computed(() => ({ DRAFT: 'edit', SUBMITTED: 'passed', CLOSED: 'revoke' } as Record<string, string>)[props.demand.status || ''] || 'records')
+// 状态图标与配色（st-* 类）一一对应：草稿=编辑中、已提交=已通过、待补充=被打回、已撤销=已回收
+const statusIcon = computed(() => ({ DRAFT: 'edit', SUBMITTED: 'passed', NEED_INFO: 'replay', CLOSED: 'revoke' } as Record<string, string>)[props.demand.status || ''] || 'records')
 </script>
 <style scoped>
-/* 状态配色：草稿=橙黄、已提交=品牌蓝、已撤销=灰；左边框/图标/徽章/圆点共用一组变量 */
+/* 状态配色：草稿=橙黄、已提交=品牌蓝、待补充=橙红（被打回需行动）、已撤销=灰；左边框/图标/徽章/圆点共用一组变量 */
 /* 状态色用卡片左边框承载：边框沿圆角弧线整段上色（弧线两端延展到顶/底边），比裁切直条更立体 */
 .demand-card { --accent: #9ca3af; --accent-tint: #f3f4f6; --accent-deep: #6b7280; position: relative; display: flex; gap: 10px; background: #fff; border-radius: 14px; border-left: 4px solid var(--accent); margin: 12px; padding: 14px 14px 12px 12px; cursor: pointer; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.07); }
 .demand-card.st-draft { --accent: #f59e0b; --accent-tint: #fef3c7; --accent-deep: #b45309; }
 .demand-card.st-submitted { --accent: #1f3a8a; --accent-tint: #e0e7ff; --accent-deep: #1f3a8a; }
+.demand-card.st-need_info { --accent: #f97316; --accent-tint: #ffedd5; --accent-deep: #c2410c; }
 .demand-card.st-closed { --accent: #c0c4cc; --accent-tint: #f3f4f6; --accent-deep: #909399; }
 /* 已撤销卡片整体灰色化：紧急徽章不再用红色 */
 .demand-card.st-closed .badge.urgent { background: var(--accent-tint); color: var(--accent-deep); }

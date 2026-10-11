@@ -124,8 +124,21 @@ def business_confirmed(recognition: dict | None) -> bool:
     return business > max(float(recognition.get(layer) or 0) for layer in ("user", "function"))
 
 
-def schema_errors(standard: Standard | None, form: dict, *, required: bool = False, active_zones: set[str] | None = None) -> list[str]:
-    """required=True 时按必填门槛校验；active_zones 限定必填生效的区（None=全部区生效，用于 B 区判型条件必填）。"""
+# 微需求快速通道（2026-10-11 方案②）：light 最小必填集 = A8 原话 + A1 标题 + A6 紧急度 + 期望效果（写 D8），
+# A2 需求类型为结构性默认值随行；C/D 其余要素不追问不标星不拦截。换 logo/调样式/文案微调这类需求
+# 填不满 12 项模板（C 区用户故事、D 区输入输出/量化验收会语义性误伤），轻量口径只保受理最小信息。
+LIGHT_REQUIRED_KEYS = {"title", "demandTypeCode", "content", "urgency", "acceptanceCriteria"}
+
+
+def demand_mode(form: dict) -> str:
+    """ext.mode.level：light=轻量提报 / standard=常规（缺省 standard，兼容未判定的存量草稿）。"""
+    mode = (form.get("ext") or {}).get("mode")
+    return "light" if isinstance(mode, dict) and mode.get("level") == "light" else "standard"
+
+
+def schema_errors(standard: Standard | None, form: dict, *, required: bool = False, active_zones: set[str] | None = None, required_keys: set[str] | None = None) -> list[str]:
+    """required=True 时按必填门槛校验；active_zones 限定必填生效的区（None=全部区生效，用于 B 区判型条件必填）；
+    required_keys 直接限定必填生效的要素 key（light 最小集口径），优先于 active_zones。"""
     if standard is None:
         return ["需求类型未填写"] if required else []
     errors = []
@@ -134,7 +147,12 @@ def schema_errors(standard: Standard | None, form: dict, *, required: bool = Fal
             continue
         value = get_value(form, field.field_path)
         if required and field.required and blank(value):
-            if active_zones is None or field.zone is None or field.zone in active_zones:
+            gate = True
+            if required_keys is not None:
+                gate = field.key in required_keys
+            elif active_zones is not None and field.zone is not None:
+                gate = field.zone in active_zones
+            if gate:
                 errors.append(f"{field.label}未填写")
         error = field_error(field, value)
         if error:
@@ -142,7 +160,7 @@ def schema_errors(standard: Standard | None, form: dict, *, required: bool = Fal
     return errors
 
 
-def assess(standard: Standard, form: dict):
+def assess(standard: Standard, form: dict, *, light: bool = False):
     from app.agent.schemas import ElementStatus
     result = []
     for field in standard.elements:
@@ -168,6 +186,10 @@ def assess(standard: Standard, form: dict):
                 status, note = "VAGUE", field.vague_hint
             elif rule.max_len is not None and len(text) > rule.max_len:
                 status, note = "VAGUE", field.vague_hint
+            # light 模式下 D8（期望效果）放宽数字/量化词校验（2026-10-11 方案②）：
+            # 换 logo/调样式这类需求的"做完后看着更正式"是合格答案，不得因缺数字被判 VAGUE 反复追问
+            elif light and field.key == "acceptanceCriteria":
+                pass
             elif rule.any_of and not any(word in text for word in rule.any_of):
                 status, note = "VAGUE", field.vague_hint
             elif rule.any_of_regex and not any(re.search(pattern, text) for pattern in rule.any_of_regex):

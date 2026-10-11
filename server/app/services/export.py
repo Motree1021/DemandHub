@@ -29,18 +29,32 @@ def cell_escape(value):
     return display(value).replace("|", "\\|").replace("\n", "<br>")
 
 
-ZONE_TITLES = {"A": "A 区 · 公共要素", "B": "B 区 · 业务需求要素（Why）",
-               "C": "C 区 · 用户需求要素（Who/What）", "D": "D 区 · 功能需求要素（How）"}
+ZONE_TITLES = {
+    "A": "A 区 · 公共要素",
+    "B": "B 区 · 业务需求要素（Why）",
+    "C": "C 区 · 用户需求要素（Who/What）",
+    "D": "D 区 · 功能需求要素（How）",
+}
 SOURCE_LABELS = {"user": "用户", "agent": "AI 提炼", "default": "默认"}
+# 需求概述四段（与详情页 OVERVIEW_LABELS、agent/overview.py OVERVIEW_KEYS 同源）
+OVERVIEW_LABELS = {
+    "problem": "问题/机会",
+    "userScene": "用户&场景",
+    "goal": "目标&期望效果",
+    "acceptance": "验收标准",
+}
 
 
 def user_supplements(content: str | None, messages) -> list:
     """提报人补充原话：多轮对话中除 A8 底稿（与 content 全等的首条 USER 消息）外的全部 USER 消息，保持时间序。
-    展示层聚合并用（详情页 A8 小节 / 导出 md），A8 底稿语义不动。"""
+    展示层聚合并用（详情页 A8 小节 / 导出 md），A8 底稿语义不动。
+    附件上传的 USER 消息（「[上传附件] …」）是操作记录不是原话，排除。"""
     base = (content or "").strip()
     skipped, supplements = False, []
     for msg in messages:
         if msg.get("role") != "USER":
+            continue
+        if payload_kind(msg) in ("attachment", "attachmentReceipt"):
             continue
         text = (msg.get("content") or "").strip()
         if not skipped and base and text == base:
@@ -50,7 +64,31 @@ def user_supplements(content: str | None, messages) -> list:
     return supplements
 
 
-def to_markdown(demand, standard, messages) -> str:
+def payload_kind(msg) -> str:
+    """消息结构化 payload 的 kind（手改播报/附件回执等展示层识别）；解析失败按普通文本处理。"""
+    payload = (
+        msg.get("structuredPayload")
+        if isinstance(msg, dict)
+        else getattr(msg, "structured_payload", None)
+    )
+    if not payload:
+        return ""
+    try:
+        value = json.loads(payload) if isinstance(payload, str) else payload
+        return value.get("kind") or ""
+    except (ValueError, TypeError, AttributeError):
+        return ""
+
+
+def human_size(size: int | None) -> str:
+    if not size:
+        return ""
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.1f}MB"
+    return f"{max(size / 1024, 0.1):.0f}KB"
+
+
+def to_markdown(demand, standard, messages, attachments=None) -> str:
     d, std = as_demand(demand), as_standard(standard)
     lines = [f"# {d.get('title') or '未命名草稿'}", ""]
     # A8 原始提报文本置首（PRD §4.2.1：原话完整保留，作为追溯底稿）
@@ -62,25 +100,64 @@ def to_markdown(demand, standard, messages) -> str:
             text = (msg.get("content") or "").replace("\n", " ")
             lines.append(f"- {msg.get('createdAt', '')}：{text}")
         lines.append("")
+    # 附件清单：图片/文档仅作为需求材料随需求流转，内容需下载查看（AI 不做识别）
+    if attachments:
+        lines.extend(["## 附件", "", "| 文件名 | 类别 | 大小 | 上传时间 |", "|---|---|---|---|"])
+        for item in attachments:
+            lines.append(
+                f"| {cell_escape(item.get('fileName'))} | {cell_escape(item.get('kindLabel') or item.get('kind'))} "
+                f"| {human_size(item.get('size'))} | {cell_escape(item.get('createdAt'))} |"
+            )
+        lines.append("")
+    # 需求概述（AI 派生四段式摘要）：详情页同标签同顺序；无概述的旧草稿省略本节
+    overview = (d.get("ext") or {}).get("overview") or {}
+    rows = [
+        (label, overview[key])
+        for key, label in OVERVIEW_LABELS.items()
+        if isinstance(overview.get(key), str) and overview[key].strip()
+    ]
+    if rows:
+        lines.extend(["## 需求概述", ""])
+        lines.extend(f"- **{label}**：{text}" for label, text in rows)
+        lines.append("")
     lines.extend(["## 基本信息", "", "| 字段 | 内容 |", "|---|---|"])
-    labels = {"id": "ID", "demandNo": "编号", "demandTypeCode": "类型", "subtypeCode": "子类", "status": "状态",
-              "urgency": "紧急度", "expectDeliveryAt": "期望交付日期", "submitterName": "提报人",
-              "submitterDept": "提报部门", "channel": "渠道", "revision": "修改次数", "createdAt": "创建时间",
-              "submittedAt": "提交时间", "closedAt": "撤销时间", "closeReason": "撤销原因",
-              "standardVersionId": "标准快照ID", "qualityContentHash": "内容哈希"}
+    labels = {
+        "id": "ID",
+        "demandNo": "编号",
+        "demandTypeCode": "类型",
+        "subtypeCode": "子类",
+        "status": "状态",
+        "urgency": "紧急度",
+        "expectDeliveryAt": "期望交付日期",
+        "submitterName": "提报人",
+        "submitterDept": "提报部门",
+        "channel": "渠道",
+        "revision": "修改次数",
+        "createdAt": "创建时间",
+        "submittedAt": "提交时间",
+        "closedAt": "撤销时间",
+        "closeReason": "撤销原因",
+        "standardVersionId": "标准快照ID",
+        "qualityContentHash": "内容哈希",
+    }
     for key, label in labels.items():
         lines.append(f"| {label} | {cell_escape(d.get(key))} |")
     lines.append("")
     if std and d.get("elements"):
         # TECH 五区表单：按 A/B/C/D 分区排版（PRD §4），顶层公共字段已在基本信息
         for zone in ("A", "B", "C", "D"):
-            fields = [f for f in std.fields
-                      if f.zone == zone and "." in f.field_path and get_value(d, f.field_path) is not None]
+            fields = [
+                f
+                for f in std.fields
+                if f.zone == zone and "." in f.field_path and get_value(d, f.field_path) is not None
+            ]
             if not fields:
                 continue
             lines.extend([f"## {ZONE_TITLES[zone]}", "", "| 要素 | 内容 |", "|---|---|"])
             for f in fields:
-                lines.append(f"| {cell_escape(f.label)} | {cell_escape(get_value(d, f.field_path))} |")
+                lines.append(
+                    f"| {cell_escape(f.label)} | {cell_escape(get_value(d, f.field_path))} |"
+                )
             lines.append("")
     else:
         # MATL/TRAIN ext 表单（未升级五区）
@@ -90,7 +167,20 @@ def to_markdown(demand, standard, messages) -> str:
             lines.append(f"| {cell_escape(fields.get('ext.' + key, key))} | {cell_escape(value)} |")
         lines.append("")
     # E 区：系统维护状态附注（elementStatus/fieldSources/revision/changeLog）
-    lines.extend(["## E 区 · 状态信息", "", f"- 需求状态：{d.get('status') or ''}", f"- 修改次数：{d.get('revision') or 0}", ""])
+    lines.extend(
+        [
+            "## E 区 · 状态信息",
+            "",
+            f"- 需求状态：{d.get('status') or ''}",
+            f"- 修改次数：{d.get('revision') or 0}",
+            "",
+        ]
+    )
+    # 打回待补充（方案③）：NEED_INFO 时附打回原因，受理方读导出即可知缺口
+    return_reason = (d.get("ext") or {}).get("returnReason") or {}
+    if d.get("status") == "NEED_INFO" and return_reason.get("reason"):
+        lines.extend([f"- 打回原因：{cell_escape(return_reason.get('reason'))}",
+                      f"- 打回人：{cell_escape(return_reason.get('returnedBy') or '')}（{cell_escape(return_reason.get('returnedAt') or '')}）", ""])
     sources = d.get("fieldSources") or {}
     if sources:
         lines.extend(["### 字段来源", "", "| 字段 | 来源 |", "|---|---|"])
@@ -99,15 +189,21 @@ def to_markdown(demand, standard, messages) -> str:
         lines.append("")
     logs = d.get("changeLogs") or []
     if logs:
-        lines.extend(["### 变更留痕", "", "| 时间 | 字段 | 旧值 | 新值 | 来源 |", "|---|---|---|---|---|"])
+        lines.extend(
+            ["### 变更留痕", "", "| 时间 | 字段 | 旧值 | 新值 | 来源 |", "|---|---|---|---|---|"]
+        )
         for log in logs:
             source = SOURCE_LABELS.get(log.get("source"), log.get("source") or "")
-            lines.append(f"| {cell_escape(log.get('createdAt'))} | {cell_escape(log.get('fieldKey'))} | {cell_escape(log.get('oldValue'))} | {cell_escape(log.get('newValue'))} | {source} |")
+            lines.append(
+                f"| {cell_escape(log.get('createdAt'))} | {cell_escape(log.get('fieldKey'))} | {cell_escape(log.get('oldValue'))} | {cell_escape(log.get('newValue'))} | {source} |"
+            )
         lines.append("")
     lines.extend(["## 要素完备度", "", "| 要素 | 状态 | 说明 |", "|---|---|---|"])
     element_labels = {f.key: f.label for f in std.elements} if std else {}
     for item in d.get("quality") or []:
-        lines.append(f"| {cell_escape(element_labels.get(item['key'], item['key']))} | {cell_escape(item['status'])} | {cell_escape(item.get('note'))} |")
+        lines.append(
+            f"| {cell_escape(element_labels.get(item['key'], item['key']))} | {cell_escape(item['status'])} | {cell_escape(item.get('note'))} |"
+        )
     lines.extend(["", "## 对话回放", ""])
     for msg in messages:
         lines.extend([f"### {msg['role']} · {msg.get('createdAt', '')}", "", msg["content"], ""])
@@ -123,11 +219,26 @@ def to_xlsx(demands, standards) -> bytes:
         groups.setdefault(d.get("demandTypeCode") or "未分类", []).append(d)
     if not groups:
         groups["需求"] = []
-    basic = [("id", "ID"), ("demandNo", "编号"), ("title", "标题"), ("demandTypeCode", "类型"), ("subtypeCode", "子类"),
-             ("content", "需求描述"), ("status", "状态"), ("revision", "修改次数"), ("urgency", "紧急度"), ("expectDeliveryAt", "期望交付日期"),
-             ("submitterName", "提报人"), ("submitterDept", "提报部门"), ("channel", "渠道"),
-             ("submittedAt", "提交时间"), ("closedAt", "撤销时间"), ("closeReason", "撤销原因"),
-             ("standardVersionId", "标准快照ID"), ("qualityContentHash", "内容哈希")]
+    basic = [
+        ("id", "ID"),
+        ("demandNo", "编号"),
+        ("title", "标题"),
+        ("demandTypeCode", "类型"),
+        ("subtypeCode", "子类"),
+        ("content", "需求描述"),
+        ("status", "状态"),
+        ("revision", "修改次数"),
+        ("urgency", "紧急度"),
+        ("expectDeliveryAt", "期望交付日期"),
+        ("submitterName", "提报人"),
+        ("submitterDept", "提报部门"),
+        ("channel", "渠道"),
+        ("submittedAt", "提交时间"),
+        ("closedAt", "撤销时间"),
+        ("closeReason", "撤销原因"),
+        ("standardVersionId", "标准快照ID"),
+        ("qualityContentHash", "内容哈希"),
+    ]
     for type_code, rows in groups.items():
         sheet = workbook.create_sheet(type_code)
         fields, elements = {}, {}
@@ -140,10 +251,18 @@ def to_xlsx(demands, standards) -> bytes:
                         fields.setdefault(f.field_path, f.label)
                 for f in std.elements:
                     elements.setdefault(f.key, f.label)
-        sheet.append([label for _, label in basic] + [label + "状态" for label in elements.values()] + list(fields.values()))
+        sheet.append(
+            [label for _, label in basic]
+            + [label + "状态" for label in elements.values()]
+            + list(fields.values())
+        )
         for row in rows:
             quality = {q["key"]: q["status"] for q in row.get("quality") or []}
-            values = [row.get(key) for key, _ in basic] + [quality.get(key) for key in elements] + [get_value(row, path) for path in fields]
+            values = (
+                [row.get(key) for key, _ in basic]
+                + [quality.get(key) for key in elements]
+                + [get_value(row, path) for path in fields]
+            )
             sheet.append([display(value) for value in values])
             # 用户文本强制字符串类型，=、+、-、@ 等不会变为 Excel 公式。
             for cell in sheet[sheet.max_row]:

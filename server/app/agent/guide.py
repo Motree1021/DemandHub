@@ -87,15 +87,18 @@ class GuideService:
             replay = await self._saved(req)
             if replay:
                 return Prepared({}, {}, [], None, {}, [], replay)
-            if demand.status != "DRAFT" or agent_session.status != "ACTIVE":
-                raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "草稿或会话已关闭")
+            if demand.status not in ("DRAFT", "NEED_INFO") or agent_session.status != "ACTIVE":
+                raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "需求或会话不可编辑")
             if demand.revision != req.revision:
                 raise BizError(ErrorCode.CONFLICT)
             if not self.llm.available():
                 logger.warning("AI不可用拦截（密钥未配置或冷却中，冷却至 %.0f）", self.llm.cooldown_until)
                 raise BizError(ErrorCode.AI_SERVICE_UNAVAILABLE)
             history = await session_service.messages(self.db, self.user, req.session_id, limit=20)
-            previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT" and m.structured_payload), {})
+            # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报不是模型产物，误用会丢要素状态
+            previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT"
+                             and m.structured_payload
+                             and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice")), {})
             form = demand_form(demand)
             sources = deepcopy(demand.field_sources or {})
             # FR-02/D6 原文保真：content 为空时本轮消息原文即 A8 底稿（来源 user，模型不得改写）
@@ -153,8 +156,8 @@ class GuideService:
                     return saved
                 if demand.session_id != agent_session.id or agent_session.demand_id != demand.id:
                     raise BizError(ErrorCode.CONFLICT)
-                if agent_session.status != "ACTIVE" or demand.status != "DRAFT":
-                    raise BizError(ErrorCode.CONFLICT, "模型处理期间草稿已提交或关闭")
+                if agent_session.status != "ACTIVE" or demand.status not in ("DRAFT", "NEED_INFO"):
+                    raise BizError(ErrorCode.CONFLICT, "模型处理期间需求已提交或关闭")
                 if demand.revision != req.revision:
                     raise BizError(ErrorCode.CONFLICT, "模型处理期间草稿已更新")
                 demand = await apply_agent_patch(self.db, self.user, demand, expected_revision=req.revision, patch=result["structured"], field_sources=result["fieldSources"])

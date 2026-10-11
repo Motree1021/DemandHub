@@ -51,3 +51,21 @@ def test_to_markdown_omits_section_when_no_supplements():
     demand = {"title": "t", "content": "唯一一句话", "quality": [], "fieldSources": {}, "changeLogs": []}
     markdown = to_markdown(demand, None, [_msg("USER", "唯一一句话")])
     assert "提报人补充原话" not in markdown
+
+
+def test_to_markdown_renders_overview_section_with_same_labels():
+    # 概述四段与详情页同标签；位于补充原话之后、基本信息之前；空白段剔除
+    demand = {"title": "语音播报优化", "content": "原始提报", "quality": [], "fieldSources": {}, "changeLogs": [],
+              "ext": {"overview": {"problem": "手工拼表每次40分钟｜现有统计方式低效",
+                                  "userScene": "客户经理晨会前统计｜晨会前手工统计",
+                                  "acceptance": "连续7天对账误差为0｜对账零误差",
+                                  "goal": "   "}}}
+    markdown = to_markdown(demand, None, [_msg("USER", "原始提报")])
+    assert "## 需求概述" in markdown
+    assert "- **问题/机会**：手工拼表每次40分钟｜现有统计方式低效" in markdown
+    assert "- **用户&场景**：" in markdown and "- **验收标准**：" in markdown
+    assert "**目标&期望效果**" not in markdown  # 空白段省略
+    assert markdown.index("## 需求概述") < markdown.index("## 基本信息")
+    # 无概述的旧草稿省略整节
+    legacy = {"title": "t", "content": "x", "quality": [], "fieldSources": {}, "changeLogs": []}
+    assert "需求概述" not in to_markdown(legacy, None, [_msg("USER", "x")])

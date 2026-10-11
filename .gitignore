@@ -52,3 +52,6 @@ __pycache__/
 *.pyc
 
 h5pub-0.1.0-universal/
+
+# ===== 服务端附件本地存储（运行时数据，禁止入库） =====
+server/storage/

@@ -42,7 +42,7 @@
           </template>
         </agent-chat-panel>
       </template>
-      <field-edit-sheet v-model:show="fieldEditVisible" :field="editingField" :value="editingValue" @save="onFieldEditSave" />
+      <field-edit-sheet v-model:show="fieldEditVisible" :field="editingField" :value="editingValue" :saving="saving" @save="onFieldEditSave" @busy="showToast('正在保存，请稍候再确认修改')" />
       <van-action-sheet v-model:show="typeSheetVisible" :actions="typeActions" cancel-text="取消" description="归类影响提交要求：业务需求需补齐业务目标/背景/价值/干系人；用户需求与功能需求 12 项必填齐即可提交。" close-on-click-action @select="onTypeSelect" />
     </div>
   </app-layout>
@@ -55,7 +55,7 @@ import AppLayout from '@/components/AppLayout.vue'
 import StepsBar from '@/components/StepsBar.vue'
 import AgentChatPanel from '@/components/AgentChatPanel.vue'
 import FieldEditSheet from '@/components/FieldEditSheet.vue'
-import { createDraft, updateDraft, submitDemand, getDemand, getStandard, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
+import { createDraft, updateDraft, submitDemand, getDemand, getStandard, isReplayablePayload, demandModeOf, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
 import { createAgentSession, type GuidePayload } from '@/api/agent'
 import { ApiError } from '@/api/request'
 import { useUserStore } from '@/store/user'
@@ -70,7 +70,6 @@ const fieldEditVisible = ref(false); const editingField = ref<StandardFieldDefin
 const panelRef = ref<InstanceType<typeof AgentChatPanel> | null>(null)
 const lastPayload = ref<GuidePayload | null>(null); const examplesVisible = ref(false); const fuzzyGuide = ref(false)
 // 页面标题经 document.title 传给宿主小程序原生导航栏（H5 内不渲染标题栏，避免双标题）
-watch(draftId, value => { document.title = value ? '编辑需求草稿' : '需求提报' }, { immediate: true })
 // 一段话示例（原型 §示例引导）：覆盖完整型/简洁型两种典型业务需求文本
 const EXAMPLES = [
   { title: '示例一 · 完整型（目标/场景/功能/验收都带）', text: '我们部门每天晨会要统计各渠道销量，现在手工从三个系统导数据拼 Excel，要 40 分钟还容易错。希望做一个自动报表，每天早上 8 点前生成，包含各渠道销量明细和排名，自动推送企微群；验收标准是每个交易日 8:00 前生成、数据与核心系统一致。' },
@@ -85,6 +84,8 @@ const businessConfirmed = computed(() => {
   const business = recognition.business ?? 0
   return business >= 0.5 && business > Math.max(recognition.user ?? 0, recognition.function ?? 0)
 })
+// 微需求快速通道（方案②）：AI 判 mode=light 时提交门槛/拦截文案走轻量口径（对齐服务端 demand_mode）
+const isLight = computed(() => demandModeOf(form) === 'light')
 // 步骤条推导：表达→拆解→追问→提交（方案A：判型由 AI 自动生效，无确认步骤）
 const step = computed(() => {
   const payload = lastPayload.value
@@ -96,6 +97,9 @@ const step = computed(() => {
 let savePromise: Promise<DemandEntity> | null = null
 let savedDemand: DemandEntity | null = null
 let createPayload: (DemandForm & { clientRequestId: string }) | null = null
+// 页面标题经 document.title 传给宿主小程序原生导航栏（H5 内不渲染标题栏，避免双标题）；
+// NEED_INFO（打回待补充，方案③）进入时体现补充语义——applyDemand 先存 savedDemand 再改 draftId，watch flush 时读到的一定是新状态
+watch(draftId, value => { document.title = !value ? '需求提报' : savedDemand?.status === 'NEED_INFO' ? '补充需求信息' : '编辑需求草稿' }, { immediate: true })
 const CREATE_KEY = `demandhub_h5_create_request_${useUserStore().userInfo?.id || 'current'}`
 let clientRequestId: string = crypto.randomUUID()
 function restoreCreation() {
@@ -124,8 +128,9 @@ function applyDemand(demand: DemandEntity) {
 }
 function restoreDetail(detail: DemandDetail) {
   applyDemand(detail.demand)
-  if (detail.demand.status !== 'DRAFT') return
-  const message = [...(detail.messages || [])].reverse().find(item => item.role === 'ASSISTANT' && item.structuredPayload)
+  if (detail.demand.status !== 'DRAFT' && detail.demand.status !== 'NEED_INFO') return
+  // 质量清单回放只认对话结果消息，手改播报/附件回执/打回播报卡片不参与回放
+  const message = [...(detail.messages || [])].reverse().find(item => item.role === 'ASSISTANT' && isReplayablePayload(item.structuredPayload))
   if (!message?.structuredPayload) return
   try {
     const payload = JSON.parse(message.structuredPayload) as GuidePayload
@@ -204,7 +209,10 @@ const typeActions = [
   { name: '是功能需求', subname: '对系统已有功能的日常调整或小改进' },
   { name: '让 AI 判断', subname: '按对话内容自动判定，随时可再改' },
 ]
-function onTypeSelect(_action: unknown, index: number) { onConfirmType((['business', 'user', 'function', null] as const)[index]) }
+function onTypeSelect(_action: unknown, index: number) {
+  if (locked.value) { showToast('正在保存，请稍候再改归类'); typeSheetVisible.value = false; return }
+  onConfirmType((['business', 'user', 'function', null] as const)[index])
+}
 async function onConfirmType(confirmed: 'business' | 'user' | 'function' | null) {
   form.ext.typeRecognition = { ...(typeRecognition.value || {}), confirmed }
   form.fieldSources['ext.typeRecognition'] = 'user'
@@ -223,7 +231,13 @@ function applyAgent(payload: GuidePayload) {
 }
 async function submit() {
   if (locked.value || !requiredComplete.value) return
-  try { await showConfirmDialog({ title: '确认提交', message: '请确认要素内容准确。提交后生成正式编号，质量缺口会保留给整理人员。' }) } catch { return }
+  const resubmit = savedDemand?.status === 'NEED_INFO'
+  try {
+    const message = resubmit
+      ? '这条需求此前被打回过。请确认这次已按打回原因补齐，重新提交后会再次进入受理。'
+      : '请确认要素内容准确。提交后生成正式编号，质量缺口会保留给整理人员。'
+    await showConfirmDialog({ title: resubmit ? '重新提交' : '确认提交', message })
+  } catch { return }
   submitting.value = true
   try {
     const demand = await save(); const submitted = await submitDemand(demand.id, revision.value)
@@ -232,8 +246,14 @@ async function submit() {
   }
   catch (value) {
     recordError(value)
-    // 逃生口：AI 自动判型（未人工确认）被 B 区必填拦截时，指引改判入口
-    if (value instanceof ApiError && value.code === 400 && businessConfirmed.value && typeRecognition.value?.confirmed == null) {
+    if (!(value instanceof ApiError) || value.code !== 400) return
+    if (isLight.value) {
+      // 轻量提报被拦只会是缺最小集：按白话指引补齐（D8 在卡片里叫「验收标准」，也就是期望效果）
+      error.value += ' 轻量提报只需四项：标题、你的原话、紧急程度、期望效果（即卡片里的「验收标准」，做完后能看见的变化）。点开「需求要素表单」卡片补齐即可提交。'
+      return
+    }
+    // 逃生口：AI 自动判型（未人工确认）被 B 区必填拦截时，指引改判入口（light 不问 B 区，不适用此逃生口）
+    if (businessConfirmed.value && typeRecognition.value?.confirmed == null) {
       error.value += ' 若本需求不涉及业务目标/考核，可点开聊天里的「需求要素表单」卡片，点「归类」标签改判为用户需求或功能需求。'
     }
   }
@@ -264,7 +284,8 @@ async function initialize() {
     if (Number.isSafeInteger(id) && id > 0) {
       const detail = await getDemand(id)
       if (generation !== initializationGeneration) return
-      if (detail.demand.status !== 'DRAFT') { await router.replace(`/demand/${id}`); return }
+      // NEED_INFO（打回待补充，方案③）：与 DRAFT 同为可编辑态，进入对话由 AI 引述打回原因引导补齐
+      if (detail.demand.status !== 'DRAFT' && detail.demand.status !== 'NEED_INFO') { await router.replace(`/demand/${id}`); return }
       restoreDetail(detail)
     } else { restoreCreation() }
     await loadStandard(form.demandTypeCode)

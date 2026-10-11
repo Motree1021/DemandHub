@@ -51,10 +51,17 @@ class TypeSignalsOutput(AgentModel):
     function: TypeSignalVote = Field(default_factory=TypeSignalVote)
 
 
+class ModeSignalOutput(AgentModel):
+    """微需求快速通道（2026-10-11 方案②）：AI 轻重判定票，light 走 4 项最小集。"""
+    level: Literal["light", "standard"]
+    evidence: str = ""
+
+
 class ModelOutput(BaseModel):
     structured: dict[str, Any] = Field(default_factory=dict)
     elements: list[ElementStatus] = Field(default_factory=list)
     type_signals: TypeSignalsOutput | None = None
+    mode_signal: ModeSignalOutput | None = None
 
 
 class GuideResult(AgentModel):
@@ -74,6 +81,7 @@ class GuideResult(AgentModel):
     ready: bool
     quick_replies: list[str]
     type_recognition: dict[str, Any] | None = None
+    mode: dict[str, Any] | None = None
     granularity_hint: dict[str, str] | None = None
     impact_hints: list[str] = Field(default_factory=list)
 
@@ -115,4 +123,13 @@ def parse_model_output(raw: str) -> ModelOutput:
         if status not in {"OK", "VAGUE", "MISSING"}:
             status = "VAGUE"
         elements.append(ElementStatus(key=item["key"], status=status, note=item.get("note") if isinstance(item.get("note"), str) else ""))
-    return ModelOutput(structured=value["structured"], elements=elements, type_signals=_parse_type_signals(value.get("typeSignals")))
+    return ModelOutput(structured=value["structured"], elements=elements, type_signals=_parse_type_signals(value.get("typeSignals")), mode_signal=_parse_mode_signal(value.get("modeSignal")))
+
+
+def _parse_mode_signal(value) -> ModeSignalOutput | None:
+    """modeSignal 轻重判定票可选；level 非法按格式错误处理（与 typeSignals 同口径走修复重试）。"""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or value.get("level") not in ("light", "standard"):
+        raise ValueError("modeSignal.level 必须为 light/standard")
+    return ModeSignalOutput(level=value["level"], evidence=value.get("evidence") if isinstance(value.get("evidence"), str) else "")

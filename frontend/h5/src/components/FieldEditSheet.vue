@@ -6,7 +6,7 @@
       <standard-field :field="field" :model-value="local" @update:model-value="local = $event" />
       <div class="btns">
         <van-button block @click="emit('update:show', false)">取消</van-button>
-        <van-button block type="primary" @click="confirm">确认修改</van-button>
+        <van-button block type="primary" :loading="saving" @click="confirm">确认修改</van-button>
       </div>
     </div>
   </van-popup>
@@ -15,11 +15,15 @@
 import { ref, watch } from 'vue'
 import StandardField from './StandardField.vue'
 import type { StandardField as StandardFieldDefinition } from '@/api/demand'
-const props = defineProps<{ show: boolean; field: StandardFieldDefinition | null; value: unknown }>()
-const emit = defineEmits<{ (event: 'update:show', value: boolean): void; (event: 'save', field: StandardFieldDefinition, value: unknown): void }>()
+const props = defineProps<{ show: boolean; field: StandardFieldDefinition | null; value: unknown; saving?: boolean }>()
+const emit = defineEmits<{ (event: 'update:show', value: boolean): void; (event: 'save', field: StandardFieldDefinition, value: unknown): void; (event: 'busy'): void }>()
 const local = ref<unknown>(null)
 watch(() => [props.show, props.field], () => { if (props.show) local.value = Array.isArray(props.value) ? [...props.value] : props.value })
-function confirm() { if (props.field) emit('save', props.field, local.value); emit('update:show', false) }
+// 保存进行中（locked）：确认拦截并提示，弹层保持打开、值不丢，等保存完成再确认
+function confirm() {
+  if (props.saving) { emit('busy'); return }
+  if (props.field) emit('save', props.field, local.value); emit('update:show', false)
+}
 </script>
 <style scoped>
 .field-edit { padding: 20px 16px max(16px, env(safe-area-inset-bottom)); }

@@ -14,8 +14,9 @@ async def create(db, user, scene, demand_id, first_message=""):
     demand = (await db.execute(select(Demand).where(Demand.id == demand_id, Demand.submitter_id == user.id).with_for_update())).scalar_one_or_none()
     if demand is None:
         raise BizError(ErrorCode.DEMAND_NOT_FOUND)
-    if demand.status != "DRAFT":
-        raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "会话仅能绑定本人草稿")
+    # NEED_INFO（管理员打回待补充，方案③）：无会话的打回需求也允许进入对话补填
+    if demand.status not in ("DRAFT", "NEED_INFO"):
+        raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "会话仅能绑定本人可编辑需求")
     existing = (await db.execute(select(AgentSession).where(AgentSession.demand_id == demand_id))).scalar_one_or_none()
     if existing:
         if existing.user_id != user.id or demand.session_id != existing.id:

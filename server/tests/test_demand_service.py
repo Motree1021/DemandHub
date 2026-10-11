@@ -123,12 +123,16 @@ async def test_manual_change_broadcast_filled_and_updated(session_factory, user)
     message = await _last_message(session_factory, user, session_id)
     assert message.role == "ASSISTANT"
     assert "你已手动填写了「验收标准」：音色更具特色" in message.content
+    assert message.structured_payload == {"kind": "manualChange",
+        "changes": [{"action": "fill", "label": "验收标准", "old": "", "new": "音色更具特色"}]}
     async with session_factory() as db:
         async with db.begin():
             await service.update_draft(db, user, demand_id, {"expectedRevision": 1,
                 "elements": {"D": {"acceptanceCriteria": "发音准确，多音字、金融术语都能读对"}}, "notifyChanges": True})
     message = await _last_message(session_factory, user, session_id)
     assert "你已手动更新了「验收标准」：由「音色更具特色」改为「发音准确，多音字、金融术语都能读对」" in message.content
+    assert message.structured_payload["changes"][0] == {"action": "update", "label": "验收标准",
+        "old": "音色更具特色", "new": "发音准确，多音字、金融术语都能读对"}
 
 
 async def test_manual_change_broadcast_enum_label_and_clear(session_factory, user):
@@ -145,6 +149,9 @@ async def test_manual_change_broadcast_enum_label_and_clear(session_factory, use
     # enum 播报标签而非代码；多项改动逐行列出
     assert "你已手动更新了「紧急程度」：由「普通」改为「紧急」" in message.content
     assert "你已手动清空了「目标用户角色」" in message.content
+    assert message.structured_payload["changes"] == [
+        {"action": "update", "label": "紧急程度", "old": "普通", "new": "紧急"},
+        {"action": "clear", "label": "目标用户角色", "old": "客户经理", "new": ""}]
 
 
 async def test_manual_change_broadcast_guards(session_factory, user):

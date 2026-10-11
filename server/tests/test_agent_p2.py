@@ -260,3 +260,75 @@ def test_impact_hint_only_on_filled_b_zone_change():
     assert impact_hints(previous, changed) == ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
     assert impact_hints({}, changed) == []  # 首轮填写不算修改
     assert impact_hints(previous, previous) == []
+
+
+# ---- 微需求快速通道（2026-10-11 方案②）：modeSignal 判定与最小集提交 ----
+
+LOGO_TEXT = "把首页顶部的logo换成新设计的蓝色版本，新logo设计稿已经给到了"
+
+
+def test_mode_signal_malformed_is_contract_error():
+    with pytest.raises(ValueError):
+        parse_model_output('{"structured":{},"elements":[],"modeSignal":{"level":"quick"}}')
+
+
+async def test_light_mode_flow_and_minimal_set_submit(session_factory, user):
+    """换 logo 微需求全链路：AI 判 light → 只追问紧急度 → 最小集 4 项提交成功，C/D 12 项全空不拦截。"""
+    did, sid, rev = await make_draft(session_factory, user, content=LOGO_TEXT, request="p2-light-1")
+    # 第一轮：模型判 light 并代拟标题/期望效果；紧急度缺失 → light 首问紧急度，不可提交
+    fake = FakeArk({"structured": {"title": "更换首页顶部logo", "elements": {"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}}},
+                    "elements": [], "modeSignal": {"level": "light", "evidence": "换logo属于微调"}})
+    async with session_factory() as db:
+        first = await GuideService(db, user, fake).execute(chat_req(did, sid, rev, request_id="p2-light-chat1", message=LOGO_TEXT))
+    assert first.mode["level"] == "light" and first.asked_target == "urgency" and not first.can_submit
+    assert "紧急" in first.reply
+    async with session_factory() as db:
+        demand = await db.get(Demand, did)
+        assert demand.ext["mode"]["level"] == "light"
+        assert demand.field_sources["ext.mode"] == "agent"
+        rev2 = demand.revision
+    # 第二轮：用户答紧急度 → 最小集齐，可提交
+    fake2 = FakeArk({"structured": {"urgency": "NORMAL"}, "elements": [], "modeSignal": {"level": "light", "evidence": "换logo属于微调"}})
+    async with session_factory() as db:
+        second = await GuideService(db, user, fake2).execute(chat_req(did, sid, rev2, request_id="p2-light-chat2", message="普通就行，不着急"))
+    assert second.can_submit and second.asked_target is None
+    assert "可以提交" in second.reply
+    # 提交：C/D 其余 11 项全空仍放行；质量快照按 light 口径落库（D8 无数字不降级）
+    async with session_factory() as db:
+        async with db.begin():
+            submitted = await demand_service.submit(db, user, did, second.revision)
+    assert submitted.demand_no.startswith("TECH-")
+    assert submitted.ext["mode"]["level"] == "light"
+    quality = {item["key"]: item["status"] for item in submitted.quality}
+    assert quality["acceptanceCriteria"] == "OK" and quality["userRole"] == "MISSING"
+
+
+async def test_standard_draft_minimal_set_still_blocked(session_factory, user):
+    # 同样的最小集数据、未判 light（mode 缺省 standard）：C/D 12 项门槛照拦
+    async with session_factory() as db:
+        async with db.begin():
+            demand = await demand_service.create_draft(db, user, {"clientRequestId": "p2-light-std", "title": "更换首页顶部logo",
+                                                                  "demandTypeCode": "TECH", "content": LOGO_TEXT, "urgency": "NORMAL",
+                                                                  "elements": {"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}}})
+            did = demand.id
+    async with session_factory() as db:
+        with pytest.raises(Exception) as error:
+            async with db.begin():
+                await demand_service.submit(db, user, did, 0)
+        assert error.value.code == 400 and "未填写" in str(error.value)
+
+
+async def test_update_draft_cannot_override_agent_mode(session_factory, user):
+    # ext.mode 只归 AI 判定链路：H5 整表单回传携带的 mode 被剔除，不覆盖 AI 已判定的 light；判型仍可由用户回传
+    did, sid, rev = await make_draft(session_factory, user, content=LOGO_TEXT, request="p2-light-keep")
+    fake = FakeArk({"structured": {}, "elements": [], "modeSignal": {"level": "light", "evidence": "换logo"}})
+    async with session_factory() as db:
+        await GuideService(db, user, fake).execute(chat_req(did, sid, rev, request_id="p2-light-keep-chat", message=LOGO_TEXT))
+    async with session_factory() as db:
+        async with db.begin():
+            await demand_service.update_draft(db, user, did, {"expectedRevision": 1, "ext": {"mode": {"level": "standard", "evidence": "伪造回退"},
+                                                                                             "typeRecognition": {"confirmed": "function"}}})
+    async with session_factory() as db:
+        demand = await db.get(Demand, did)
+        assert demand.ext["mode"]["level"] == "light"
+        assert demand.ext["typeRecognition"]["confirmed"] == "function"

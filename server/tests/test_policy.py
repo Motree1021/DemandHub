@@ -3,13 +3,14 @@ import pytest
 from app.agent.policy import (
     complete_elements,
     inherit_and_count,
+    merge_mode_signal,
     merge_structured,
     pick_follow_up,
     process,
     reply_for,
     user_said_skip,
 )
-from app.agent.schemas import ElementStatus, ModelOutput, parse_model_output
+from app.agent.schemas import ElementStatus, ModelOutput, ModeSignalOutput, parse_model_output
 from app.standards.loader import get
 from app.standards.rules import assess
 
@@ -110,6 +111,14 @@ def test_invalid_model_value_dropped_not_fatal():
     # 容错：模型写"本周"这类非法日期，丢弃该值而不是整轮对话报错
     result, _, _ = merge_structured({"elements": {"A": {"expectDeliveryAt": "本周"}}}, form(), {})
     assert result["expectDeliveryAt"] is None
+
+
+def test_status_word_values_are_dropped():
+    # 模型把质量状态词当值输出（真实链路已观测 elements.B.businessGoal="VAGUE"）属自相矛盾，按未输出过滤，
+    # 否则判型升级后 B 区会被"VAGUE"字面量伪造成已填
+    result, sources, _ = merge_structured({"elements": {"B": {"businessGoal": "VAGUE", "businessBackground": " missing "}}}, form(), {})
+    assert not (result["elements"].get("B") or {})
+    assert "elements.B.businessGoal" not in sources
 
 
 def test_process_relocates_nested_urgency_and_moves_on():
@@ -262,3 +271,125 @@ def test_required_values_never_skipped_and_flags_distinct():
     result = process(ModelOutput(), {"demandTypeCode": "MATL"}, {}, [], "title", {}, "跳过")
     assert not result["canSubmit"] and not result["qualityComplete"]
     assert next(e for e in result["elements"] if e["key"] == "title")["status"] == "MISSING"
+
+
+# ---- 微需求快速通道（2026-10-11 方案②）：mode 判定与 light 编排 ----
+
+
+def light_form(**overrides):
+    """换 logo 微需求形态：A1 标题 + A8 原话已给，C/D 其余全空；紧急度/期望效果按测试覆盖。"""
+    value = {"title": "更换首页顶部logo", "demandTypeCode": "TECH",
+             "content": "把首页顶部的logo换成新设计的蓝色版本", "elements": {}}
+    value.update(overrides)
+    return value
+
+
+@pytest.mark.parametrize("prev,signal,expected", [
+    (None, ModeSignalOutput(level="light", evidence="换logo"), "light"),      # 首次判定 light
+    (None, ModeSignalOutput(level="standard", evidence="新报表"), "standard"),  # 首次判定 standard
+    ({"level": "light", "evidence": "换logo"}, None, "light"),                # 本轮未输出：保留旧判定
+    (None, None, None),                                                        # 从未判定且未输出
+    ({"level": "standard", "evidence": "新报表"}, ModeSignalOutput(level="light", evidence="x"), "standard"),  # standard 粘性不回退
+    ({"level": "light", "evidence": "换logo"}, ModeSignalOutput(level="standard", evidence="改登录鉴权"), "standard"),  # light 可升级
+])
+def test_merge_mode_signal_sticky_standard(prev, signal, expected):
+    form_value = {"ext": {"mode": prev}} if prev is not None else {}
+    merged = merge_mode_signal(signal, form_value)
+    assert (merged or {}).get("level") == expected
+
+
+def test_light_follow_up_limited_to_minimal_set_once_each():
+    standard = get("TECH")
+    base = light_form()
+    elements = assess(standard, base, light=True)
+    # light 首问紧急度（固定顺序：紧急度→期望效果→标题兜底）；standard 口径则先问 A 区子类等模板项
+    assert pick_follow_up(standard, elements, light=True).key == "urgency"
+    assert pick_follow_up(standard, elements).key == "techSubtype"
+    once = inherit_and_count(elements, elements, "urgency", False, standard=standard, previous_form=base, form=base)
+    assert pick_follow_up(standard, once, light=True).key == "acceptanceCriteria"
+    twice = inherit_and_count(once, elements, "acceptanceCriteria", False, standard=standard, previous_form=base, form=base)
+    # 每项只问一次：两轮后即使期望效果仍缺也不再追问，C 区缺口更不问（合计≤2轮）
+    assert pick_follow_up(standard, twice, light=True) is None
+
+
+def test_light_d8_first_ask_confirms_ai_title_with_plain_effect_question():
+    standard = get("TECH")
+    target = ElementStatus(key="acceptanceCriteria", status="MISSING", attempts=0)
+    with_title = reply_for(standard, target, {"title": "更换首页顶部logo"}, light=True)
+    assert "标题我先记为「更换首页顶部logo」" in with_title
+    assert "期望的效果" in with_title
+    without_title = reply_for(standard, target, {}, light=True)
+    assert "标题我先记为" not in without_title and "期望的效果" in without_title
+    # standard 口径仍是「可检查的标准」量化验收话术，不引用白话效果问法
+    assert "可检查的标准" in reply_for(standard, target, {"title": "x"})
+
+
+def test_light_reply_completion_follows_minimal_gate():
+    standard = get("TECH")
+    complete = light_form(urgency="NORMAL", elements={"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}})
+    assert "可以提交" in reply_for(standard, None, complete, light=True)
+    # 最小集有缺口但追问额度用完：指引到表单补齐
+    incomplete = light_form()
+    elements = [e.model_copy(update={"attempts": 1}) if e.key in ("urgency", "acceptanceCriteria") else e
+                for e in assess(standard, incomplete, light=True)]
+    assert pick_follow_up(standard, elements, light=True) is None
+    assert "下方表单里补齐" in reply_for(standard, None, incomplete, light=True)
+
+
+def test_completion_reply_gates_b_zone_by_business():
+    # 打回冒烟暴露：未判业务需求时 B 区缺项不得把完成话术误报成「还有必填没填」——与提交门槛同一判型口径
+    standard = get("TECH")
+    base = acd_filled_form()
+    assert "可以提交" in reply_for(standard, None, base)
+    assert "把标红星※的必填项补齐" in reply_for(standard, None, base, business=True)
+
+
+def test_return_reason_is_quoted_in_reply():
+    # 打回闭环（方案③）：returnReason 留存期间回复模板前置白话引述打回原因，重提清除后引述自然消失
+    base = acd_filled_form()
+    base["ext"] = {"returnReason": {"reason": "缺少使用场景说明，请补充后重新提交"}}
+    result = process(ModelOutput(structured={}, elements=[]), base, {}, [], None, {}, "我来看看还需要补充什么")
+    assert result["reply"].startswith("这条需求之前被打回过")
+    assert "打回原因是「缺少使用场景说明，请补充后重新提交」" in result["reply"]
+    assert "可以提交" in result["reply"]
+
+
+def test_light_mode_minimal_set_can_submit_without_acd():
+    base = light_form(urgency="NORMAL")
+    output = ModelOutput(structured={"elements": {"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}}},
+                         elements=[], mode_signal=ModeSignalOutput(level="light", evidence="换logo属于小改动"))
+    result = process(output, base, {}, [], None, {}, "把首页顶部logo换成新设计的蓝色版本")
+    assert result["mode"] == {"level": "light", "evidence": "换logo属于小改动"}
+    assert result["structured"]["ext"]["mode"]["level"] == "light"
+    assert result["fieldSources"]["ext.mode"] == "agent"
+    # C/D 12 项大片缺失（目标用户/功能描述等全空）不追问不拦截，最小集齐即可提交
+    assert result["askedTarget"] is None and result["canSubmit"] is True
+    assert next(e for e in result["elements"] if e["key"] == "userRole")["status"] == "MISSING"
+    assert result["reply"].startswith("都记好了")
+
+
+def test_light_mode_asks_urgency_before_any_template_field():
+    output = ModelOutput(structured={}, elements=[], mode_signal=ModeSignalOutput(level="light", evidence="换logo"))
+    result = process(output, light_form(), {}, [], None, {}, "把首页顶部logo换成新设计的蓝色版本")
+    assert result["askedTarget"] == "urgency" and not result["canSubmit"]
+    assert "紧急" in result["reply"] and "给谁用" not in result["reply"]
+
+
+def test_mode_standard_is_sticky_in_conversation():
+    prev = light_form(urgency="NORMAL")
+    prev["ext"] = {"mode": {"level": "standard", "evidence": "自动生成销量报表属于新功能"}}
+    output = ModelOutput(structured={}, elements=[], mode_signal=ModeSignalOutput(level="light", evidence="其实只想改个logo"))
+    result = process(output, prev, {}, [], None, {}, "其实只想改个logo")
+    assert result["mode"]["level"] == "standard"
+    # 常规口径追问恢复：A 区子类缺口照问（light 最小集不含 techSubtype）
+    assert result["askedTarget"] == "techSubtype"
+
+
+def test_mode_upgrade_to_standard_announces_and_reapplies_full_gate():
+    prev = light_form(urgency="NORMAL", elements={"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}})
+    prev["ext"] = {"mode": {"level": "light", "evidence": "换logo"}}
+    output = ModelOutput(structured={}, elements=[], mode_signal=ModeSignalOutput(level="standard", evidence="顺带要改登录鉴权，影响面大"))
+    result = process(output, prev, {}, [], None, {}, "顺便把登录鉴权也改了吧")
+    assert result["mode"]["level"] == "standard"
+    assert result["reply"].startswith("这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。")
+    assert not result["canSubmit"]  # 常规门槛重新生效：C/D 缺口再次拦截提交

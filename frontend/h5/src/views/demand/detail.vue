@@ -4,6 +4,19 @@
     <template v-else-if="detail">
       <div class="detail-card header"><div class="number">{{ demand.demandNo || `草稿 #${demand.id}` }}</div><h1>{{ demand.title || '未命名草稿' }}</h1><div class="tags"><van-tag type="primary" plain>{{ statusLabel(demand.status) }}</van-tag><van-tag plain>{{ detail.standard?.name || typeLabel(demand.demandTypeCode) }}</van-tag><van-tag :type="demand.urgency === 'NORMAL' ? 'default' : 'danger'">{{ urgencyLabel(demand.urgency) }}</van-tag></div><div class="meta"><span>期望交付：{{ demand.expectDeliveryAt || '未填写' }}</span><span>{{ demand.status === 'DRAFT' ? '保存' : '提交' }}时间：{{ fmtTime(demand.submittedAt || demand.updatedAt) }}</span><span v-if="demand.submitterName">提报人：{{ demand.submitterName }} {{ demand.submitterDept || '' }}</span></div></div>
       <div class="detail-card"><h2>需求概述</h2><template v-if="overviewRows.length"><div v-for="row in overviewRows" :key="row.key" class="ov-row"><strong>{{ row.label }}</strong><p>{{ row.text }}</p></div></template><template v-else><p class="content">{{ demand.content || '尚未填写' }}</p><template v-if="userSupplements.length"><h3 class="supp-title">后续对话中的补充原话</h3><div v-for="m in userSupplements" :key="m.id" class="supp-row"><small>{{ fmtTime(m.createdAt) }}</small><p>{{ m.content }}</p></div></template></template></div>
+      <div v-if="attachments.length" class="detail-card">
+        <h2>附件（{{ attachments.length }}）</h2>
+        <p class="att-note">AI 暂不支持识别附件内容，附件将作为需求材料随需求一并提交。</p>
+        <van-swipe-cell v-for="att in attachments" :key="att.id" class="att-cell">
+          <div class="att-row" @click="downloadAttachmentFile(att)">
+            <van-icon :name="att.kind === 'IMAGE' ? 'photo-o' : 'description'" class="att-icon" />
+            <span class="att-meta"><strong>{{ att.fileName }}</strong><small>{{ att.kindLabel }} · {{ fmtSize(att.size) }} · 点击下载</small></span>
+          </div>
+          <template #right>
+            <van-button v-if="canDeleteAttachment" square type="danger" text="删除" class="att-delete" @click="removeAttachment(att)" />
+          </template>
+        </van-swipe-cell>
+      </div>
       <div v-if="detail.messages.length" class="detail-card playback"><van-collapse v-model="expanded"><van-collapse-item title="AI 对话回放" name="messages"><div v-for="message in detail.messages" :key="message.id" class="history-row"><strong>{{ message.role === 'USER' ? '你' : 'AI 提报助手' }}</strong><small>{{ fmtTime(message.createdAt) }}</small><p>{{ message.content }}</p></div></van-collapse-item></van-collapse></div>
       <template v-for="group in zoneGroups" :key="group.zone">
         <div v-if="group.rows.length || demand.status === 'DRAFT'" class="detail-card"><h2>{{ group.title }}</h2><div v-for="item in group.rows" :key="item.path" class="ext-row"><strong>{{ item.label }}</strong><span>{{ item.value }}</span></div><p v-if="!group.rows.length" class="zone-empty">暂未提取到信息，待补充。</p></div>
@@ -11,30 +24,35 @@
       <div v-if="extensionFields.length" class="detail-card"><h2>补充信息</h2><div v-for="item in extensionFields" :key="item.path" class="ext-row"><strong>{{ item.label }}</strong><span>{{ item.value }}</span></div></div>
       <div class="detail-card playback"><van-collapse v-model="expanded"><van-collapse-item title="信息完备度" name="quality"><quality-list :elements="detail.quality" :labels="labels" /></van-collapse-item></van-collapse></div>
       <div v-if="demand.status === 'CLOSED'" class="detail-card"><h2>撤销说明</h2><p class="content">{{ demand.closeReason }}</p><small>{{ fmtTime(demand.closedAt) }}</small></div>
+      <div v-if="returnReason" class="detail-card return-card"><h2>打回说明</h2><p class="content">{{ returnReason.reason }}</p><small>打回人：{{ returnReason.returnedBy || '需求整理人员' }} · {{ fmtTime(returnReason.returnedAt || undefined) }}</small></div>
       <div class="detail-card actions">
         <van-button block plain type="primary" :loading="downloading" @click="download">下载 Markdown</van-button>
         <van-button v-if="own && demand.status === 'DRAFT'" block type="primary" @click="router.push({ path: '/report', query: { draftId: demand.id } })">继续编辑草稿</van-button>
-        <van-button v-if="own && (demand.status === 'SUBMITTED' || demand.status === 'DRAFT')" block plain type="danger" @click="closeVisible = true">{{ demand.status === 'DRAFT' ? '撤销草稿' : '撤销需求' }}</van-button>
+        <van-button v-if="own && demand.status === 'NEED_INFO'" block type="primary" @click="router.push({ path: '/report', query: { draftId: demand.id } })">去补充，重新提交</van-button>
+        <van-button v-if="isAdmin && demand.status === 'SUBMITTED' && !own" block type="warning" @click="returnVisible = true">打回补充</van-button>
+        <van-button v-if="own && (demand.status === 'SUBMITTED' || demand.status === 'DRAFT' || demand.status === 'NEED_INFO')" block plain type="danger" @click="closeVisible = true">{{ demand.status === 'DRAFT' ? '撤销草稿' : '撤销需求' }}</van-button>
         <van-button block plain @click="router.push(user.userInfo?.isAdmin && !own ? '/admin' : '/mine')">{{ user.userInfo?.isAdmin && !own ? '返回需求整理' : '返回我的需求' }}</van-button>
       </div>
     </template>
     <van-empty v-else description="详情加载失败"><van-button size="small" type="primary" @click="fetchDetail">重试</van-button></van-empty>
     <van-dialog v-model:show="closeVisible" :title="detail?.demand.status === 'DRAFT' ? '撤销草稿' : '撤销需求'" show-cancel-button :before-close="beforeClose"><van-field v-model="reason" type="textarea" rows="3" label="撤销原因" maxlength="256" placeholder="请填写撤销原因" /></van-dialog>
+    <van-dialog v-model:show="returnVisible" title="打回补充" show-cancel-button :before-close="beforeReturn"><van-field v-model="returnReasonText" type="textarea" rows="3" label="打回原因" maxlength="256" placeholder="请说明还缺哪些信息，提报人会看到这段话" /></van-dialog>
   </app-layout>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { showToast } from 'vant'
+import { showConfirmDialog, showToast } from 'vant'
 import AppLayout from '@/components/AppLayout.vue'
 import QualityList from '@/components/QualityList.vue'
-import { getDemand, closeDemand, downloadMarkdown, type DemandDetail, type StandardField } from '@/api/demand'
+import { getDemand, closeDemand, downloadMarkdown, deleteAttachment, downloadAttachment, fmtSize, parseAttachmentPayload, returnDemand, returnReasonOf, type DemandAttachment, type DemandDetail, type StandardField } from '@/api/demand'
 import { useUserStore } from '@/store/user'
 import { allFields, fieldPath, readField } from '@/utils/form'
 import { fmtTime, statusLabel, typeLabel, urgencyLabel } from '@/utils/format'
 const route = useRoute(); const router = useRouter(); const user = useUserStore()
 const detail = ref<DemandDetail | null>(null); const loading = ref(true); const downloading = ref(false)
 const expanded = ref<string[]>([]); const closeVisible = ref(false); const reason = ref('')
+const returnVisible = ref(false); const returnReasonText = ref('')
 const demand = computed(() => detail.value!.demand)
 // 需求概述：AI 每轮基于最新表单重写的四段式摘要（ext.overview），固定顺序固定标签；旧草稿无概述时回退展示 A8 原文与补充原话
 const OVERVIEW_LABELS: Record<string, string> = { problem: '问题/机会', userScene: '用户&场景', goal: '目标&期望效果', acceptance: '验收标准' }
@@ -42,18 +60,25 @@ const overviewRows = computed(() => {
   const overview = ((demand.value?.ext?.overview || {}) as Record<string, unknown>)
   return Object.entries(OVERVIEW_LABELS).filter(([key]) => typeof overview[key] === 'string' && overview[key]).map(([key, label]) => ({ key, label, text: String(overview[key]) }))
 })
-// 提报人补充原话（方案乙：展示层聚合，A8 底稿不动）：排除与 content 全等的首条 USER 消息（即 A8 底稿），其余用户消息按时间序
+// 提报人补充原话（方案乙：展示层聚合，A8 底稿不动）：排除与 content 全等的首条 USER 消息（即 A8 底稿），其余用户消息按时间序；附件上传动作消息是操作记录不是原话，与服务端 user_supplements 同口径排除
 const userSupplements = computed(() => {
   if (!detail.value) return []
   const base = (demand.value.content || '').trim()
   let skipped = false
   return detail.value.messages.filter(m => {
     if (m.role !== 'USER') return false
+    if (parseAttachmentPayload(m.structuredPayload)) return false
     if (!skipped && base && m.content.trim() === base) { skipped = true; return false }
     return true
   })
 })
 const own = computed(() => demand.value.submitterId === user.userInfo?.id)
+// 打回待补充（方案③）：ADMIN 可打回已提交需求；打回原因随 ext.returnReason 展示，重提成功后服务端清除
+const isAdmin = computed(() => !!user.userInfo?.isAdmin)
+const returnReason = computed(() => returnReasonOf(demand.value))
+// 附件区（阶段一）：详情接口随 detail 返回；仅草稿且本人可删（服务端同口径校验）
+const attachments = computed<DemandAttachment[]>(() => detail.value?.attachments || [])
+const canDeleteAttachment = computed(() => own.value && demand.value.status === 'DRAFT')
 const labels = computed(() => Object.fromEntries((detail.value?.standard ? allFields(detail.value.standard) : []).map(field => [field.key, field.label])))
 function display(value: unknown) { return value == null || value === '' ? '空' : Array.isArray(value) ? value.join('、') : typeof value === 'object' ? JSON.stringify(value) : String(value) }
 // 五区展示（PRD §4.1 详情页要求）：按 A/B/C/D 分组呈现已填要素；ext 为 MATL/TRAIN 与兼容字段兜底；草稿态空分区卡片保留并显示"待补充"占位
@@ -78,13 +103,28 @@ const extensionFields = computed(() => {
 })
 async function fetchDetail() { loading.value = true; try { detail.value = await getDemand(Number(route.params.id)) } catch { detail.value = null } finally { loading.value = false } }
 async function download() { downloading.value = true; try { await downloadMarkdown(demand.value.id, demand.value.demandNo || `draft-${demand.value.id}`) } catch (error) { showToast(error instanceof Error ? error.message : '下载失败') } finally { downloading.value = false } }
+async function downloadAttachmentFile(att: DemandAttachment) {
+  try { await downloadAttachment(demand.value.id, att.id, att.fileName) } catch (error) { showToast(error instanceof Error ? error.message : '下载失败') }
+}
+async function removeAttachment(att: DemandAttachment) {
+  try { await showConfirmDialog({ title: '删除附件', message: `确定删除「${att.fileName}」吗？删除后不可恢复。` }) } catch { return }
+  try { await deleteAttachment(demand.value.id, att.id); await fetchDetail(); showToast('附件已删除') } catch (error) { showToast(error instanceof Error ? error.message : '删除失败') }
+}
 async function beforeClose(action: string): Promise<boolean> {
   if (action === 'cancel') return true
   if (!reason.value.trim()) { showToast('请填写撤销原因'); return false }
   try { await closeDemand(demand.value.id, reason.value.trim()); await fetchDetail(); showToast('需求已撤销'); return true } catch { return false }
 }
+// ADMIN 打回（方案③）：原因必填；打回后需求转「待补充」，AI 会话重开并注入引述原因的播报
+async function beforeReturn(action: string): Promise<boolean> {
+  if (action === 'cancel') return true
+  if (!returnReasonText.value.trim()) { showToast('请填写打回原因'); return false }
+  try { await returnDemand(demand.value.id, returnReasonText.value.trim()); await fetchDetail(); showToast('已打回，等待提报人补充'); return true } catch { return false }
+}
 onMounted(fetchDetail)
 </script>
 <style scoped>
 .page-loading { padding: 60px; text-align: center; }.detail-card { background: #fff; margin: 14px 12px; border-radius: 12px; padding: 18px 16px; }.number { font-size: 12px; color: #888; }.header h1 { font-size: 20px; line-height: 1.6; margin: 8px 0 14px; }.tags { display: flex; gap: 8px; flex-wrap: wrap; }.meta { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; font-size: 12px; color: #888; }h2 { font-size: 15px; margin: 0 0 12px; }.content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; margin: 0; }.ext-row { display: grid; grid-template-columns: 92px 1fr; gap: 12px; margin: 12px 0; font-size: 13px; line-height: 1.7; }.ext-row strong { font-weight: 500; color: #888; min-width: 0; overflow-wrap: anywhere; }.ext-row span { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }.ext-row span small { display: block; color: #bbb; margin-top: 2px; }.zone-empty { margin: 0; font-size: 13px; color: #9ca3af; }.playback { padding: 4px 0; }.history-row { font-size: 13px; line-height: 1.8; border-bottom: 1px solid #eee; padding: 12px 0; }.history-row small { color: #999; margin-left: 10px; }.history-row p { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }.supp-title { font-size: 13px; color: #555; margin: 14px 0 4px; border-top: 1px dashed #e5e7eb; padding-top: 12px; }.supp-row { font-size: 13px; line-height: 1.8; margin: 8px 0; }.supp-row small { color: #999; display: block; }.supp-row p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }.ov-row { margin: 12px 0; }.ov-row strong { display: inline-block; font-size: 12px; font-weight: 600; color: #1f3a8a; background: #eef2ff; border-radius: 4px; padding: 2px 8px; margin-bottom: 4px; }.ov-row p { margin: 0; font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }.actions { display: flex; flex-direction: column; gap: 12px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+.return-card { border-left: 4px solid #f97316; background: #fff7ed; } .return-card h2 { color: #c2410c; } .return-card small { color: #b45309; }
+.att-note { margin: 0 0 10px; font-size: 12px; color: #9ca3af; line-height: 1.6; }.att-cell { border-top: 1px solid #f1f2f4; }.att-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }.att-icon { font-size: 22px; color: #1f3a8a; flex-shrink: 0; }.att-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }.att-meta strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }.att-meta small { font-size: 12px; color: #999; }.att-delete { height: 100%; }
 </style>

@@ -57,13 +57,14 @@ async def test_update_then_detail_change_logs_grow(client, auth_headers):
     assert again["changeLogs"][-1]["oldValue"] == "持仓自动汇总报表" and again["changeLogs"][-1]["newValue"] == "持仓自动报表"
 
 
-async def test_overview_update_persisted_but_not_logged(client, auth_headers):
-    # ext.overview 是 AI 派生摘要：RESERVED_EXT_KEYS 保留可写，但变更留痕排除（避免每轮重写刷噪音）
+async def test_overview_ignored_from_manual_update(client, auth_headers):
+    # ext.overview 概述只归 AI 派生链路（guide/后台重写）所有：手工保存回传的旧概述被忽略，
+    # 防止整表单回传把后台刚重写的新概述覆盖回旧值（FR-06 手改联动）
     draft = await create_full(client, auth_headers, "p3-overview")
     updated = (await client.put(f"/demandhub-api/demand/{draft['id']}", headers=auth_headers,
                                 json={"expectedRevision": draft["revision"],
                                       "ext": {"overview": {"problem": "手工拼表每次40分钟｜现有统计方式低效"}}})).json()["data"]
-    assert updated["ext"]["overview"]["problem"].startswith("手工拼表")
+    assert updated["ext"].get("overview") is None
     assert all(log["fieldKey"] != "ext.overview" for log in updated["changeLogs"])
 
 

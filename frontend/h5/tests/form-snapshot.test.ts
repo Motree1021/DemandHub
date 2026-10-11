@@ -14,6 +14,7 @@ const standard: Standard = {
     { key: 'title', label: '需求标题', kind: 'text', zone: 'A', required: true },
     { key: 'demandTypeCode', label: '需求类型', kind: 'enum', zone: 'A', required: true, options: { TECH: '科技需求', MATL: '物资需求' } },
     { key: 'urgency', label: '紧急程度', kind: 'enum', zone: 'A', required: true, options: { NORMAL: '普通', URGENT: '加急' } },
+    { key: 'expectDeliveryAt', label: '期望完成时间', kind: 'date', zone: 'A', required: false },
     { key: 'snapshot', label: '快照要素', kind: 'text', zone: 'A', system: true },
     { key: 'businessGoal', label: '业务目标', kind: 'text', zone: 'B', path: 'elements.B.businessGoal', required: true },
     { key: 'userRole', label: '目标用户', kind: 'text', zone: 'C', path: 'elements.C.userRole', required: true },
@@ -40,7 +41,7 @@ describe('FormSnapshotCard 要素实时卡', () => {
     expect(text).toContain('D · 功能需求'); expect(text).toContain('系统要做什么')
     expect(text).toContain('需求标题'); expect(text).not.toContain('快照要素')
   })
-  it('按填写状态与质量清单渲染已填/待补充pill', () => {
+  it('按填写状态渲染已填/待补充/选填三态pill，选填未填不再挂假待办', () => {
     const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: form(), quality: [{ key: 'userRole', label: '目标用户', status: 'OK', note: '', attempts: 0 }] }, global: { stubs } })
     const rows = wrapper.findAll('.el')
     const pillOf = (label: string) => rows.find(row => row.text().includes(label))!.find('.pill')
@@ -49,6 +50,17 @@ describe('FormSnapshotCard 要素实时卡', () => {
     expect(pillOf('功能描述').text()).toBe('待补充')
     // 质量清单 OK 优先于值为空
     expect(pillOf('目标用户').text()).toBe('已填')
+    // 选填项（期望完成时间）未填显示灰胶囊「选填」，不与必填项的「待补充」混淆
+    const optional = pillOf('期望完成时间')
+    expect(optional.text()).toBe('选填')
+    expect(optional.classes()).toContain('optional')
+    // B 区在非业务需求下同为选填口径：业务目标未填显示「选填」
+    const plain = form()
+    delete plain.elements.B
+    const bWrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: plain }, global: { stubs } })
+    const bPill = bWrapper.findAll('.el').find(row => row.text().includes('业务目标'))!.find('.pill')
+    expect(bPill.text()).toBe('选填')
+    expect(bPill.classes()).toContain('optional')
   })
   it('点击字段行emit edit-field，业务需求确认后B区带必填标记与星号', async () => {
     const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: form(), businessConfirmed: true }, global: { stubs } })
@@ -136,5 +148,56 @@ describe('FormSnapshotCard 要素实时卡', () => {
     await wrapper.find('.card-title').trigger('click')
     expect(wrapper.find('.zone').exists()).toBe(false)
     expect(wrapper.find('.type-row').exists()).toBe(false)
+  })
+  // 微需求快速通道（方案②）：AI 判 mode=light 时折叠态显示「轻量提报 X/4」，红星只标最小集
+  const lightStandard: Standard = {
+    ...standard,
+    elements: [...standard.elements,
+      { key: 'content', label: '原始提报文本', kind: 'text', zone: 'A', required: true },
+      { key: 'acceptanceCriteria', label: '期望效果', kind: 'text', zone: 'D', path: 'elements.D.acceptanceCriteria', required: true }]
+  }
+  it('light 模式：折叠态显示「轻量提报 X/4」，不显示常规必填进度', () => {
+    const value = form()
+    value.ext = { mode: { level: 'light' } }
+    const wrapper = mount(FormSnapshotCard, { props: { standard: lightStandard, form: value }, global: { stubs } })
+    // 标题+紧急程度已填，原话/期望效果待补 → 2/4；常规「必填 X/Y」进度不再显示
+    expect(wrapper.text()).toContain('轻量提报 2/4')
+    expect(wrapper.text()).not.toContain('必填 ')
+  })
+  it('light 模式：红星只标最小集4项（标题/原话/紧急程度/期望效果），C/D其余与B区不标星', () => {
+    const value = form()
+    value.ext = { mode: { level: 'light' } }
+    const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard: lightStandard, form: value }, global: { stubs } })
+    const rows = wrapper.findAll('.el')
+    const hasStar = (label: string) => rows.find(row => row.text().includes(label))!.find('.req').exists()
+    expect(hasStar('需求标题')).toBe(true)
+    expect(hasStar('原始提报文本')).toBe(true)
+    expect(hasStar('紧急程度')).toBe(true)
+    expect(hasStar('期望效果')).toBe(true)
+    expect(hasStar('需求类型')).toBe(false)
+    expect(hasStar('目标用户')).toBe(false)
+    expect(hasStar('功能描述')).toBe(false)
+    expect(hasStar('业务目标')).toBe(false)
+  })
+  it('light 模式：展开态标题行提示轻量口径；standard 草稿不受影响', () => {
+    const value = form()
+    value.ext = { mode: { level: 'light' } }
+    const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard: lightStandard, form: value }, global: { stubs } })
+    expect(wrapper.text()).toContain('轻量提报 · 点任意一项可直接修改')
+    const normal = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard: lightStandard, form: form() }, global: { stubs } })
+    expect(normal.text()).toContain('点任意一项可直接修改')
+    expect(normal.text()).not.toContain('轻量提报 ·')
+  })
+  it('light 模式：非最小集字段胶囊显示「选填」，最小集缺口仍「待补充」', () => {
+    const value = form()
+    value.ext = { mode: { level: 'light' } }
+    const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard: lightStandard, form: value }, global: { stubs } })
+    const rows = wrapper.findAll('.el')
+    const pillOf = (label: string) => rows.find(row => row.text().includes(label))!.find('.pill')
+    // 最小集缺口仍是系统在等的必填项
+    expect(pillOf('期望效果').text()).toBe('待补充')
+    // 不追问不标星的 C/D 字段不再挂一片假「待补充」
+    expect(pillOf('目标用户').text()).toBe('选填')
+    expect(pillOf('功能描述').text()).toBe('选填')
   })
 })

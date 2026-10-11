@@ -53,6 +53,22 @@ export function post<T>(url: string, data?: unknown, config?: AxiosRequestConfig
 export function put<T>(url: string, data?: unknown): Promise<T> {
   return service.put(url, data) as unknown as Promise<T>
 }
+export function del<T>(url: string): Promise<T> {
+  return service.delete(url) as unknown as Promise<T>
+}
+
+/** 附件预览/缩略图：带 Bearer 拉取二进制内容（img 标签无法携带鉴权头，改用 blob + objectURL）。 */
+export async function fetchBlob(path: string): Promise<Blob> {
+  const response = await fetch(`${API_BASE}${path}`, { headers: bearerHeaders() })
+  const contentType = response.headers.get('content-type') || ''
+  if (!response.ok || contentType.includes('json')) {
+    const result = await response.json().catch(() => null) as Result | null
+    const code = result?.code || response.status
+    if (code === 401) expireSession()
+    throw new ApiError(code, result?.message || '附件加载失败')
+  }
+  return response.blob()
+}
 
 /** 文件下载同样携带 Bearer，并识别 HTTP 200 的业务错误。 */
 export async function downloadFile(path: string, fallbackName: string, params?: Record<string, string>) {

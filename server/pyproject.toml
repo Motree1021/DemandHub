@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml",
     "openpyxl",
     "tzdata>=2026.5",
+    "python-multipart",
 ]
 
 [dependency-groups]

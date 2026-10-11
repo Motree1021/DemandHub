@@ -1,7 +1,7 @@
 <template>
   <app-layout active-tab="mine">
     <van-tabs v-model:active="status" sticky offset-top="0" @change="refresh">
-      <van-tab title="全部" name="" /><van-tab title="草稿" name="DRAFT" /><van-tab title="已提交" name="SUBMITTED" /><van-tab title="已撤销" name="CLOSED" />
+      <van-tab title="全部" name="" /><van-tab title="草稿" name="DRAFT" /><van-tab title="已提交" name="SUBMITTED" /><van-tab title="待补充" name="NEED_INFO" /><van-tab title="已撤销" name="CLOSED" />
     </van-tabs>
     <van-pull-refresh v-model="refreshing" @refresh="refresh">
       <van-list :loading="loading" :finished="finished" :error="failed" error-text="加载失败，点击重试" :immediate-check="false" finished-text="没有更多了" @update:error="failed = $event" @load="load">
@@ -32,10 +32,12 @@ async function load() {
   finally { if (current === generation) loading.value = false }
 }
 async function refresh() { generation++; loading.value = false; rows.value = []; page.value = 1; finished.value = false; try { await load() } finally { refreshing.value = false } }
-// 草稿撤销：列表快捷入口，固定原因（详情页保留手填原因的完整交互）
+// 草稿/打回需求撤销：列表快捷入口，固定原因（详情页保留手填原因的完整交互）
 async function closeItem(id: number) {
-  try { await showConfirmDialog({ title: '撤销草稿', message: '撤销后不可继续编辑，会移入「已撤销」。确定撤销吗？' }) } catch { return }
-  try { await closeDemand(id, '提报人撤销草稿'); showToast('草稿已撤销'); await refresh() } catch { showToast('撤销失败，请重试') }
+  const item = rows.value.find(row => row.id === id)
+  const draft = item?.status === 'DRAFT'
+  try { await showConfirmDialog({ title: draft ? '撤销草稿' : '撤销需求', message: '撤销后不可继续编辑，会移入「已撤销」。确定撤销吗？' }) } catch { return }
+  try { await closeDemand(id, draft ? '提报人撤销草稿' : '提报人撤销需求'); showToast('已撤销'); await refresh() } catch { showToast('撤销失败，请重试') }
 }
 onMounted(refresh)
 </script>

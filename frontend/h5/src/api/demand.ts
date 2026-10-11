@@ -1,4 +1,4 @@
-import { get, post, put, downloadFile } from './request'
+import { get, post, put, del, downloadFile, fetchBlob, API_BASE, bearerHeaders } from './request'
 export type FieldSources = Record<string, 'default' | 'agent' | 'user'>
 export interface ElementStatus { key: string; label?: string; status: 'OK' | 'VAGUE' | 'MISSING' | 'SKIP'; note: string; attempts: number }
 export interface StandardField {
@@ -20,14 +20,80 @@ export interface DemandForm {
 }
 export interface ChangeLog { id: number; fieldKey: string; oldValue: unknown; newValue: unknown; source: 'default' | 'agent' | 'user'; changedBy: number | null; createdAt: string }
 export interface TypeRecognition { business?: number; user?: number; function?: number; confirmed?: string | null; evidence?: Record<string, string> }
+// 微需求快速通道（方案②）：AI 轻重判定，light 时表单卡显示「轻量提报 X/4」、红星只标最小集
+export interface DemandMode { level: 'light' | 'standard'; evidence?: string }
+export function demandModeOf(form: DemandForm): 'light' | 'standard' {
+  const mode = form.ext?.mode as DemandMode | undefined
+  return mode?.level === 'light' ? 'light' : 'standard'
+}
 export interface DemandEntity extends DemandForm {
-  id: number; demandNo: string | null; subtypeCode: string | null; revision: number; status: 'DRAFT' | 'SUBMITTED' | 'CLOSED'
+  id: number; demandNo: string | null; subtypeCode: string | null; revision: number
+  status: 'DRAFT' | 'SUBMITTED' | 'NEED_INFO' | 'CLOSED'
   submitterId: number; submitterName: string | null; submitterDept: string | null; channel: string; sessionId: number | null
   submittedAt: string | null; closedAt: string | null; closeReason: string | null; createdAt: string; updatedAt: string; quality: ElementStatus[]
   changeLogs: ChangeLog[]
 }
+// 打回待补充（方案③）：管理员打回原因存 ext.returnReason，重提成功后由服务端清除
+export interface ReturnReason { reason: string; returnedBy?: string; returnedAt?: string }
+export function returnReasonOf(form: DemandForm): ReturnReason | null {
+  const value = form.ext?.returnReason as ReturnReason | undefined
+  return value && typeof value.reason === 'string' && value.reason ? value : null
+}
 export interface AgentMessage { id: number; sessionId: number; role: 'USER' | 'ASSISTANT' | 'SYSTEM'; content: string; structuredPayload: string | null; requestId?: string; createdAt: string }
-export interface DemandDetail { demand: DemandEntity; quality: ElementStatus[]; standard: Standard | null; messages: AgentMessage[] }
+// 手工改要素播报（FR-06）：ASSISTANT 消息的 structuredPayload 为此时前端渲染改动手卡片
+export interface ManualChangePayload { kind: 'manualChange'; changes: { action: 'update' | 'fill' | 'clear'; label: string; old: string; new: string }[] }
+export function parseManualChange(raw: string | null | undefined): ManualChangePayload | null {
+  if (!raw) return null
+  try {
+    const payload = JSON.parse(raw) as ManualChangePayload | null
+    return payload && payload.kind === 'manualChange' && Array.isArray(payload.changes) ? payload : null
+  } catch { return null }
+}
+// 附件消息（阶段一）：USER 上传动作 + AI 固定回执，不参与质量快照回放
+export interface AttachmentPayload { kind: 'attachment' | 'attachmentReceipt'; attachmentId: number; fileName: string; fileKind?: 'IMAGE' | 'DOC'; size?: number }
+export function parseAttachmentPayload(raw: string | null | undefined): AttachmentPayload | null {
+  if (!raw) return null
+  try {
+    const payload = JSON.parse(raw) as AttachmentPayload | null
+    return payload && (payload.kind === 'attachment' || payload.kind === 'attachmentReceipt') && payload.attachmentId ? payload : null
+  } catch { return null }
+}
+// 打回播报（方案③）：管理员打回注入会话的白话通知，聊天流按普通 AI 消息渲染，不参与质量快照回放
+export interface ReturnNoticePayload { kind: 'returnNotice'; reason: string }
+export function parseReturnNotice(raw: string | null | undefined): ReturnNoticePayload | null {
+  if (!raw) return null
+  try {
+    const payload = JSON.parse(raw) as ReturnNoticePayload | null
+    return payload && payload.kind === 'returnNotice' && payload.reason ? payload : null
+  } catch { return null }
+}
+/** 会话质量快照回放只认真正的对话结果消息：手改播报/附件回执/打回播报都不算（与服务端 guide.py 同口径）。 */
+export function isReplayablePayload(raw: string | null | undefined): boolean {
+  return !!raw && !parseManualChange(raw) && !parseAttachmentPayload(raw) && !parseReturnNotice(raw)
+}
+export interface DemandAttachment { id: number; demandId: number; fileName: string; kind: 'IMAGE' | 'DOC'; kindLabel: string; size: number; createdAt: string }
+export const listAttachments = (demandId: number): Promise<DemandAttachment[]> => get(`/demand/${demandId}/attachments`)
+export function uploadAttachment(demandId: number, file: File): Promise<DemandAttachment> {
+  const form = new FormData()
+  form.append('file', file)
+  return post(`/demand/${demandId}/attachments`, form, { timeout: 60000 })
+}
+export const deleteAttachment = (demandId: number, attachmentId: number): Promise<unknown> => del(`/demand/${demandId}/attachments/${attachmentId}`)
+/** 图片缩略图：鉴权拉 blob 转 objectURL（组件卸载时须 revokeObjectURL）。 */
+export async function fetchAttachmentThumb(demandId: number, attachmentId: number): Promise<string> {
+  const blob = await fetchBlob(`/demand/${demandId}/attachments/${attachmentId}/download`)
+  return URL.createObjectURL(blob)
+}
+export const downloadAttachment = (demandId: number, attachmentId: number, fileName: string): Promise<void> =>
+  downloadFile(`/demand/${demandId}/attachments/${attachmentId}/download`, fileName)
+export const ATTACHMENT_SIZE_LIMIT = 10 * 1024 * 1024
+export const ATTACHMENT_COUNT_LIMIT = 5
+export const ATTACHMENT_ACCEPT = { image: 'image/png,image/jpeg,image/webp', doc: '.md,.pdf,.doc,.docx,.ppt,.pptx' }
+export function fmtSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`
+  return `${Math.max(Math.round(size / 1024), 1)}KB`
+}
+export interface DemandDetail { demand: DemandEntity; quality: ElementStatus[]; standard: Standard | null; messages: AgentMessage[]; attachments?: DemandAttachment[] }
 export interface PageResult<T> { records: T[]; total: number; size: number; current: number; pages: number }
 export interface DemandQuery { page: number; size: number; status?: string }
 export interface AdminQuery extends DemandQuery { type?: string; from?: string; to?: string }
@@ -42,6 +108,8 @@ export function nonEmptyQuery<T extends object>(query: T): Partial<T> {
 }
 export const myDemands = (query: DemandQuery): Promise<PageResult<DemandEntity>> => get('/demand/my', nonEmptyQuery(query))
 export const adminDemands = (query: AdminQuery): Promise<PageResult<DemandEntity>> => get('/admin/demand/list', nonEmptyQuery(query))
+// 管理员打回待补充（方案③）：仅已提交需求可打回，原因必填，服务端写留痕并往会话注入播报
+export const returnDemand = (id: number, reason: string): Promise<DemandEntity> => post(`/admin/demand/${id}/return`, { reason })
 export const getDemand = (id: number): Promise<DemandDetail> => get(`/demand/${id}`)
 export const downloadMarkdown = (id: number, name: string): Promise<void> => downloadFile(`/demand/${id}/export.md`, `${name}.md`)
 export const downloadXlsx = (query: Omit<AdminQuery, 'page' | 'size'>): Promise<void> => downloadFile('/admin/demand/export.xlsx', 'demandhub.xlsx', nonEmptyQuery(query) as Record<string, string>)

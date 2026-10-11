@@ -2,9 +2,10 @@
 import re
 from copy import deepcopy
 
-from app.agent.schemas import ElementStatus, ModelOutput, TypeSignalsOutput
+from app.agent.schemas import ElementStatus, ModelOutput, ModeSignalOutput, TypeSignalsOutput
 from app.standards import loader as standard_loader
 from app.standards.rules import (
+    LIGHT_REQUIRED_KEYS,
     assess,
     blank,
     business_confirmed,
@@ -56,6 +57,9 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
                 raise ValueError(f"模型输出{path}类型错误")
             if sources.get(path) == "user" or blank(item):
                 continue
+            # 模型把质量状态词当值写进字段（真实链路已观测 elements.B.businessGoal="VAGUE"）属自相矛盾输出，按未输出过滤
+            if isinstance(item, str) and item.strip().upper() in {"VAGUE", "MISSING"}:
+                continue
             # FR-08 提炼约束：agent 文本中的数字必须可溯源到本轮消息或旧值，含新增数字视为编造事实，整值过滤
             if grounded_text is not None and kind == "text" and isinstance(item, str):
                 grounded = _numbers(grounded_text) | _numbers(get_value(result, path))
@@ -78,12 +82,17 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
     # ext.overview 需求概述（四段式摘要）非五区要素，filter_form 会丢弃，需与 pendingSplits 同样保留
     overview = (result.get("ext") or {}).get("overview")
     old_overview = (form.get("ext") or {}).get("overview")
+    # ext.returnReason 打回原因（方案③）由管理员写入、系统管理，filter_form 会丢弃：从旧表单原样保留
+    # （不读模型输出，防止模型伪造打回原因），否则对话一轮后 merged 里打回原因丢失、AI 无法引述
+    old_return_reason = (form.get("ext") or {}).get("returnReason")
     # 容错模式：模型输出的单个非法值（如日期写"本周"）丢弃而非整轮报错；demandTypeCode 已在上方单独严控
     result = filter_form(normalization_standard, result, validate=False)
     if isinstance(pending_splits, list) and pending_splits:
         result.setdefault("ext", {})["pendingSplits"] = pending_splits
     if isinstance(overview, dict) and overview:
         result.setdefault("ext", {})["overview"] = overview
+    if isinstance(old_return_reason, dict) and old_return_reason:
+        result.setdefault("ext", {})["returnReason"] = old_return_reason
     allowed = {f.field_path for f in normalization_standard.fields}
     sources = {k: v for k, v in sources.items() if k in allowed}
     if "pendingSplits" in (result.get("ext") or {}):
@@ -107,6 +116,18 @@ def merge_type_signals(signals: TypeSignalsOutput | None, form: dict) -> dict | 
             evidence[layer] = vote.evidence
     result["evidence"] = evidence
     return result
+
+
+def merge_mode_signal(signal: ModeSignalOutput | None, form: dict) -> dict | None:
+    """轻重判定票与既有 ext.mode 合并（2026-10-11 方案②）：standard 粘性——判定过 standard 后
+    模型不得再降回 light（防止对话后期把已按常规口径追问的需求悄悄放宽）；未判定时缺省 standard。"""
+    prev = (form.get("ext") or {}).get("mode") or {}
+    prev_level = prev.get("level") if isinstance(prev, dict) else None
+    if signal is None:
+        return {"level": prev_level, "evidence": prev.get("evidence", "")} if prev_level else None
+    if prev_level == "standard":
+        return {"level": "standard", "evidence": prev.get("evidence") or signal.evidence}
+    return {"level": signal.level, "evidence": signal.evidence}
 
 
 def detect_granularity(standard: Standard, form: dict, message: str) -> dict | None:
@@ -134,14 +155,14 @@ def impact_hints(previous_form: dict, merged: dict) -> list[str]:
     return []
 
 
-def complete_elements(standard: Standard, form: dict, model_elements: list[ElementStatus]):
+def complete_elements(standard: Standard, form: dict, model_elements: list[ElementStatus], *, light: bool = False):
     allowed = {element.key for element in standard.elements}
     keys = [element.key for element in model_elements]
     if len(keys) != len(set(keys)) or not set(keys) <= allowed:
         raise ValueError("模型质量要素不属于当前标准或重复")
     model = {element.key: element for element in model_elements}
     result = []
-    for rule in assess(standard, form):
+    for rule in assess(standard, form, light=light):
         item = model.get(rule.key)
         # 状态以规则层为准：规则合格/缺失均不被模型票改写。模型对已有有效值报 MISSING/VAGUE 多为自相矛盾
         # （值往往就是模型自己 structured 写入的），一旦降级已填字段会被反复追问。
@@ -187,26 +208,42 @@ def compute_missing(standard, form):
     return [e.key for e in standard.elements if e.required and not e.system and blank(get_value(form, e.field_path))]
 
 
-def pick_follow_up(standard, elements, *, business: bool = False):
+def pick_follow_up(standard, elements, *, business: bool = False, light: bool = False):
     """选下一个追问目标。
 
     追问顺序：A/C/D 必填先问完（用户先补"给谁用、什么场景、痛点、验收"等具体信息），
     B 区业务要素排最后；且 B 区仅在判型为业务需求（business=True）时才追问，
     日常功能需求完全不问 B 区（与提交门槛 active_zones 口径一致）。
+
+    light 模式（2026-10-11 方案②）：只追问最小集 {紧急度→期望效果(D8)→标题兜底}，
+    每项最多问一次（合计≤2轮，对齐"紧急度→标题+效果一次确认"拍板口径），
+    C/D 其余要素与 B 区一律不问；content 永不追问（A8 底稿由系统首条消息回填）。
     """
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
     required = [e.key for e in standard.elements if e.required and not e.system]
+    # light 追问顺序固定：紧急度先问（模板化好答），期望效果次之并连带标题确认，标题仅兜底
+    light_order = ["urgency", "acceptanceCriteria", "title"]
 
     def eligible(key):
         field = field_of.get(key)
         if field is None:
             return False
+        if light:
+            if key not in light_order:
+                return False
+            element = by_key.get(key)
+            return element is not None and element.status not in {"OK", "SKIP"} and element.attempts < 1
         if field.zone == "B" and not business:
             return False
         element = by_key.get(key)
         return element is not None and element.status not in {"OK", "SKIP"} and element.attempts < standard.max_attempts
 
+    if light:
+        for key in light_order:
+            if eligible(key):
+                return by_key[key]
+        return None
     # 稳定排序：B 区沉底，其余（A/C/D 及 MATL/TRAIN 无分区要素）保持 yaml 原顺序在前
     ordered = sorted(required, key=lambda k: 1 if field_of[k].zone == "B" else 0)
     for key in ordered + standard.follow_up_order:
@@ -247,13 +284,26 @@ def anchored_template(standard, field, form):
     return field.ask_anchor.replace("{anchor}", snippet)
 
 
-def reply_for(standard, target, form):
+def reply_for(standard, target, form, *, light: bool = False, business: bool = False):
     if target is None:
+        if light:
+            # light 模式必填门槛是最小集（required_keys），全齐即普通完成话术；未齐给兜底指引
+            return "都记好了，请核对一下表单。该填的都齐了，可以提交。" if not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS) else "我这边问得差不多了。还差的几项请在下方表单里补齐后提交。"
+        # 完成话术与提交门槛（process 的 can_submit）同一口径：B 区必填仅在判型为业务需求时生效，
+        # 否则未判业务需求的 B 区缺项会把「都齐了」误报成「还有必填没填」
+        active_zones = {"A", "C", "D"} | ({"B"} if business else set())
         # 必填已齐、引导结束：选填项的 VAGUE/MISSING 状态会留在要素记录里供审核参考，用白话告知而非"质量缺口"术语
-        return "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，以后能补；产品经理调研后也可以补。" if not schema_errors(standard, form, required=True) else "我这边问得差不多了。请在下方表单里把标红星※的必填项补齐后提交。"
+        return "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，以后能补；产品经理调研后也可以补。" if not schema_errors(standard, form, required=True, active_zones=active_zones) else "我这边问得差不多了。请在下方表单里把标红星※的必填项补齐后提交。"
     field = next(e for e in standard.elements if e.key == target.key)
     value = str(get_value(form, field.field_path) or "")
     snippet = value[:20] + ("…" if len(value) > 20 else "")
+    # light 模式 D8 用白话问「期望效果」并顺带确认 AI 代拟标题（拍板：紧急度→标题+效果一次确认）；
+    # 不复用 yaml 的量化验收话术，避免"给个可检查的标准"把换 logo 这类轻量需求问成考试题
+    if light and field.key == "acceptanceCriteria" and target.attempts == 0:
+        title = str(get_value(form, "title") or "").strip()
+        if title:
+            return f"标题我先记为「{title}」，不合适直接告诉我改什么。这个需求期望的效果是什么？做完后能看见什么变化？比如「首页顶部 logo 换成新设计的蓝色版本」。"
+        return "这个需求期望的效果是什么？做完后能看见什么变化？比如「首页顶部 logo 换成新设计的蓝色版本」。"
     if target.attempts >= 1:
         template = field.ask_l2 or field.ask_l1 or field.ask_missing
     else:
@@ -275,26 +325,47 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         merged.setdefault("ext", {})["typeRecognition"] = recognition
         prev_confirmed = ((form.get("ext") or {}).get("typeRecognition") or {}).get("confirmed")
         field_sources["ext.typeRecognition"] = "user" if prev_confirmed is not None else "agent"
-    curr = complete_elements(standard, merged, output.elements)
+    # 微需求快速通道（2026-10-11 方案②）：轻重判定合并入 ext.mode，standard 粘性不回退
+    prev_mode = (form.get("ext") or {}).get("mode")
+    prev_mode_level = prev_mode.get("level") if isinstance(prev_mode, dict) else None
+    mode = merge_mode_signal(output.mode_signal, form)
+    if mode:
+        merged.setdefault("ext", {})["mode"] = mode
+        field_sources["ext.mode"] = "agent"
+    light = (mode or {}).get("level") == "light"
+    # light→standard 升级当轮播报：告知口径变化，避免用户困惑为何突然多问几项
+    mode_upgraded = prev_mode_level == "light" and not light
+    curr = complete_elements(standard, merged, output.elements, light=light)
     curr = inherit_and_count(prev, curr, prev_target, user_said_skip(standard, text), standard=standard, previous_form=previous_form, form=merged)
     # B 区必填按判型门槛生效（PRD §4.3、FR-03 分支）：业务需求全量四区，否则 A/C/D
     is_business = business_confirmed(recognition)
-    # 追问顺序与提交门槛共用同一判型口径：业务需求才追问 B 区，且 A/C/D 先问完再问 B
-    target = pick_follow_up(standard, curr, business=is_business)
-    active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
-    can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
+    # 追问顺序与提交门槛共用同一判型口径：业务需求才追问 B 区，且 A/C/D 先问完再问 B；
+    # light 模式只按最小集追问（每项一次）并按最小集放行提交
+    target = pick_follow_up(standard, curr, business=is_business, light=light)
+    if light:
+        can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
+    else:
+        active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
+        can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
     granularity = detect_granularity(standard, merged, text)
     impacts = impact_hints(previous_form, merged)
-    reply = reply_for(standard, target, merged)
+    reply = reply_for(standard, target, merged, light=light, business=is_business)
+    if mode_upgraded:
+        reply = "这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。" + reply
     if impacts:
         reply = " ".join(impacts) + " " + reply
     if granularity:
         reply = granularity["hint"] + " " + reply
+    # 打回闭环（2026-10-11 方案③）：returnReason 留存期间回复白话引述打回原因引导补改，
+    # 重提成功服务端清除 returnReason 后引述自然消失；模型自述不可靠，引述必须由模板层保证
+    return_reason = ((merged.get("ext") or {}).get("returnReason") or {}).get("reason")
+    if return_reason:
+        reply = f"这条需求之前被打回过，打回原因是「{return_reason}」。按这个说明改好后就能重新提交。" + reply
     return {
         "structured": merged, "fieldSources": field_sources,
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
         "askedTarget": target.key if target else None, "canSubmit": can_submit, "ready": can_submit,
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
         "quickReplies": quick_replies(standard, target), "reply": reply,
-        "typeRecognition": recognition, "granularityHint": granularity, "impactHints": impacts,
+        "typeRecognition": recognition, "mode": mode, "granularityHint": granularity, "impactHints": impacts,
     }

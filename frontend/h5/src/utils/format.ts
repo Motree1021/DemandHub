@@ -1,5 +1,5 @@
 export function statusLabel(status: string | null | undefined): string {
-  return ({ DRAFT: '草稿', SUBMITTED: '已提交', CLOSED: '已撤销' } as Record<string, string>)[status || ''] || status || '未知'
+  return ({ DRAFT: '草稿', SUBMITTED: '已提交', NEED_INFO: '待补充', CLOSED: '已撤销' } as Record<string, string>)[status || ''] || status || '未知'
 }
 export function typeLabel(type: string | null | undefined): string {
   return ({ TECH: '科技需求', MATL: '物料需求', TRAIN: '培训需求' } as Record<string, string>)[type || ''] || type || '类型待确认'

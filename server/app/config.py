@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     llm_embedding_model: str = ""
     llm_failure_threshold: int = Field(default=3, ge=1)
     llm_failure_cooldown_s: float = Field(default=60, gt=0)
+    attachment_dir: str = "storage/attachments"
 
     @model_validator(mode="after")
     def validate_environment(self):

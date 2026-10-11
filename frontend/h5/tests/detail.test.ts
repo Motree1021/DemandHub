@@ -2,15 +2,19 @@
 import { mount, flushPromises, VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import Vant from 'vant'
+import Vant, { showToast } from 'vant'
 import Detail from '@/views/demand/detail.vue'
 import { newForm } from '@/utils/form'
-import type { AgentMessage, DemandEntity, Standard } from '@/api/demand'
+import type { AgentMessage, DemandAttachment, DemandEntity, Standard } from '@/api/demand'
 
-const mocks = vi.hoisted(() => ({ getDemand: vi.fn(), closeDemand: vi.fn(), downloadMarkdown: vi.fn(), push: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getDemand: vi.fn(), closeDemand: vi.fn(), downloadMarkdown: vi.fn(), deleteAttachment: vi.fn(), downloadAttachment: vi.fn(), showConfirmDialog: vi.fn(), push: vi.fn(), returnDemand: vi.fn() }))
+// store 身份可按测试改写（默认与既有用例一致：本人+非管理员）
+const storeMocks = vi.hoisted(() => ({ userInfo: { id: 1, name: '管理员', dept: '机构业务部', channelType: 'SSO', isAdmin: false } }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: '1' } }), useRouter: () => ({ push: mocks.push }) }))
-vi.mock('@/store/user', () => ({ useUserStore: () => ({ userInfo: { id: 1, name: '管理员', dept: '机构业务部', channelType: 'SSO', isAdmin: false }, ticket: 't', loaded: true }) }))
-vi.mock('@/api/demand', () => ({ getDemand: mocks.getDemand, closeDemand: mocks.closeDemand, downloadMarkdown: mocks.downloadMarkdown }))
+vi.mock('@/store/user', () => ({ useUserStore: () => ({ userInfo: storeMocks.userInfo, ticket: 't', loaded: true }) }))
+// 纯函数（fmtSize/parseAttachmentPayload 等）走真实实现，接口函数按需覆写
+vi.mock('@/api/demand', async importOriginal => ({ ...await importOriginal<typeof import('@/api/demand')>(), getDemand: mocks.getDemand, closeDemand: mocks.closeDemand, downloadMarkdown: mocks.downloadMarkdown, deleteAttachment: mocks.deleteAttachment, downloadAttachment: mocks.downloadAttachment, returnDemand: mocks.returnDemand }))
+vi.mock('vant', async importOriginal => ({ ...await importOriginal<typeof import('vant')>(), showToast: vi.fn(), showConfirmDialog: mocks.showConfirmDialog }))
 
 const QualityListStub = defineComponent({ template: '<div data-quality />' })
 
@@ -201,5 +205,152 @@ describe('demand detail 撤销入口', () => {
     mocks.getDemand.mockResolvedValue({ demand: entity({ submitterId: 2 }), quality: [], standard: null, messages: [] })
     const wrapper = createWrapper(); await flushPromises()
     expect(wrapper.findAll('button').some(b => b.text().includes('撤销'))).toBe(false)
+  })
+})
+
+describe('demand detail 附件区（阶段一）', () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.showConfirmDialog.mockResolvedValue(undefined) })
+  function attachment(id: number, over: Partial<DemandAttachment> = {}): DemandAttachment {
+    return { id, demandId: 1, fileName: '登录页原型.png', kind: 'IMAGE', kindLabel: '图片', size: 204800, createdAt: '2026-10-10T10:00:00', ...over }
+  }
+  function createWrapper(): VueWrapper {
+    return mount(Detail, { global: { plugins: [Vant], stubs: { AppLayout: { template: '<div><slot /></div>' }, QualityList: QualityListStub } } })
+  }
+  it('有附件渲染附件卡：计数标题、多模态提示、文件行；无附件不渲染卡片', async () => {
+    mocks.getDemand.mockResolvedValue({
+      demand: entity(), quality: [], standard: null, messages: [],
+      attachments: [attachment(5), attachment(6, { fileName: '验收说明.pdf', kind: 'DOC', kindLabel: '文档', size: 1024 * 1024 + 512 * 1024 })]
+    })
+    const wrapper = createWrapper(); await flushPromises()
+    expect(wrapper.text()).toContain('附件（2）')
+    expect(wrapper.find('.att-note').text()).toBe('AI 暂不支持识别附件内容，附件将作为需求材料随需求一并提交。')
+    const rows = wrapper.findAll('.att-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('登录页原型.png')
+    expect(rows[0].text()).toContain('图片 · 200KB')
+    expect(rows[1].text()).toContain('验收说明.pdf')
+    expect(rows[1].text()).toContain('1.5MB')
+
+    mocks.getDemand.mockResolvedValue({ demand: entity(), quality: [], standard: null, messages: [] })
+    const empty = createWrapper(); await flushPromises()
+    expect(empty.text()).not.toContain('附件（')
+  })
+  it('删除按钮仅本人草稿可见：已提交或非本人都不显示', async () => {
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'DRAFT' }), quality: [], standard: null, messages: [], attachments: [attachment(5)] })
+    const draft = createWrapper(); await flushPromises()
+    expect(draft.find('.att-delete').exists()).toBe(true)
+
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'SUBMITTED' }), quality: [], standard: null, messages: [], attachments: [attachment(5)] })
+    const submitted = createWrapper(); await flushPromises()
+    expect(submitted.find('.att-delete').exists()).toBe(false)
+
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'DRAFT', submitterId: 2 }), quality: [], standard: null, messages: [], attachments: [attachment(5)] })
+    const other = createWrapper(); await flushPromises()
+    expect(other.find('.att-delete').exists()).toBe(false)
+  })
+  it('附件上传动作消息不进入补充原话（与服务端 user_supplements 同口径）', async () => {
+    const attachAction: AgentMessage = {
+      id: 6, sessionId: 11, role: 'USER', content: '[上传附件] 登录页原型.png', createdAt: '2026-10-10T10:00:00',
+      structuredPayload: JSON.stringify({ kind: 'attachment', attachmentId: 5, fileName: '登录页原型.png', fileKind: 'IMAGE', size: 204800 })
+    }
+    const receipt: AgentMessage = {
+      id: 7, sessionId: 11, role: 'ASSISTANT', content: '收到附件，我暂时看不了图片或文档里的内容。', createdAt: '2026-10-10T10:00:05',
+      structuredPayload: JSON.stringify({ kind: 'attachmentReceipt', attachmentId: 5, fileName: '登录页原型.png' })
+    }
+    mocks.getDemand.mockResolvedValue({
+      demand: entity(), quality: [], standard: null,
+      messages: [
+        message(1, 'USER', '我要做个海报生成智能体，给市场部用', '2026-10-08T09:30:00'),
+        attachAction, receipt,
+        message(3, 'USER', '紧急，本周内要', '2026-10-08T09:31:00'),
+      ]
+    })
+    const wrapper = createWrapper(); await flushPromises()
+    const rows = wrapper.findAll('.supp-row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('紧急，本周内要')
+    // 上传动作与 AI 回执都不算提报人原话（回放折叠面板默认收起，正文不应出现）
+    expect(wrapper.text()).not.toContain('[上传附件]')
+  })
+  it('删除附件：确认后调删除接口并刷新详情；取消则不删', async () => {
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'DRAFT' }), quality: [], standard: null, messages: [], attachments: [attachment(5)] })
+    const wrapper = createWrapper(); await flushPromises()
+    await wrapper.find('.att-delete').trigger('click'); await flushPromises()
+    expect(mocks.showConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: '删除附件' }))
+    expect(mocks.deleteAttachment).toHaveBeenCalledWith(1, 5)
+    expect(mocks.getDemand).toHaveBeenCalledTimes(2)
+
+    mocks.showConfirmDialog.mockRejectedValueOnce(new Error('cancel'))
+    await wrapper.find('.att-delete').trigger('click'); await flushPromises()
+    expect(mocks.deleteAttachment).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('demand detail 打回待补充（方案③ NEED_INFO）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    storeMocks.userInfo = { id: 1, name: '管理员', dept: '机构业务部', channelType: 'SSO', isAdmin: false }
+  })
+  function createWrapper(): VueWrapper {
+    return mount(Detail, { global: { plugins: [Vant], stubs: { AppLayout: { template: '<div><slot /></div>' }, QualityList: QualityListStub } } })
+  }
+  it('打回说明卡：渲染打回原因与打回人；无打回记录不渲染', async () => {
+    mocks.getDemand.mockResolvedValue({
+      demand: entity({ status: 'NEED_INFO', ext: { returnReason: { reason: '还缺紧急程度和期望完成时间', returnedBy: '李整理', returnedAt: '2026-10-11T10:00:00' } } }),
+      quality: [], standard: null, messages: []
+    })
+    const wrapper = createWrapper(); await flushPromises()
+    const card = wrapper.find('.return-card')
+    expect(card.exists()).toBe(true)
+    expect(card.find('h2').text()).toBe('打回说明')
+    expect(card.find('.content').text()).toBe('还缺紧急程度和期望完成时间')
+    expect(card.find('small').text()).toContain('李整理')
+
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'DRAFT' }), quality: [], standard: null, messages: [] })
+    const plain = createWrapper(); await flushPromises()
+    expect(plain.find('.return-card').exists()).toBe(false)
+  })
+  it('NEED_INFO 本人：显示「去补充，重新提交」进提报对话页，保留撤销入口', async () => {
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'NEED_INFO' }), quality: [], standard: null, messages: [] })
+    const wrapper = createWrapper(); await flushPromises()
+    const texts = wrapper.findAll('button').map(b => b.text())
+    expect(texts.some(t => t === '去补充，重新提交')).toBe(true)
+    expect(texts.some(t => t.includes('继续编辑草稿'))).toBe(false)
+    expect(texts.some(t => t === '撤销需求')).toBe(true)
+    await wrapper.findAll('button').find(b => b.text() === '去补充，重新提交')!.trigger('click')
+    expect(mocks.push).toHaveBeenCalledWith({ path: '/report', query: { draftId: 1 } })
+  })
+  it('「打回补充」仅 ADMIN 已提交非本人可见；普通用户或本人不可见', async () => {
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'SUBMITTED' }), quality: [], standard: null, messages: [] })
+    const plain = createWrapper(); await flushPromises()
+    expect(plain.findAll('button').some(b => b.text() === '打回补充')).toBe(false)
+
+    storeMocks.userInfo = { id: 99, name: '李整理', dept: '需求整理部', channelType: 'SSO', isAdmin: true }
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'SUBMITTED', submitterId: 99 }), quality: [], standard: null, messages: [] })
+    const own = createWrapper(); await flushPromises()
+    expect(own.findAll('button').some(b => b.text() === '打回补充')).toBe(false)
+
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'SUBMITTED', submitterId: 2, submitterName: '张三' }), quality: [], standard: null, messages: [] })
+    const admin = createWrapper(); await flushPromises()
+    expect(admin.findAll('button').some(b => b.text() === '打回补充')).toBe(true)
+  })
+  it('ADMIN 打回弹窗：原因必填，确认后调打回接口并刷新详情', async () => {
+    storeMocks.userInfo = { id: 99, name: '李整理', dept: '需求整理部', channelType: 'SSO', isAdmin: true }
+    mocks.getDemand.mockResolvedValue({ demand: entity({ status: 'SUBMITTED', submitterId: 2, submitterName: '张三' }), quality: [], standard: null, messages: [] })
+    mocks.returnDemand.mockResolvedValue(entity({ status: 'NEED_INFO', ext: { returnReason: { reason: '补紧急程度', returnedBy: '李整理' } } }))
+    const wrapper = createWrapper(); await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === '打回补充')!.trigger('click'); await flushPromises()
+    const dialog = wrapper.findAll('.van-dialog').find(node => node.text().includes('打回原因'))
+    expect(dialog).toBeTruthy()
+    // 空原因确认：被拦截不调接口
+    await dialog!.find('.van-dialog__confirm').trigger('click'); await flushPromises()
+    expect(showToast).toHaveBeenCalledWith('请填写打回原因')
+    expect(mocks.returnDemand).not.toHaveBeenCalled()
+    // 填原因确认：打回成功、刷新详情、播报提示
+    await dialog!.find('textarea').setValue('还缺紧急程度，补充后再提交')
+    await dialog!.find('.van-dialog__confirm').trigger('click'); await flushPromises()
+    expect(mocks.returnDemand).toHaveBeenCalledWith(1, '还缺紧急程度，补充后再提交')
+    expect(mocks.getDemand).toHaveBeenCalledTimes(2)
+    expect(showToast).toHaveBeenCalledWith('已打回，等待提报人补充')
   })
 })

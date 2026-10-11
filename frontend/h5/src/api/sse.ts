@@ -1,11 +1,11 @@
-import type { DemandForm, ElementStatus, FieldSources, TypeRecognition } from './demand'
+import type { DemandForm, DemandMode, ElementStatus, FieldSources, TypeRecognition } from './demand'
 export interface GuideRequest { demandId: number; sessionId: number; requestId: string; revision: number; message: string }
 export interface GranularityHint { level: 'too_broad' | 'too_narrow'; hint: string; converge: string }
 export interface GuidePayload {
   demandId: number; sessionId: number; requestId: string; revision: number
   structured: Omit<DemandForm, 'fieldSources'>; fieldSources: FieldSources; missing: string[]; elements: ElementStatus[]
   askedTarget: string | null; canSubmit: boolean; guidanceComplete: boolean; qualityComplete: boolean; ready: boolean; quickReplies: string[]
-  typeRecognition?: TypeRecognition | null; granularityHint?: GranularityHint | null; impactHints?: string[]
+  typeRecognition?: TypeRecognition | null; mode?: DemandMode | null; granularityHint?: GranularityHint | null; impactHints?: string[]
 }
 export class StreamError extends Error {
   constructor(public code: number, message: string) { super(message); this.name = 'StreamError' }

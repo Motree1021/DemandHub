@@ -1,7 +1,7 @@
 import pytest
 
 from app.standards.loader import get
-from app.standards.rules import assess, filter_form, schema_errors
+from app.standards.rules import LIGHT_REQUIRED_KEYS, assess, demand_mode, filter_form, schema_errors
 
 
 def tech(**overrides):
@@ -95,3 +95,44 @@ def test_quality_gap_is_distinct_from_required_schema():
     assert not schema_errors(get("TECH"), value, required=True)
     assert any(e.status != "OK" for e in assess(get("TECH"), value))
     assert schema_errors(get("TECH"), {"title": "标题"}, required=True)
+
+
+# ---- 微需求快速通道（2026-10-11 方案②）：light 最小集门槛与 D8 放宽 ----
+
+
+def light_form(**overrides):
+    """light 最小集齐全（A8原话+A1标题+A6紧急度+D8期望效果）、C/D 其余 11 项全空——换 logo 类微需求真实形态。"""
+    value = {"title": "更换首页顶部logo", "demandTypeCode": "TECH",
+             "content": "把首页顶部的logo换成新设计的蓝色版本", "urgency": "NORMAL",
+             "elements": {"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本，看着更正式"}}}
+    value.update(overrides)
+    return value
+
+
+def test_light_minimal_set_passes_gate_but_standard_still_blocks():
+    # 同一份表单：light 只拦最小集故放行；standard 仍拦 C/D 大片缺口
+    assert schema_errors(get("TECH"), light_form(), required=True, required_keys=LIGHT_REQUIRED_KEYS) == []
+    errors = schema_errors(get("TECH"), light_form(), required=True, active_zones={"A", "C", "D"})
+    assert "目标用户角色未填写" in errors and "验收标准未填写" not in errors
+
+
+def test_light_gate_still_blocks_missing_minimal_fields():
+    # 最小集缺 D8 期望效果照样拦；techSubtype 等 A 区其余项不在 light 门槛内
+    errors = schema_errors(get("TECH"), light_form(elements={}), required=True, required_keys=LIGHT_REQUIRED_KEYS)
+    assert errors == ["验收标准未填写"]
+
+
+def test_d8_quantization_relaxed_only_in_light_mode():
+    value = tech(D__acceptanceCriteria="做完后首页顶部logo看着更正式")
+    assert next(e for e in assess(get("TECH"), value) if e.key == "acceptanceCriteria").status == "VAGUE"
+    assert next(e for e in assess(get("TECH"), value, light=True) if e.key == "acceptanceCriteria").status == "OK"
+    # 放宽只针对 D8：其余要素的歧义词等软质量在 light 下照判
+    mixed = tech(D__functionDescription="尽快优化一下")
+    assert next(e for e in assess(get("TECH"), mixed, light=True) if e.key == "functionDescription").status == "VAGUE"
+
+
+def test_demand_mode_reads_ext_with_standard_fallback():
+    assert demand_mode({}) == "standard"  # 存量草稿无 mode：按常规
+    assert demand_mode({"ext": {"mode": {"level": "light"}}}) == "light"
+    assert demand_mode({"ext": {"mode": {"level": "standard"}}}) == "standard"
+    assert demand_mode({"ext": {"mode": "light"}}) == "standard"  # 畸形值兜底常规，不得误入轻量口径

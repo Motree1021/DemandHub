@@ -26,8 +26,12 @@ class Base(DeclarativeBase):
 
 
 class Timestamps:
-    created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)"))
-    updated_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), default=now, onupdate=now, server_default=text("CURRENT_TIMESTAMP(3)"))
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), default=now, onupdate=now, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
 
 
 class User(Timestamps, Base):
@@ -42,7 +46,9 @@ class User(Timestamps, Base):
     dept_id: Mapped[str | None] = mapped_column(String(32))
     dept_name: Mapped[str | None] = mapped_column(String(128))
     dept_path: Mapped[str | None] = mapped_column(String(512))
-    channel: Mapped[str] = mapped_column(String(32), default="CHUANGJIN_LS", server_default="CHUANGJIN_LS")
+    channel: Mapped[str] = mapped_column(
+        String(32), default="CHUANGJIN_LS", server_default="CHUANGJIN_LS"
+    )
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE", server_default="ACTIVE")
     last_login_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
 
@@ -55,17 +61,22 @@ class PromptVersion(Base):
     version: Mapped[str] = mapped_column(String(32))
     content_hash: Mapped[str] = mapped_column(String(64), unique=True)
     snapshot: Mapped[dict] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)"))
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
 
 
 class Demand(Timestamps, Base):
     __tablename__ = "demand"
-    __table_args__ = (UniqueConstraint("submitter_id", "client_request_id", name="uq_demand_create"),
-                     Index("ix_demand_owner_status", "submitter_id", "status"),
-                     Index("ix_demand_type_status", "demand_type_code", "status"),
-                     Index("ix_demand_submitted", "submitted_at"),
-                     Index("ix_demand_split_group", "split_group_id"),
-                     Index("ix_demand_split_from", "split_from_id"), {"comment": "草稿与正式需求"})
+    __table_args__ = (
+        UniqueConstraint("submitter_id", "client_request_id", name="uq_demand_create"),
+        Index("ix_demand_owner_status", "submitter_id", "status"),
+        Index("ix_demand_type_status", "demand_type_code", "status"),
+        Index("ix_demand_submitted", "submitted_at"),
+        Index("ix_demand_split_group", "split_group_id"),
+        Index("ix_demand_split_from", "split_from_id"),
+        {"comment": "草稿与正式需求"},
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     demand_no: Mapped[str | None] = mapped_column(String(40), unique=True)
     title: Mapped[str | None] = mapped_column(String(256))
@@ -98,8 +109,10 @@ class Demand(Timestamps, Base):
 
 class DemandChangeLog(Base):
     __tablename__ = "demand_change_log"
-    __table_args__ = (Index("ix_change_demand_time", "demand_id", "created_at"),
-                     {"comment": "需求要素变更留痕（E7）"})
+    __table_args__ = (
+        Index("ix_change_demand_time", "demand_id", "created_at"),
+        {"comment": "需求要素变更留痕（E7）"},
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     demand_id: Mapped[int] = mapped_column(ForeignKey("demand.id", name="fk_change_demand"))
     field_key: Mapped[str] = mapped_column(String(64))
@@ -107,7 +120,9 @@ class DemandChangeLog(Base):
     new_value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON)
     source: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
     changed_by: Mapped[int | None] = mapped_column(ForeignKey("dh_user.id", name="fk_change_user"))
-    created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)"))
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
 
 
 class DemandNoSeq(Base):
@@ -116,6 +131,32 @@ class DemandNoSeq(Base):
     biz_date: Mapped[date] = mapped_column(Date, primary_key=True)
     type_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class DemandAttachment(Timestamps, Base):
+    """需求附件（图片/文档）：本地目录存储，storage_key 不外泄，下载走鉴权接口。
+    仅作为需求材料随需求一并流转，不做多模态识别。"""
+
+    __tablename__ = "demand_attachment"
+    __table_args__ = (
+        Index("ix_attachment_demand_id", "demand_id", "id"),
+        {"comment": "需求附件（图片/文档，随需求一并流转）"},
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    demand_id: Mapped[int] = mapped_column(ForeignKey("demand.id"))
+    file_name: Mapped[str] = mapped_column(String(256))
+    kind: Mapped[str] = mapped_column(String(16), comment="附件类别：IMAGE/DOC")
+    file_ext: Mapped[str] = mapped_column(
+        String(16), comment="扩展名（小写，白名单校验后的安全值）"
+    )
+    size: Mapped[int] = mapped_column(Integer, comment="文件大小（字节）")
+    storage_key: Mapped[str] = mapped_column(
+        String(128), unique=True, comment="存储键（uuid，服务端目录内相对定位，不外泄）"
+    )
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("dh_user.id"))
+    status: Mapped[str] = mapped_column(
+        String(16), default="ACTIVE", server_default="ACTIVE", comment="ACTIVE/DELETED（软删）"
+    )
 
 
 class AgentSession(Timestamps, Base):
@@ -133,8 +174,10 @@ class AgentSession(Timestamps, Base):
 
 class AgentMessage(Base):
     __tablename__ = "agent_message"
-    __table_args__ = (UniqueConstraint("session_id", "request_id", "role", name="uq_message_request_role"),
-                     {"comment": "Agent 消息与幂等响应"})
+    __table_args__ = (
+        UniqueConstraint("session_id", "request_id", "role", name="uq_message_request_role"),
+        {"comment": "Agent 消息与幂等响应"},
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("agent_session.id"))
     role: Mapped[str] = mapped_column(String(16))
@@ -147,4 +190,6 @@ class AgentMessage(Base):
     prompt_tokens: Mapped[int | None] = mapped_column(Integer)
     completion_tokens: Mapped[int | None] = mapped_column(Integer)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)"))
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)")
+    )

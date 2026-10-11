@@ -21,8 +21,9 @@ from app.standards.schema import Standard
 TOP_FIELDS = {"title": "title", "demandTypeCode": "demand_type_code", "content": "content",
               "urgency": "urgency", "expectDeliveryAt": "expect_delivery_at"}
 
-# ext 保留位：判型结果（FR-03）与实例切分建议（BR-T11，一期打标）不走标准要素白名单，全程保留
-RESERVED_EXT_KEYS = ("typeRecognition", "pendingSplits", "overview")
+# ext 保留位：判型结果（FR-03）、实例切分建议（BR-T11，一期打标）、轻重模式（2026-10-11 方案②）、
+# 打回原因（2026-10-11 方案③ NEED_INFO 闭环）不走标准要素白名单，全程保留
+RESERVED_EXT_KEYS = ("typeRecognition", "pendingSplits", "overview", "mode", "returnReason")
 
 
 def fingerprint(value: dict) -> str:
@@ -140,7 +141,8 @@ async def get_owned_draft(db, user, demand_id: int, for_update: bool = False) ->
 
 
 def assert_editable(demand: Demand, expected_revision: int) -> None:
-    if demand.status != "DRAFT":
+    # NEED_INFO（管理员打回待补充，方案③）与 DRAFT 同为可编辑态：对话/表单补填后重提
+    if demand.status not in ("DRAFT", "NEED_INFO"):
         raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION)
     if demand.revision != expected_revision:
         raise BizError(ErrorCode.CONFLICT)
@@ -181,10 +183,10 @@ def _clip_text(text: str, limit: int = 50) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def describe_changes(std: Standard | None, before: dict, after: dict) -> str:
-    """手工改要素的聊天播报（FR-06）：与 write_change_logs 同源 diff，保留位与派生摘要不播报。"""
+def change_items(std: Standard | None, before: dict, after: dict) -> list[dict]:
+    """手工改要素的结构化播报数据（FR-06）：与 write_change_logs 同源 diff，保留位不播报。"""
     elements = {item.field_path: item for item in std.elements} if std else {}
-    lines = []
+    items = []
     for path, new in paths(after).items():
         if path in {f"ext.{key}" for key in RESERVED_EXT_KEYS}:
             continue
@@ -195,11 +197,24 @@ def describe_changes(std: Standard | None, before: dict, after: dict) -> str:
         label = element.label if element else TOP_LABELS.get(path, path.rsplit(".", 1)[-1])
         old_text, new_text = _clip_text(_display_value(element, old)), _clip_text(_display_value(element, new))
         if rules.blank(new):
-            lines.append(f"你已手动清空了「{label}」")
+            items.append({"action": "clear", "label": label, "old": old_text, "new": ""})
         elif rules.blank(old):
-            lines.append(f"你已手动填写了「{label}」：{new_text}")
+            items.append({"action": "fill", "label": label, "old": "", "new": new_text})
         else:
-            lines.append(f"你已手动更新了「{label}」：由「{old_text}」改为「{new_text}」")
+            items.append({"action": "update", "label": label, "old": old_text, "new": new_text})
+    return items
+
+
+def describe_changes(items: list[dict]) -> str:
+    """播报纯文本（导出/回放兜底）；前端优先按 payload 渲染卡片。"""
+    lines = []
+    for label, old, new, action in ((item["label"], item["old"], item["new"], item["action"]) for item in items):
+        if action == "clear":
+            lines.append(f"你已手动清空了「{label}」")
+        elif action == "fill":
+            lines.append(f"你已手动填写了「{label}」：{new}")
+        else:
+            lines.append(f"你已手动更新了「{label}」：由「{old}」改为「{new}」")
     return "\n".join(lines)
 
 
@@ -240,6 +255,11 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
     assert_editable(demand, payload["expectedRevision"])
     before = form_of(demand)
     patch = with_legacy_elements({k: v for k, v in payload.items() if k in TOP_FIELDS or k in ("ext", "elements")})
+    # ext.overview 概述只归 AI 派生链路（guide/后台重写）所有：H5 每次整表单回传带旧概述，
+    # 不忽略会把后台刚重写的新概述覆盖回旧值；ext.mode 轻重判定同理只归 AI 判定链路（2026-10-11 方案②）；
+    # ext.returnReason 只归管理员打回链路（方案③），提报人回传不得篡改打回原因
+    if isinstance(patch.get("ext"), dict):
+        patch["ext"] = {k: v for k, v in patch["ext"].items() if k not in ("overview", "mode", "returnReason")}
     merged = {**before, **patch, "ext": {**before["ext"], **(patch.get("ext") or {})}}
     old_recognition = before["ext"].get("typeRecognition")
     new_recognition = (patch.get("ext") or {}).get("typeRecognition")
@@ -260,10 +280,11 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
     assign(demand, form, sources)
     write_change_logs(db, demand, before, form, sources, user.id)
     if payload.get("notifyChanges") and demand.session_id is not None:
-        # 手工改要素播报（FR-06）：与留痕同源 diff 写入会话，让用户与 AI 都感知本次手改内容
-        text = describe_changes(std, before, form)
-        if text:
-            await session_service.append(db, demand.session_id, "ASSISTANT", text)
+        # 手工改要素播报（FR-06）：与留痕同源 diff 写入会话；结构化 payload 供前端渲染卡片
+        items = change_items(std, before, form)
+        if items:
+            await session_service.append(db, demand.session_id, "ASSISTANT", describe_changes(items),
+                                          {"kind": "manualChange", "changes": items})
     demand.revision += 1
     demand.updated_at = now()
     await db.flush()
@@ -296,26 +317,79 @@ async def apply_agent_patch(db, user, demand, *, expected_revision: int, patch: 
     return demand
 
 
+async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
+    """管理员打回待补充（2026-10-11 方案③）：SUBMITTED → NEED_INFO。
+
+    - 打回原因存 ext.returnReason（保留位），并写 change_log（status/ext.returnReason 两行，source=admin）
+    - ext.mode 强制升 standard：打回意味着信息不足，按 12 项完整口径补填，不回轻量快速通道
+    - 会话重开 ACTIVE 并注入一条引述打回原因的播报消息（kind=returnNotice，不参与质量快照回放）
+    """
+    demand = (await db.execute(select(Demand).where(Demand.id == demand_id).with_for_update())).scalar_one_or_none()
+    if demand is None:
+        raise BizError(ErrorCode.DEMAND_NOT_FOUND)
+    if demand.status != "SUBMITTED":
+        raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "仅已提交的需求可打回")
+    reason_text = reason.strip()
+    ext = dict(demand.ext or {})
+    ext["returnReason"] = {"reason": reason_text, "returnedBy": admin_user.name,
+                           "returnedAt": now().isoformat(timespec="seconds")}
+    ext["mode"] = {"level": "standard", "evidence": "管理员打回待补充，按完整口径补齐后重新提交"}
+    demand.ext = ext
+    demand.status = "NEED_INFO"
+    demand.revision += 1
+    db.add(DemandChangeLog(demand_id=demand.id, field_key="status", old_value="SUBMITTED", new_value="NEED_INFO",
+                           source="admin", changed_by=admin_user.id))
+    db.add(DemandChangeLog(demand_id=demand.id, field_key="ext.returnReason", old_value=None,
+                           new_value=encode(ext["returnReason"]), source="admin", changed_by=admin_user.id))
+    if demand.session_id is not None:
+        session = (await db.execute(select(AgentSession).where(AgentSession.id == demand.session_id).with_for_update())).scalar_one()
+        if session.demand_id != demand.id:
+            raise BizError(ErrorCode.CONFLICT, "草稿与会话关联不一致")
+        session.status = "ACTIVE"
+        notice = (f"这条需求被整理人员打回了，需要补充信息后重新提交。\n打回原因：{reason_text}\n"
+                  "可以直接回复我来补充，我会帮你把缺的内容问齐；也可以点开「需求要素表单」卡片逐项修改。")
+        await session_service.append(db, demand.session_id, "ASSISTANT", notice,
+                                     {"kind": "returnNotice", "reason": reason_text})
+    await db.flush()
+    return demand
+
+
 async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
     demand = await get_owned_draft(db, user, demand_id, for_update=True)
     if demand.status == "SUBMITTED":
         return demand
+    was_returned = demand.status == "NEED_INFO"
     assert_editable(demand, expected_revision)
     form, std = normalized(form_of(demand))
-    # B 区必填按判型门槛生效（FR-03/PRD §4.3）：判型或确认为业务需求时全量四区，否则 A/C/D
-    active_zones = {"A", "C", "D"} | ({"B"} if rules.business_confirmed((demand.ext or {}).get("typeRecognition")) else set())
-    errors = rules.schema_errors(std, form, required=True, active_zones=active_zones)
+    light = rules.demand_mode(form) == "light"
+    if light:
+        # 微需求快速通道（2026-10-11 方案②）：light 只拦最小集（A8原话+A1标题+A6紧急度+D8期望效果），
+        # C/D 其余 12 项模板要素对换 logo/调样式这类轻量需求会语义性误伤，不作为提交门槛
+        errors = rules.schema_errors(std, form, required=True, required_keys=rules.LIGHT_REQUIRED_KEYS)
+    else:
+        # B 区必填按判型门槛生效（FR-03/PRD §4.3）：判型或确认为业务需求时全量四区，否则 A/C/D
+        active_zones = {"A", "C", "D"} | ({"B"} if rules.business_confirmed((demand.ext or {}).get("typeRecognition")) else set())
+        errors = rules.schema_errors(std, form, required=True, active_zones=active_zones)
     if errors:
         raise BizError(ErrorCode.PARAM_INVALID, errors[0])
     version = await ensure_snapshot(db, std)
-    demand.quality = [{"key": item.key, "status": item.status, "note": item.note} for item in rules.assess(std, form)]
+    demand.quality = [{"key": item.key, "status": item.status, "note": item.note} for item in rules.assess(std, form, light=light)]
     demand.standard_version_id = version.id
     demand.quality_content_hash = fingerprint(form)
-    demand.demand_no = await next_no(db, demand.demand_type_code, now().date())
+    if demand.demand_no is None:
+        # 重提保留原编号：管理员按编号跟踪需求，换号会造成困扰
+        demand.demand_no = await next_no(db, demand.demand_type_code, now().date())
     demand.submitter_name, demand.submitter_dept = user.name, user.dept_name
     demand.channel = user.channel
     demand.status, demand.submitted_at = "SUBMITTED", now()
     demand.revision += 1
+    if was_returned:
+        # 打回补齐重提成功：清除待处理的打回原因（历史打回记录在 change_log 可查），并写状态留痕
+        ext = dict(demand.ext or {})
+        ext.pop("returnReason", None)
+        demand.ext = ext
+        db.add(DemandChangeLog(demand_id=demand.id, field_key="status", old_value="NEED_INFO", new_value="SUBMITTED",
+                               source="user", changed_by=user.id))
     if demand.session_id is not None:
         session = (await db.execute(select(AgentSession).where(AgentSession.id == demand.session_id).with_for_update())).scalar_one()
         if session.demand_id != demand.id or session.user_id != user.id:
@@ -327,8 +401,8 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
 
 async def close(db, user, demand_id: int, reason: str) -> Demand:
     demand = await get_owned_draft(db, user, demand_id, for_update=True)
-    # 草稿撤销与已提交撤回同一出口（DRAFT/SUBMITTED → CLOSED）；CLOSED 不可重复流转
-    if demand.status not in ("DRAFT", "SUBMITTED"):
+    # 草稿撤销与已提交撤回同一出口（DRAFT/SUBMITTED/NEED_INFO → CLOSED）；CLOSED 不可重复流转
+    if demand.status not in ("DRAFT", "SUBMITTED", "NEED_INFO"):
         raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION)
     demand.status, demand.close_reason, demand.closed_at = "CLOSED", reason, now()
     demand.revision += 1
@@ -378,5 +452,7 @@ async def detail(db, user, demand_id: int) -> dict:
         messages = [{"id": row.id, "sessionId": row.session_id, "role": row.role, "content": row.content,
             "structuredPayload": json.dumps(row.structured_payload, ensure_ascii=False) if row.structured_payload else None,
             "createdAt": encode(row.created_at)} for row in rows]
+    from app.services import attachment_service
     return {"demand": serialize_demand(demand, (await change_logs_map(db, [demand.id]))[demand.id]), "quality": demand.quality or [],
-            "standard": std.model_dump(mode="json", by_alias=True) if std else None, "messages": messages}
+            "standard": std.model_dump(mode="json", by_alias=True) if std else None, "messages": messages,
+            "attachments": await attachment_service.serialize_list(db, demand.id)}

@@ -32,3 +32,18 @@ describe('DemandCard 草稿操作入口', () => {
     expect(wrapper.find('.continue').exists()).toBe(false)
   })
 })
+
+describe('DemandCard 待补充（方案③ NEED_INFO）', () => {
+  it('待补充卡片：橙红配色类、「待补充」徽章、「去补充 ›」与「撤销」入口', async () => {
+    const wrapper = mount(DemandCard, { props: { demand: entity({ status: 'NEED_INFO', demandNo: 'TECH-20261011-004' }), continuable: true }, global: { plugins: [Vant] } })
+    expect(wrapper.find('.demand-card').classes()).toContain('st-need_info')
+    expect(wrapper.find('.badge.status').text()).toBe('待补充')
+    expect(wrapper.find('.status-icon').html()).toContain('van-icon-replay')
+    const continueBtn = wrapper.find('.continue')
+    expect(continueBtn.text()).toBe('去补充 ›')
+    await continueBtn.trigger('click')
+    expect(wrapper.emitted('continue')).toEqual([[7]])
+    await wrapper.find('.close-btn').trigger('click')
+    expect(wrapper.emitted('close')).toEqual([[7]])
+  })
+})

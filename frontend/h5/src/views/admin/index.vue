@@ -26,7 +26,7 @@ import { adminDemands, downloadXlsx, getStandards, type DemandEntity, type Stand
 const router = useRouter()
 const filters = reactive({ type: '', status: '', from: '', to: '' }); const applied = ref({ ...filters })
 const typeField = ref<StandardFieldDefinition>({ key: 'type', label: '需求类型', kind: 'enum', options: { '': '全部类型' } })
-const statusField: StandardFieldDefinition = { key: 'status', label: '需求状态', kind: 'enum', options: { '': '全部状态', DRAFT: '草稿', SUBMITTED: '已提交', CLOSED: '已撤销' } }
+const statusField: StandardFieldDefinition = { key: 'status', label: '需求状态', kind: 'enum', options: { '': '全部状态', DRAFT: '草稿', SUBMITTED: '已提交', NEED_INFO: '待补充', CLOSED: '已撤销' } }
 const rows = ref<DemandEntity[]>([]); const total = ref(0); const page = ref(1); const loading = ref(false); const finished = ref(false); const failed = ref(false); const downloading = ref(false)
 const dirtyFilter = computed(() => JSON.stringify(filters) !== JSON.stringify(applied.value))
 let generation = 0

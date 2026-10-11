@@ -10,7 +10,7 @@ const ButtonStub = defineComponent({ props: ['disabled'], template: '<button :di
 const wrappers: VueWrapper[] = []
 function createWrapper(props: Record<string, unknown> = {}) {
   const prepare = vi.fn().mockResolvedValue({ demandId: 1, sessionId: 11, revision: 1 })
-  const wrapper = mount(AgentChatPanel, { props: { demandId: 1, sessionId: 11, revision: 1, prepare, ...props }, global: { stubs: { 'van-field': FieldStub, 'van-button': ButtonStub, 'van-icon': true, 'van-notice-bar': true } } })
+  const wrapper = mount(AgentChatPanel, { props: { demandId: 1, sessionId: 11, revision: 1, prepare, ...props }, global: { stubs: { 'van-field': FieldStub, 'van-button': ButtonStub, 'van-icon': true, 'van-notice-bar': true, 'van-action-sheet': true } } })
   wrappers.push(wrapper); return wrapper
 }
 function payload(request: GuideRequest, extra: Partial<GuidePayload> = {}): GuidePayload {

@@ -3,8 +3,9 @@
     <div class="card-title" @click="collapsed = !collapsed">
       <van-icon name="description" />
       <span>需求要素表单（实时）</span>
-      <small v-if="collapsed">必填 {{ baseFilled }}/{{ baseTotal }}<template v-if="businessConfirmed"> · 业务 {{ bizFilled }}/{{ bizTotal }}</template></small>
-      <small v-else>点任意一项可直接修改</small>
+      <small v-if="collapsed && isLight">轻量提报 {{ lightFilled }}/4</small>
+      <small v-else-if="collapsed">必填 {{ baseFilled }}/{{ baseTotal }}<template v-if="businessConfirmed"> · 业务 {{ bizFilled }}/{{ bizTotal }}</template></small>
+      <small v-else>{{ isLight ? '轻量提报 · ' : '' }}点任意一项可直接修改</small>
       <van-icon :name="collapsed ? 'arrow-down' : 'arrow-up'" class="fold" />
     </div>
     <button v-if="recognition && !collapsed" type="button" class="type-row" :disabled="disabled" @click="emit('edit-type')">
@@ -20,12 +21,12 @@
       </div>
       <button v-for="field in group.fields" :key="fieldPath(field)" type="button" class="el" :disabled="disabled" @click="emit('edit-field', field)">
         <span class="nm">
-          <van-icon :name="filled(field) ? 'checked' : 'clock-o'" :color="filled(field) ? '#16a34a' : '#d97706'" size="14" />
+          <van-icon :name="filled(field) ? 'checked' : isRequired(field) ? 'clock-o' : 'edit'" :color="filled(field) ? '#16a34a' : isRequired(field) ? '#d97706' : '#94a3b8'" size="14" />
           <span class="label">{{ field.label }}<i v-if="isRequired(field)" class="req">*</i></span>
         </span>
         <span class="side">
           <span v-if="summary(field)" class="val">{{ summary(field) }}</span>
-          <span class="pill" :class="filled(field) ? 'ok' : 'missing'">{{ filled(field) ? '已填' : '待补充' }}</span>
+          <span class="pill" :class="filled(field) ? 'ok' : isRequired(field) ? 'missing' : 'optional'">{{ filled(field) ? '已填' : isRequired(field) ? '待补充' : '选填' }}</span>
         </span>
       </button>
     </div>
@@ -35,6 +36,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { DemandForm, ElementStatus, Standard, StandardField, TypeRecognition } from '@/api/demand'
+import { demandModeOf } from '@/api/demand'
 import { fieldPath, readField } from '@/utils/form'
 import { ZONE_META } from '@/utils/zones'
 const props = withDefaults(defineProps<{
@@ -51,6 +53,14 @@ const baseTotal = computed(() => baseRequiredFields.value.length)
 const baseFilled = computed(() => baseRequiredFields.value.filter(field => filled(field)).length)
 const bizTotal = computed(() => bizRequiredFields.value.length)
 const bizFilled = computed(() => bizRequiredFields.value.filter(field => filled(field)).length)
+// 微需求快速通道（方案②）：AI 判 mode=light（换 logo/调样式等小需求）时折叠态显示「轻量提报 X/4」，
+// X/4 只数最小集（标题/原文/紧急程度/期望效果），其余要素不标星不算进度，与后端 LIGHT_REQUIRED_KEYS 同口径
+const isLight = computed(() => demandModeOf(props.form) === 'light')
+const LIGHT_FIELD_KEYS = ['title', 'content', 'urgency', 'acceptanceCriteria']
+const lightFilled = computed(() => LIGHT_FIELD_KEYS.filter(key => {
+  const field = groups.value.flatMap(group => group.fields).find(item => item.key === key)
+  return field ? filled(field) : false
+}).length)
 // 判型归类标签（方案A：AI 自动判型生效，用户可点开改判）；未产生判型数据时不渲染
 const recognition = computed(() => ((props.form.ext?.typeRecognition as TypeRecognition | undefined) || null))
 // 归类标签三档（2026-10-10 用户拍板）：confirmed 定稿优先；否则按置信度占优层显示（business 占优→业务需求，user 最高→用户需求，function 最高/并列→功能需求）
@@ -77,9 +87,13 @@ const groups = computed(() => {
 })
 const qualityMap = computed(() => new Map(props.quality.map(element => [element.key, element.status])))
 // 红星标记必填项：A/C/D 基础 12 项（标题/类型/子类/紧急程度/原文 + C 区 4 项 + D 区 3 项）始终标星；
-// B 区 4 项仅在业务需求（businessConfirmed）时同为必填、也标星，与后端提交门槛同口径
+// B 区 4 项仅在业务需求（businessConfirmed）时同为必填、也标星，与后端提交门槛同口径；
+// light 模式只标最小集 4 项（C/D 其余不追问不标星，2026-10-11 方案②拍板）。
+// 胶囊三态同口径（2026-10-11 拍板）：必填未填=「待补充」琥珀时钟（系统在等）；选填未填=「选填」灰铅笔
+// （想填就点，不催促），避免选填项挂假待办、与打回状态「待补充」角标撞词
 function isRequired(field: StandardField): boolean {
   if (!field.required || field.system) return false
+  if (isLight.value) return LIGHT_FIELD_KEYS.includes(field.key)
   return field.zone === 'B' ? props.businessConfirmed : true
 }
 function filled(field: StandardField): boolean {
@@ -125,4 +139,5 @@ function summary(field: StandardField): string {
 .pill { border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
 .pill.ok { background: #dcfce7; color: #14532d; }
 .pill.missing { background: #fef3c7; color: #92400e; }
+.pill.optional { background: #f1f5f9; color: #64748b; }
 </style>
