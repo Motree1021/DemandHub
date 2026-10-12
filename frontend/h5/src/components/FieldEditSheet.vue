@@ -31,4 +31,6 @@ h3 { margin: 0 0 6px; font-size: 16px; }
 .tip { font-size: 12px; color: #888; line-height: 1.7; margin: 0 0 12px; }
 .btns { display: flex; gap: 12px; margin-top: 16px; }
 .btns .van-button { flex: 1; }
+/* Vant 默认标签宽 6.2em（约 5 个汉字），「目标用户角色」6 字会被挤换行；弹层内按内容放宽 */
+.field-edit :deep(.van-field__label) { width: auto; min-width: 5.4em; white-space: nowrap; margin-right: 12px; }
 </style>

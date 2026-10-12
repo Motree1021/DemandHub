@@ -50,13 +50,16 @@ class Prepared:
     replay: GuideResult | None = None
 
 
-def build_prompt(form, sources, previous_elements, asked_target, history, message, *, registry=None):
+def build_prompt(form, sources, previous_elements, asked_target, history, message, *, registry=None, today=None):
     """真实对话与模型评测共用相同输入结构及模板。"""
+    from datetime import date as _date
     registry = registry or {code: loader.get(code) for code in ("TECH", "MATL", "TRAIN")}
     standards = {code: standard.model_dump(mode="json", by_alias=True) for code, standard in registry.items()}
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     section = {"activeType": form.get("demandTypeCode"), "standards": standards}
     rendered = template.replace("{{standard_section}}", json.dumps(section, ensure_ascii=False))
+    # 注入当天日期：用户常省略年份（如「10/30」），模型无日期锚点会错补成往年
+    rendered = rendered.replace("{{today}}", (today or _date.today()).isoformat())
     current = {"message": message, "form": form, "fieldSources": sources, "previousElements": [e.model_dump(by_alias=True) for e in previous_elements], "askedTarget": asked_target}
     return [{"role": "system", "content": rendered}, *history, {"role": "user", "content": json.dumps(current, ensure_ascii=False)}], rendered, registry, template
 

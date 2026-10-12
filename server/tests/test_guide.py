@@ -1,11 +1,12 @@
 import asyncio
 import json
 import time
+from datetime import date
 
 import pytest
 from sqlalchemy import func, select
 
-from app.agent.guide import GuideService
+from app.agent.guide import GuideService, build_prompt
 from app.agent.llm_client import ArkClient, StreamEvent
 from app.agent.schemas import GuideChatRequest
 from app.config import Settings
@@ -59,6 +60,14 @@ def request(demand_id, session_id, revision=0, request_id="turn-1", message="需
 async def message_count(factory):
     async with factory() as db:
         return (await db.execute(select(func.count()).select_from(AgentMessage))).scalar_one()
+
+
+def test_prompt_injects_today_for_yearless_delivery_date():
+    # 用户省略年份（如「10/30」）时模型需要当天日期锚点，否则错补成往年（真实事故 2015-10-30）
+    messages, rendered, _, _ = build_prompt({}, {}, [], None, [], "要求10/30日交付", today=date(2026, 10, 12))
+    assert "{{today}}" not in rendered
+    assert "今天是 2026-10-12" in messages[0]["content"]
+    assert "expectDeliveryAt" in messages[0]["content"]
 
 
 async def test_first_question_is_saved_target_and_success_commits_before_message(session_factory, user):

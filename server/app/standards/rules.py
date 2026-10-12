@@ -45,7 +45,7 @@ def set_value(form: dict, path: str, value: Any):
     source[parts[-1]] = value
 
 
-def field_error(field: Element, value: Any) -> str | None:
+def field_error(field: Element, value: Any, *, today: date | None = None) -> str | None:
     if blank(value):
         return None
     if field.kind in {"text", "enum", "date"} and not isinstance(value, str):
@@ -65,16 +65,20 @@ def field_error(field: Element, value: Any) -> str | None:
     if field.kind == "date":
         try:
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-                raise ValueError
+                return f"{field.label}日期必须为YYYY-MM-DD"
             parsed = date.fromisoformat(value)
             if parsed.year < 1000:
-                raise ValueError
+                return f"{field.label}日期必须为YYYY-MM-DD"
+            # 期望交付时间语义：交付只能安排在今天或以后。模型曾把省略年份的"10/30"错补成
+            # 2015-10-30（格式合法但明显错误），过去日期即便格式合法也判无效，促使追问/丢弃
+            if field.key == "expectDeliveryAt" and parsed < (today or date.today()):
+                return f"{field.label}不能早于今天"
         except ValueError:
             return f"{field.label}日期必须为YYYY-MM-DD"
     return None
 
 
-def filter_form(standard: Standard | None, form: dict, *, validate: bool = True) -> dict:
+def filter_form(standard: Standard | None, form: dict, *, validate: bool = True, today: date | None = None) -> dict:
     """白名单过滤不接受身份/编号/状态/质量；允许显式清空。system 快照要素不接受表单输入。"""
     if not isinstance(form, dict) or ("ext" in form and not isinstance(form["ext"], (dict, type(None)))):
         raise ValueError("表单/ext必须为对象")
@@ -99,7 +103,7 @@ def filter_form(standard: Standard | None, form: dict, *, validate: bool = True)
         # 枚举容错：模型/前端可能回传中文选项名（用户点选快捷回复后模型未映射 code），按选项标签归一为 code
         if field.kind == "enum" and isinstance(value, str) and value not in field.options:
             value = next((code for code, label in field.options.items() if label == value), value)
-        error = field_error(field, value)
+        error = field_error(field, value, today=today)
         if error:
             if validate:
                 raise ValueError(error)
@@ -180,7 +184,10 @@ def assess(standard: Standard, form: dict, *, light: bool = False):
             # 信息是否充分由可继续更新的场景/痛点/验收等要素承载；空值仍判 MISSING（提交必填拦截）。
             text = value.strip()
             rule = field.rule
-            if any(word in text for word in standard.vague_words):
+            # 歧义词长句豁免（2026-10-12 拍板）：模糊表态只在"短句且以模糊词为主体"时才追问
+            # （如「尽快好用」「方便一下」）；长句（≥18字）里的「方便/体验」多为正常结果陈述
+            # （如「…导致客户经理阅读体验较差」），不得因子串命中误伤整个合格描述
+            if len(text) < 18 and any(word in text for word in standard.vague_words):
                 status, note = "VAGUE", "含歧义词"
             elif rule.min_len is not None and len(text) < rule.min_len:
                 status, note = "VAGUE", field.vague_hint

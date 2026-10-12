@@ -11,8 +11,8 @@ def test_load_all_and_api_schema():
     assert set(result) == {"TECH", "MATL", "TRAIN"}
     value = result["TECH"].model_dump(by_alias=True)
     assert {"followUpOrder", "optionalFields", "subtypeFields", "commonFields", "typeSignals", "granularity", "contentHash"} <= value.keys()
-    assert len(value["elements"]) == 29
-    assert {e["code"] for e in value["elements"]} == {f"{zone}{i}" for zone, count in (("A", 8), ("B", 7), ("C", 6), ("D", 8)) for i in range(1, count + 1)}
+    assert len(value["elements"]) == 30
+    assert {e["code"] for e in value["elements"]} == {f"{zone}{i}" for zone, count in (("A", 8), ("B", 7), ("C", 6), ("D", 9)) for i in range(1, count + 1)}
     assert len(result["TECH"].content_hash) == 64
 
 

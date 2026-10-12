@@ -18,6 +18,7 @@ dependencies = [
     "openpyxl",
     "tzdata>=2026.5",
     "python-multipart",
+    "cryptography>=50.0.2",
 ]
 
 [dependency-groups]

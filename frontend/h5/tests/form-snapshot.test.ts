@@ -70,6 +70,23 @@ describe('FormSnapshotCard 要素实时卡', () => {
     await row.trigger('click')
     expect(wrapper.emitted('edit-field')?.[0]?.[0]).toMatchObject({ key: 'businessGoal' })
   })
+  it('D9 建议方案选填：未填显示「选填」胶囊不标星，不计入必填分母', () => {
+    // 方案⑤（2026-10-12 拍板）：提报人设想的候选方案/实现路径，选填供受理方评估、永不追问
+    const d9Standard = { ...standard, elements: [...standard.elements, { key: 'proposedSolution', label: '建议方案', kind: 'text', zone: 'D', path: 'elements.D.proposedSolution', required: false }] }
+    const empty = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard: d9Standard, form: form() }, global: { stubs } })
+    const emptyRow = empty.findAll('.el').find(row => row.text().includes('建议方案'))!
+    expect(emptyRow.find('.pill').text()).toBe('选填')
+    expect(emptyRow.find('.req').exists()).toBe(false)
+    // D9 不进必填分母：折叠态进度仍是 fixture 原必填口径「必填 3/5」（title/urgency/demandTypeCode 已填）
+    const collapsed = mount(FormSnapshotCard, { props: { standard: d9Standard, form: form() }, global: { stubs } })
+    expect(collapsed.text()).toContain('必填 3/5')
+    // 填写后显示已填胶囊，可点击编辑
+    const filled = form()
+    filled.elements.D = { proposedSolution: '两个方案2选1：迁到公司H5服务器用fenhang域名，或为coze申请企业域名并备案' }
+    const filledWrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard: d9Standard, form: filled }, global: { stubs } })
+    const filledRow = filledWrapper.findAll('.el').find(row => row.text().includes('建议方案'))!
+    expect(filledRow.find('.pill').text()).toBe('已填')
+  })
   it('AI判型展示归类标签与"AI判断"来源，点击emit edit-type', async () => {
     const value = form()
     value.ext = { typeRecognition: { business: 0.9 } }

@@ -5,14 +5,14 @@ from app.standards.rules import filter_form, schema_errors
 
 def test_five_zone_element_count_and_codes():
     standard = get("TECH")
-    assert len(standard.elements) == 29  # A8 + B7 + C6 + D8（PRD v1.3 撤预算后 B 区 7 个）
+    assert len(standard.elements) == 30  # A8 + B7 + C6 + D9（2026-10-12 新增 D9 建议方案选填）
     by_zone = {}
     for element in standard.elements:
         by_zone.setdefault(element.zone, []).append(element.code)
     assert sorted(by_zone["A"]) == [f"A{i}" for i in range(1, 9)]
     assert sorted(by_zone["B"]) == [f"B{i}" for i in range(1, 8)]
     assert sorted(by_zone["C"]) == [f"C{i}" for i in range(1, 7)]
-    assert sorted(by_zone["D"]) == [f"D{i}" for i in range(1, 9)]
+    assert sorted(by_zone["D"]) == [f"D{i}" for i in range(1, 10)]
 
 
 def test_required_set_and_system_snapshot():

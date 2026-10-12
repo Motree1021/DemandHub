@@ -213,7 +213,7 @@ def compute_missing(standard, form):
     return [e.key for e in standard.elements if e.required and not e.system and blank(get_value(form, e.field_path))]
 
 
-def pick_follow_up(standard, elements, *, business: bool = False, light: bool = False):
+def pick_follow_up(standard, elements, *, business: bool = False, light: bool = False, form: dict | None = None, can_submit: bool = False):
     """选下一个追问目标。
 
     追问顺序：A/C/D 必填先问完（用户先补"给谁用、什么场景、痛点、验收"等具体信息），
@@ -223,6 +223,18 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     light 模式（2026-10-11 方案②）：只追问最小集 {紧急度→期望效果(D8)→标题兜底}，
     每项最多问一次（合计≤2轮，对齐"紧急度→标题+效果一次确认"拍板口径），
     C/D 其余要素与 B 区一律不问；content 永不追问（A8 底稿由系统首条消息回填）。
+
+    急单门控（2026-10-12 拍板）：紧急度为紧急/特急而期望交付时间还空着时，插队最优先
+    追问日期——紧急度话术承诺「紧急或特急请说明期望时间」，但点选快捷项只发枚举标签
+    （如「紧急」两个字），没有时间信息可抽，不插队追问承诺就落空；日期填上或问满
+    （attempts 达上限）即自动恢复正常顺序。仅 TECH 生效（MATL/TRAIN 的期望时间在
+    common_fields、不在追问循环，无此场景）。
+
+    可提交即停问软质量（2026-10-12 拍板）：一旦必填门槛达成（can_submit=True，AI 已说
+    「可以提交」），除急单交付日期这种"承诺型追问"外，不再对"有值但被判不够量化/不够具体"
+    的非空必填项主动发问——完成话术承诺了「不太完整的可选项不影响提交、以后能补」，继续
+    追问即前后矛盾；完善提示留在表单卡片由用户/产品经理自愿补，质量兜底走打回机制。
+    MISSING（真空着）不受此限：必填缺口仍需追问或拦提交。
     """
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
@@ -242,13 +254,23 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
         if field.zone == "B" and not business:
             return False
         element = by_key.get(key)
-        return element is not None and element.status not in {"OK", "SKIP"} and element.attempts < standard.max_attempts
+        if element is None or element.status in {"OK", "SKIP"} or element.attempts >= standard.max_attempts:
+            return False
+        # 可提交后停问软质量：非空（VAGUE）的必填项不再主动追问；MISSING（真空着）仍追问
+        if can_submit and element.status != "MISSING":
+            return False
+        return True
 
     if light:
         for key in light_order:
             if eligible(key):
                 return by_key[key]
         return None
+    # 急单门控插队：与 B 区门控对称（B 区=判型生效才问，这里=急单才问日期）
+    if form is not None and get_value(form, "urgency") in {"URGENT", "CRITICAL"}:
+        delivery = by_key.get("expectDeliveryAt")
+        if delivery is not None and delivery.status not in {"OK", "SKIP"} and delivery.attempts < standard.max_attempts:
+            return delivery
     # 稳定排序：B 区沉底，其余（A/C/D 及 MATL/TRAIN 无分区要素）保持 yaml 原顺序在前
     ordered = sorted(required, key=lambda k: 1 if field_of[k].zone == "B" else 0)
     for key in ordered + standard.follow_up_order:
@@ -347,21 +369,31 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     curr = inherit_and_count(prev, curr, prev_target, user_said_skip(standard, text), standard=standard, previous_form=previous_form, form=merged)
     # B 区必填按判型门槛生效（PRD §4.3、FR-03 分支）：业务需求全量四区，否则 A/C/D
     is_business = business_confirmed(recognition)
-    # 追问顺序与提交门槛共用同一判型口径：业务需求才追问 B 区，且 A/C/D 先问完再问 B；
-    # light 模式只按最小集追问（每项一次）并按最小集放行提交
-    target = pick_follow_up(standard, curr, business=is_business, light=light)
+    # 先算提交门槛，再据"可提交即停问软质量"选追问目标：必填已齐便不再对不够量化的非空必填项发问
     if light:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
         active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
+    # 追问顺序与提交门槛共用同一判型口径：业务需求才追问 B 区，且 A/C/D 先问完再问 B；
+    # light 模式只按最小集追问（每项一次）并按最小集放行提交
+    target = pick_follow_up(standard, curr, business=is_business, light=light, form=merged, can_submit=can_submit)
     granularity = detect_granularity(standard, merged, text)
     impacts = impact_hints(previous_form, merged)
+    # D9 建议方案首次抽取播报（2026-10-12 拍板）：用户设想的候选方案/实现路径此前被五区白名单
+    # 静默丢弃，AI 还回「都记好了」构成误导；现在落库后由模板层告知"已记入、供评估、非定案"，
+    # 与打回引述/口径播报同机制走前置拼接（模型自述不可靠）。仅 TECH 标准有 D9，MATL/TRAIN 跳过
+    solution_notice = ""
+    solution_field = next((f for f in standard.elements if f.key == "proposedSolution"), None)
+    if solution_field is not None and blank(get_value(form, solution_field.field_path)) and not blank(get_value(merged, solution_field.field_path)):
+        solution_notice = "你提到的设想做法我记到「建议方案」里了，会随需求一起给受理方参考——最终采用哪个，由产品和技术评估后再定。"
     reply = reply_for(standard, target, merged, light=light, business=is_business)
     if mode_upgraded:
         reply = "这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。" + reply
     if mode_first_light:
         reply = "这个需求听起来是个小改动，我按轻量提报帮你登记，只确认几项关键信息就行。" + reply
+    if solution_notice:
+        reply = solution_notice + " " + reply
     if impacts:
         reply = " ".join(impacts) + " " + reply
     if granularity:

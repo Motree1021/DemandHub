@@ -95,8 +95,8 @@ def test_overview_invalid_shape_rejected(overview):
 
 def test_top_level_fields_nested_in_zone_a_are_relocated():
     # 模型把 zone=A 而 field_path 在顶层的要素误嵌 elements.A（真实链路已观测到 urgency/expectDeliveryAt），须归位落库
-    result, sources, _ = merge_structured({"elements": {"A": {"urgency": "URGENT", "expectDeliveryAt": "2026-10-15"}}}, form(), {})
-    assert result["urgency"] == "URGENT" and result["expectDeliveryAt"] == "2026-10-15"
+    result, sources, _ = merge_structured({"elements": {"A": {"urgency": "URGENT", "expectDeliveryAt": "2099-10-15"}}}, form(), {})
+    assert result["urgency"] == "URGENT" and result["expectDeliveryAt"] == "2099-10-15"
     assert "urgency" not in result["elements"]["A"] and "expectDeliveryAt" not in result["elements"]["A"]
     assert sources["urgency"] == "agent" and sources["expectDeliveryAt"] == "agent"
 
@@ -122,20 +122,85 @@ def test_status_word_values_are_dropped():
 
 
 def test_process_relocates_nested_urgency_and_moves_on():
-    # 全链路：用户说"很紧急"模型输出 elements.A.urgency，归位后不再回头追问紧急程度
+    # 全链路：用户说"很紧急"模型输出 elements.A.urgency，归位后不再回头追问紧急程度；
+    # 同轮抽出的交付日期一并落库——急单门控见日期已填不再追问时间，直接进入 C 区
     base = form()
     del base["urgency"]
-    output = ModelOutput(structured={"elements": {"A": {"urgency": "URGENT"}}}, elements=[])
+    output = ModelOutput(structured={"elements": {"A": {"urgency": "URGENT", "expectDeliveryAt": "2099-10-20"}}}, elements=[])
     result = process(output, base, {}, [], None, {}, "很紧急，本周要上线")
     assert result["structured"]["urgency"] == "URGENT"
+    assert result["structured"]["expectDeliveryAt"] == "2099-10-20"
     assert next(e for e in result["elements"] if e["key"] == "urgency")["status"] == "OK"
     # 无业务判型：A 区填完后先追问 C 区（目标用户），不追问 B 区业务目标
     assert result["askedTarget"] == "userRole" and "紧急" not in result["reply"]
 
 
+def test_urgent_quick_reply_inserts_delivery_date_question():
+    # 急单门控（2026-10-12）：AI 问紧急度 → 用户点选快捷项「紧急」（消息只有枚举标签、无时间信息可抽）
+    # → 下一句立即追问期望交付时间，承接「紧急或特急请说明期望时间」的话术承诺
+    base = form()
+    del base["urgency"]
+    result = process(ModelOutput(structured={"urgency": "URGENT"}, elements=[]), base, {}, [], "urgency", {}, "紧急")
+    assert result["structured"]["urgency"] == "URGENT"
+    assert result["askedTarget"] == "expectDeliveryAt"
+    assert "期望什么时候交付" in result["reply"]
+
+
+def test_urgent_delivery_gate_cases():
+    standard = get("TECH")
+    elements = assess(standard, acd_filled_form())
+    # 普通：不问日期（话术已说普通按常规排期），A/C/D 齐即正常完成
+    assert pick_follow_up(standard, elements, form=acd_filled_form()) is None
+    # 紧急且日期空：插队最优先
+    urgent = {**acd_filled_form(), "urgency": "URGENT"}
+    assert pick_follow_up(standard, elements, form=urgent).key == "expectDeliveryAt"
+    # 紧急但日期已填：不问
+    filled = {**urgent, "expectDeliveryAt": "2099-10-31"}
+    assert pick_follow_up(standard, assess(standard, filled), form=filled) is None
+    # 问满两次仍无日期：放过不拦截（期望时间非必填）
+    asked_twice = [e.model_copy(update={"attempts": 2}) if e.key == "expectDeliveryAt" else e for e in elements]
+    assert pick_follow_up(standard, asked_twice, form=urgent) is None
+
+
+def test_no_soft_quality_followup_once_submittable():
+    # 口径一A（2026-10-12）：必填已齐（can_submit=True）后，有值但被判"不够量化"的非空必填项
+    # 不再主动追问——完成话术承诺「不太完整不影响提交、以后能补」，继续追问即前后矛盾
+    standard = get("TECH")
+    # 必填齐全但验收标准被判 VAGUE（不够量化）的场景
+    value = acd_filled_form()
+    value["elements"]["D"]["acceptanceCriteria"] = "希望改得好一些"  # 空话 → VAGUE
+    elements = assess(standard, value)
+    assert next(e for e in elements if e.key == "acceptanceCriteria").status == "VAGUE"
+    # 未达可提交门槛（can_submit=False）时：VAGUE 必填项仍会追问（推动完善）
+    assert pick_follow_up(standard, elements, form=value, can_submit=False).key == "acceptanceCriteria"
+    # 已达可提交门槛（can_submit=True）时：不再追问非空 VAGUE，交给表单卡片/打回兜底
+    assert pick_follow_up(standard, elements, form=value, can_submit=True) is None
+    # MISSING（真空着）不受此限：必填缺口即使 can_submit 边界也仍应被追问/拦截
+    value2 = acd_filled_form()
+    del value2["elements"]["D"]["functionDescription"]
+    elements2 = assess(standard, value2)
+    assert next(e for e in elements2 if e.key == "functionDescription").status == "MISSING"
+    # 注意：functionDescription MISSING 时 can_submit 本就为 False，此处验证 MISSING 仍被追问
+    assert pick_follow_up(standard, elements2, form=value2, can_submit=False).key == "functionDescription"
+
+
+def test_light_mode_ignores_urgent_gate():
+    # light 微需求即使选了紧急也不追问日期：保持最小集口径（最多 2 轮），照常问期望效果
+    standard = get("TECH")
+    base = {"title": "更换首页顶部logo", "demandTypeCode": "TECH", "content": "把首页顶部的logo换成新设计的蓝色版本", "urgency": "URGENT", "elements": {}}
+    assert pick_follow_up(standard, assess(standard, base, light=True), light=True, form=base).key == "acceptanceCriteria"
+
+
+def test_matl_urgent_gate_not_applicable():
+    # MATL/TRAIN 的期望时间在 common_fields、不在追问循环：急单门控仅 TECH 生效
+    standard = get("MATL")
+    form_value = {"demandTypeCode": "MATL", "urgency": "URGENT"}
+    assert pick_follow_up(standard, assess(standard, form_value), form=form_value).key == "title"
+
+
 def test_missing_collection_cannot_fake_quality_complete():
     result = process(ModelOutput(structured={}, elements=[]), form(), {}, [], None, {}, "报表")
-    assert len(result["elements"]) == 27  # 29 要素减去 A4/A5 两个 system 快照
+    assert len(result["elements"]) == 28  # 30 要素减去 A4/A5 两个 system 快照（2026-10-12 新增 D9 建议方案）
     assert not result["canSubmit"] and not result["ready"]
     assert not result["qualityComplete"] and not result["guidanceComplete"]
     # 无业务判型：先追问 A/C/D，首个缺口是 C 区目标用户，不追问 B 区
@@ -412,3 +477,40 @@ def test_mode_upgrade_to_standard_announces_and_reapplies_full_gate():
     assert result["mode"]["level"] == "standard"
     assert result["reply"].startswith("这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。")
     assert not result["canSubmit"]  # 常规门槛重新生效：C/D 缺口再次拦截提交
+
+
+# ---- D9 建议方案（2026-10-12 拍板）：提报人设想的候选方案/实现路径的承载与播报 ----
+# 背景：coze 迁移/备案样本里用户给的「两个方案二选一」此前被五区白名单静默丢弃，AI 还回「都记好了」构成误导。
+
+COZE_SOLUTION = "方案1：将系统从coze平台迁移到公司自己的H5服务器，用fenhang这个备案号的域名；方案2：在火山上为coze申请企业专用域名并备案。两个方案2选1"
+
+
+def test_proposed_solution_first_extraction_announced():
+    """coze 样本：候选方案如实落 D9（保留二选一关系），回复前置「已记入建议方案·供评估」话术，且不追问 D9。"""
+    output = ModelOutput(structured={"elements": {"D": {"proposedSolution": COZE_SOLUTION}}},
+                         elements=[], mode_signal=ModeSignalOutput(level="standard", evidence="平台迁移+域名备案，实现路径有分量"))
+    result = process(output, form(), {}, [], None, {}, "期望的解决方案：1.迁移到公司H5服务器用fenhang域名；2.在火山为coze申请企业域名并备案。2选1")
+    assert result["structured"]["elements"]["D"]["proposedSolution"] == COZE_SOLUTION
+    assert result["reply"].startswith("你提到的设想做法我记到「建议方案」里了")
+    assert "由产品和技术评估" in result["reply"]
+    assert result["askedTarget"] != "proposedSolution"
+
+
+def test_proposed_solution_announcement_once_only():
+    """播报只在首次落值时发一次：D9 已有值时本轮再输出新内容不重播（更新值但不重复告知）。"""
+    base = form()
+    base["elements"]["D"] = {"proposedSolution": COZE_SOLUTION}
+    output = ModelOutput(structured={"elements": {"D": {"proposedSolution": "补充：团队倾向方案1，先迁移再备案"}}}, elements=[])
+    result = process(output, base, {}, [], None, {}, "补充一下，我们团队倾向方案1")
+    assert result["structured"]["elements"]["D"]["proposedSolution"] == "补充：团队倾向方案1，先迁移再备案"
+    assert "记到「建议方案」" not in result["reply"]
+
+
+def test_proposed_solution_not_in_gates_or_follow_ups():
+    """D9 定位是"设想供评估"：不入 follow_up_order、不进必填集合，空值不拦提交、永不作为追问目标。"""
+    standard = get("TECH")
+    assert "proposedSolution" not in standard.follow_up_order
+    assert not any(e.key == "proposedSolution" and e.required for e in standard.elements)
+    # A/C/D 12 项必填齐全、D9 为空：照常可提交
+    result = process(ModelOutput(structured={}, elements=[]), acd_filled_form(), {}, [], None, {}, "报表")
+    assert result["canSubmit"] is True and result["askedTarget"] is None
