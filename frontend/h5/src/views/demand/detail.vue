@@ -2,8 +2,13 @@
   <app-layout>
     <van-loading v-if="loading" class="page-loading">加载详情…</van-loading>
     <template v-else-if="detail">
-      <div class="detail-card header"><div class="number">{{ demand.demandNo || `草稿 #${demand.id}` }}</div><h1>{{ demand.title || '未命名草稿' }}</h1><div class="tags"><van-tag type="primary" plain>{{ statusLabel(demand.status) }}</van-tag><van-tag plain>{{ detail.standard?.name || typeLabel(demand.demandTypeCode) }}</van-tag><van-tag v-if="isLight" type="success" plain>轻量提报</van-tag><van-tag :type="demand.urgency === 'NORMAL' ? 'default' : 'danger'">{{ urgencyLabel(demand.urgency) }}</van-tag></div><div class="meta"><span>期望交付：{{ demand.expectDeliveryAt || '未填写' }}</span><span>{{ demand.status === 'DRAFT' ? '保存' : '提交' }}时间：{{ fmtTime(demand.submittedAt || demand.updatedAt) }}</span><span v-if="demand.submitterName">提报人：{{ demand.submitterName }} {{ demand.submitterDept || '' }}</span></div></div>
+      <van-notice-bar v-if="receipt" mode="closeable" left-icon="volume-o" wrapable :scrollable="false" class="receipt">{{ receipt }}</van-notice-bar>
+      <van-notice-bar v-if="demand.onHold" left-icon="pause-circle-o" wrapable :scrollable="false" color="#c2410c" background="#fff7ed">
+        需求已挂起：{{ demand.holdReason || '处理人暂缓处理，恢复后会继续' }}
+      </van-notice-bar>
+      <div class="detail-card header"><div class="number">{{ demand.demandNo || `草稿 #${demand.id}` }}</div><h1>{{ demand.title || '未命名草稿' }}</h1><div class="tags"><van-tag type="primary" plain>{{ statusLabel(demand.status) }}</van-tag><van-tag plain>{{ detail.standard?.name || typeLabel(demand.demandTypeCode) }}</van-tag><van-tag v-if="isLight" type="success" plain>轻量提报</van-tag><van-tag :type="demand.urgency === 'NORMAL' ? 'default' : 'danger'">{{ urgencyLabel(demand.urgency) }}</van-tag></div><div class="meta"><span>期望交付：{{ demand.expectDeliveryAt || '未填写' }}</span><span>{{ demand.status === 'DRAFT' ? '保存' : '提交' }}时间：{{ fmtTime(demand.submittedAt || demand.updatedAt) }}</span><span v-if="demand.submitterName">提报人：{{ demand.submitterName }} {{ demand.submitterDept || '' }}</span><span v-if="demand.assigneeName">处理人：{{ demand.assigneeName }}</span><span v-if="demand.qualityScore">验收评分：质量 {{ demand.qualityScore }} 分 · 满意 {{ demand.satisfactionScore }} 分</span></div></div>
       <div class="detail-card"><h2>需求概述</h2><template v-if="overviewRows.length"><div v-for="row in overviewRows" :key="row.key" class="ov-row"><strong>{{ row.label }}</strong><p>{{ row.text }}</p></div></template><template v-else><p class="content">{{ demand.content || '尚未填写' }}</p><template v-if="userSupplements.length"><h3 class="supp-title">后续对话中的补充原话</h3><div v-for="m in userSupplements" :key="m.id" class="supp-row"><small>{{ fmtTime(m.createdAt) }}</small><p>{{ m.content }}</p></div></template></template></div>
+      <div v-if="flowRows.length" class="detail-card"><h2>处理进度</h2><div v-for="t in flowRows" :key="t.id" class="flow-row"><span class="flow-dot" aria-hidden="true"></span><div class="flow-body"><div class="flow-line"><strong>{{ t.eventLabel }}</strong><span v-if="t.toStatus !== t.fromStatus" class="flow-status">{{ t.fromStatus ? statusLabel(t.fromStatus) + ' → ' : '' }}{{ statusLabel(t.toStatus) }}</span></div><small>{{ fmtTime(t.createdAt) }}<template v-if="t.operatorName"> · {{ t.operatorName }}</template></small><p v-if="t.comment" class="flow-comment">{{ t.comment }}</p></div></div></div>
       <div v-if="attachments.length" class="detail-card">
         <h2>附件（{{ attachments.length }}）</h2>
         <p class="att-note">AI 暂不支持识别附件内容，附件将作为需求材料随需求一并提交。</p>
@@ -26,6 +31,10 @@
       <div v-if="demand.status === 'CLOSED'" class="detail-card"><h2>撤销说明</h2><p class="content">{{ demand.closeReason }}</p><small>{{ fmtTime(demand.closedAt) }}</small></div>
       <div v-if="returnReason" class="detail-card return-card"><h2>打回说明</h2><p class="content">{{ returnReason.reason }}</p><small>打回人：{{ returnReason.returnedBy || '需求整理人员' }} · {{ fmtTime(returnReason.returnedAt || undefined) }}</small></div>
       <div class="detail-card actions">
+        <template v-if="own && demand.status === 'ACCEPTANCE'">
+          <van-button block type="success" @click="passVisible = true">验收通过</van-button>
+          <van-button block plain type="warning" @click="rejectVisible = true">验收打回</van-button>
+        </template>
         <van-button block plain type="primary" :loading="downloading" @click="download">下载 Markdown</van-button>
         <van-button v-if="own && demand.status === 'DRAFT'" block type="primary" @click="router.push({ path: '/report', query: { draftId: demand.id } })">继续编辑草稿</van-button>
         <van-button v-if="own && demand.status === 'NEED_INFO'" block type="primary" @click="router.push({ path: '/report', query: { draftId: demand.id } })">去补充，重新提交</van-button>
@@ -37,6 +46,14 @@
     <van-empty v-else description="详情加载失败"><van-button size="small" type="primary" @click="fetchDetail">重试</van-button></van-empty>
     <van-dialog v-model:show="closeVisible" :title="detail?.demand.status === 'DRAFT' ? '撤销草稿' : '撤销需求'" show-cancel-button :before-close="beforeClose"><van-field v-model="reason" type="textarea" rows="3" label="撤销原因" maxlength="256" placeholder="请填写撤销原因" /></van-dialog>
     <van-dialog v-model:show="returnVisible" title="打回补充" show-cancel-button :before-close="beforeReturn"><van-field v-model="returnReasonText" type="textarea" rows="3" label="打回原因" maxlength="256" placeholder="请说明还缺哪些信息，提报人会看到这段话" /></van-dialog>
+    <van-dialog v-model:show="passVisible" title="验收通过" show-cancel-button :before-close="beforePass">
+      <div class="rate-row"><span class="rate-label">质量评分</span><van-rate v-model="passForm.qualityScore" /></div>
+      <div class="rate-row"><span class="rate-label">满意度评分</span><van-rate v-model="passForm.satisfactionScore" /></div>
+      <van-field v-model="passForm.opinion" type="textarea" rows="3" label="验收意见" maxlength="2000" placeholder="选填" />
+    </van-dialog>
+    <van-dialog v-model:show="rejectVisible" title="验收打回" show-cancel-button :before-close="beforeReject">
+      <van-field v-model="rejectOpinion" type="textarea" rows="3" label="打回意见" maxlength="2000" placeholder="必填：说明哪些地方没达到预期，处理人会看到这段话" />
+    </van-dialog>
   </app-layout>
 </template>
 <script setup lang="ts">
@@ -45,7 +62,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import AppLayout from '@/components/AppLayout.vue'
 import QualityList from '@/components/QualityList.vue'
-import { getDemand, closeDemand, downloadMarkdown, deleteAttachment, downloadAttachment, fmtSize, parseAttachmentPayload, returnDemand, returnReasonOf, demandModeOf, type DemandAttachment, type DemandDetail, type StandardField } from '@/api/demand'
+import { getDemand, closeDemand, downloadMarkdown, deleteAttachment, downloadAttachment, fmtSize, parseAttachmentPayload, returnDemand, returnReasonOf, demandModeOf, getFlow, acceptanceReview, type DemandAttachment, type DemandDetail, type FlowDetail, type StandardField } from '@/api/demand'
 import { useUserStore } from '@/store/user'
 import { allFields, fieldPath, readField } from '@/utils/form'
 import { fmtTime, statusLabel, typeLabel, urgencyLabel } from '@/utils/format'
@@ -53,6 +70,59 @@ const route = useRoute(); const router = useRouter(); const user = useUserStore(
 const detail = ref<DemandDetail | null>(null); const loading = ref(true); const downloading = ref(false)
 const expanded = ref<string[]>([]); const closeVisible = ref(false); const reason = ref('')
 const returnVisible = ref(false); const returnReasonText = ref('')
+// P2：状态时间线（处理进度卡片）
+const flow = ref<FlowDetail | null>(null)
+const flowRows = computed(() => (flow.value?.transitions || []).slice().reverse())
+// P2：回执播报——比对本机记住的上次状态，变化才播；播报一次后记住新状态，关闭横幅不再重复
+const receipt = ref('')
+const RECEIPT_TEXT: Record<string, string> = {
+  SUBMITTED: '提交成功，已送受理', NEED_INFO: '需求被打回补充，请查看「打回说明」',
+  TRIAGE: '需求已受理，等待分派处理人', ANALYZING: '处理人已接手，正在分析方案',
+  SOLUTION_REVIEW: '方案已提交评审', CONFIRMED: '方案已通过评审确认，即将开始处理',
+  IN_PROGRESS: '需求正在处理中', ACCEPTANCE: '处理完成，请你验收',
+  DONE: '验收通过，需求已完成', CLOSED: '需求已关闭',
+}
+// 同一目标态、不同事件的口径细分（看最新一条留痕）
+const EVENT_RECEIPT_TEXT: Record<string, string> = {
+  ACCEPT_REJECT: '验收未通过，已打回给处理人继续完善',
+  REVIEW_REJECT: '方案评审未通过，处理人正在完善方案',
+  RESUME: '需求已恢复处理',
+}
+function updateReceipt() {
+  if (!detail.value) return
+  const current = demand.value.status
+  const key = `demandhub_h5_flow_${demand.value.id}`
+  const prev = localStorage.getItem(key)
+  if (prev && prev !== current) {
+    const latest = flow.value?.transitions?.[flow.value.transitions.length - 1]
+    receipt.value = (latest && EVENT_RECEIPT_TEXT[latest.event]) || RECEIPT_TEXT[current] || `需求状态已更新为「${statusLabel(current)}」`
+  }
+  localStorage.setItem(key, current)
+}
+// P2：验收操作区（提报人在「待验收」态可见）
+const passVisible = ref(false)
+const passForm = ref({ qualityScore: 0, satisfactionScore: 0, opinion: '' })
+const rejectVisible = ref(false)
+const rejectOpinion = ref('')
+async function beforePass(action: string): Promise<boolean> {
+  if (action === 'cancel') return true
+  if (!passForm.value.qualityScore || !passForm.value.satisfactionScore) { showToast('请完成两项评分'); return false }
+  try {
+    await acceptanceReview(demand.value.id, {
+      result: 'PASS', qualityScore: passForm.value.qualityScore,
+      satisfactionScore: passForm.value.satisfactionScore, opinion: passForm.value.opinion.trim() || undefined,
+    })
+    await fetchDetail(); showToast('验收通过，需求已完成'); return true
+  } catch { return false }
+}
+async function beforeReject(action: string): Promise<boolean> {
+  if (action === 'cancel') return true
+  if (!rejectOpinion.value.trim()) { showToast('请填写打回意见'); return false }
+  try {
+    await acceptanceReview(demand.value.id, { result: 'REJECT', opinion: rejectOpinion.value.trim() })
+    await fetchDetail(); showToast('已打回，处理人会继续完善'); return true
+  } catch { return false }
+}
 const demand = computed(() => detail.value!.demand)
 // 方案④口径显性化：快速通道需求详情页可见口径，与列表「轻量」角标同源
 const isLight = computed(() => demandModeOf(demand.value) === 'light')
@@ -103,7 +173,16 @@ const extensionFields = computed(() => {
   const fields: StandardField[] = standard ? allFields(standard).filter(field => fieldPath(field).startsWith('ext.')) : Object.keys(demand.value.ext || {}).map(key => ({ key, label: key, path: `ext.${key}`, kind: 'text' as const }))
   return fields.map(field => { const value = readField(demand.value, field); return { path: fieldPath(field), label: field.label, value: field.options?.[String(value)] || (value == null || value === '' ? '未填写' : String(value)) } }).filter(item => item.value !== '未填写')
 })
-async function fetchDetail() { loading.value = true; try { detail.value = await getDemand(Number(route.params.id)) } catch { detail.value = null } finally { loading.value = false } }
+async function fetchDetail() {
+  loading.value = true
+  try {
+    detail.value = await getDemand(Number(route.params.id))
+  } catch { detail.value = null } finally { loading.value = false }
+  if (!detail.value) return
+  // 时间线后台加载，不阻塞详情与后续动作提示；失败静默（如无权限场景）只影响进度卡与播报细分口径
+  const id = demand.value.id
+  getFlow(id).then(f => { flow.value = f }).catch(() => { flow.value = null }).finally(updateReceipt)
+}
 async function download() { downloading.value = true; try { await downloadMarkdown(demand.value.id, demand.value.demandNo || `draft-${demand.value.id}`) } catch (error) { showToast(error instanceof Error ? error.message : '下载失败') } finally { downloading.value = false } }
 async function downloadAttachmentFile(att: DemandAttachment) {
   try { await downloadAttachment(demand.value.id, att.id, att.fileName) } catch (error) { showToast(error instanceof Error ? error.message : '下载失败') }
@@ -129,4 +208,17 @@ onMounted(fetchDetail)
 .page-loading { padding: 60px; text-align: center; }.detail-card { background: #fff; margin: 14px 12px; border-radius: 12px; padding: 18px 16px; }.number { font-size: 12px; color: #888; }.header h1 { font-size: 20px; line-height: 1.6; margin: 8px 0 14px; }.tags { display: flex; gap: 8px; flex-wrap: wrap; }.meta { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; font-size: 12px; color: #888; }h2 { font-size: 15px; margin: 0 0 12px; }.content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; margin: 0; }.ext-row { display: grid; grid-template-columns: 92px 1fr; gap: 12px; margin: 12px 0; font-size: 13px; line-height: 1.7; }.ext-row strong { font-weight: 500; color: #888; min-width: 0; overflow-wrap: anywhere; }.ext-row span { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }.ext-row span small { display: block; color: #bbb; margin-top: 2px; }.zone-empty { margin: 0; font-size: 13px; color: #9ca3af; }.playback { padding: 4px 0; }.history-row { font-size: 13px; line-height: 1.8; border-bottom: 1px solid #eee; padding: 12px 0; }.history-row small { color: #999; margin-left: 10px; }.history-row p { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }.supp-title { font-size: 13px; color: #555; margin: 14px 0 4px; border-top: 1px dashed #e5e7eb; padding-top: 12px; }.supp-row { font-size: 13px; line-height: 1.8; margin: 8px 0; }.supp-row small { color: #999; display: block; }.supp-row p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }.ov-row { margin: 12px 0; }.ov-row strong { display: inline-block; font-size: 12px; font-weight: 600; color: #1f3a8a; background: #eef2ff; border-radius: 4px; padding: 2px 8px; margin-bottom: 4px; }.ov-row p { margin: 0; font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }.actions { display: flex; flex-direction: column; gap: 12px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
 .return-card { border-left: 4px solid #f97316; background: #fff7ed; } .return-card h2 { color: #c2410c; } .return-card small { color: #b45309; }
 .att-note { margin: 0 0 10px; font-size: 12px; color: #9ca3af; line-height: 1.6; }.att-cell { border-top: 1px solid #f1f2f4; }.att-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }.att-icon { font-size: 22px; color: #1f3a8a; flex-shrink: 0; }.att-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }.att-meta strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }.att-meta small { font-size: 12px; color: #999; }.att-delete { height: 100%; }
+.receipt { margin: 12px 12px 0; border-radius: 10px; }
+/* 处理进度时间线：左圆点 + 竖线串联，最新一条在顶部 */
+.flow-row { position: relative; display: flex; gap: 10px; padding: 10px 0 10px 2px; }
+.flow-row:not(:last-child)::before { content: ''; position: absolute; left: 6px; top: 24px; bottom: -4px; width: 2px; background: #e5e7eb; }
+.flow-dot { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; background: #1f3a8a; margin-top: 4px; }
+.flow-row:first-child .flow-dot { background: #16a34a; }
+.flow-body { min-width: 0; }
+.flow-line { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.flow-status { font-size: 12px; color: #1f3a8a; background: #eef2ff; border-radius: 4px; padding: 1px 6px; }
+.flow-body small { color: #999; font-size: 12px; }
+.flow-comment { margin: 4px 0 0; font-size: 12px; color: #606266; background: #f7f8fa; border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rate-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
+.rate-label { font-size: 14px; color: #646566; width: 70px; flex-shrink: 0; }
 </style>

@@ -168,7 +168,7 @@ def assess(standard: Standard, form: dict, *, light: bool = False):
     from app.agent.schemas import ElementStatus
     result = []
     for field in standard.elements:
-        if field.system:
+        if field.system or not field.assessed:
             continue
         value = get_value(form, field.field_path)
         status, note = "OK", ""

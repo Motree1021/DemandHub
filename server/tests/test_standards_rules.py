@@ -53,8 +53,16 @@ def tech(**overrides):
 
 def test_full_element_collection_and_positive_java_examples():
     result = assess(get("TECH"), tech())
-    assert len(result) == 28  # 30 要素减去 A4/A5 两个 system 快照（2026-10-12 新增 D9 建议方案）
+    assert len(result) == 27  # 30 要素减 A4/A5 system 快照，再减 D9 建议方案（2026-10-13 起不参与质量评估）
     assert all(e.status == "OK" and e.attempts == 0 for e in result)
+
+
+def test_proposed_solution_not_assessed():
+    """D9 建议方案有值也不进 quality（assessed: false），照常保存展示但不参与计数。"""
+    form = tech()
+    assert form["elements"]["D"]["proposedSolution"]  # 夹具自带 D9 值
+    result = assess(get("TECH"), form)
+    assert all(e.key != "proposedSolution" for e in result)
 
 
 @pytest.mark.parametrize("zone,key,value,note", [("C", "useScenario", "方便一下", "含歧义词"), ("C", "useScenario", "全部内容经过说明之后确实完整但没有关键词", "看不出"), ("D", "acceptanceCriteria", "希望改得好", "缺可检验"), ("B", "businessValue", "也许很有意义", "缺量化"), ("A", "techSubtype", "UNKNOWN", "选项"), ("C", "useScenario", "", "未填写")])

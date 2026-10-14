@@ -36,6 +36,8 @@ class Element(StandardModel):
     code: str = ""
     zone: Literal["A", "B", "C", "D"] | None = None
     system: bool = False
+    # 是否参与质量评估（assess/完备度统计）；false 的要素照常展示与保存，但不进 quality 计数
+    assessed: bool = True
     required: bool = False
     options: dict[str, str] = Field(default_factory=dict)
     default: Any = None

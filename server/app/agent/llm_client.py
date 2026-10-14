@@ -98,6 +98,23 @@ class ArkClient:
         response = await self._create(messages, stream=False)
         return StreamEvent(kind="final", raw=response.choices[0].message.content or "", usage=response.usage.model_dump() if response.usage else {})
 
+    async def embed(self, text: str) -> list[float]:
+        """文本向量化（P3 RAG）：与 chat 同口径的可用性闸门与熔断（3 次失败冷却 60s）。
+
+        llm_embedding_model 配置位为空（未启用）或处于冷却期 → LlmUnavailable，
+        调用方按降级处理（相似推荐返回空、向量化跳过），不阻塞业务主流程。
+        """
+        if not self.available() or not self.settings.llm_embedding_model:
+            raise LlmUnavailable
+        try:
+            response = await self.client.embeddings.create(model=self.settings.llm_embedding_model, input=text)
+        except (APIError, HTTPError) as error:
+            self.on_failure()
+            logger.warning("LLM embedding请求失败 consecutive=%s %s: %s", self.consecutive_failures, type(error).__name__, str(error)[:300])
+            raise LlmUnavailable from None
+        self.on_success()
+        return list(response.data[0].embedding)
+
     async def close(self):
         await self.client.close()
 

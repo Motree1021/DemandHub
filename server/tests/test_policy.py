@@ -200,7 +200,7 @@ def test_matl_urgent_gate_not_applicable():
 
 def test_missing_collection_cannot_fake_quality_complete():
     result = process(ModelOutput(structured={}, elements=[]), form(), {}, [], None, {}, "报表")
-    assert len(result["elements"]) == 28  # 30 要素减去 A4/A5 两个 system 快照（2026-10-12 新增 D9 建议方案）
+    assert len(result["elements"]) == 27  # 30 要素减 A4/A5 system 快照，再减 D9 不参与评估（2026-10-13）
     assert not result["canSubmit"] and not result["ready"]
     assert not result["qualityComplete"] and not result["guidanceComplete"]
     # 无业务判型：先追问 A/C/D，首个缺口是 C 区目标用户，不追问 B 区

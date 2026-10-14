@@ -35,7 +35,7 @@ class GuideChatRequest(AgentModel):
 
 class CreateSessionRequest(AgentModel):
     demand_id: int = Field(gt=0)
-    scene: Literal["SUBMIT_GUIDE"] = "SUBMIT_GUIDE"
+    scene: Literal["SUBMIT_GUIDE", "HANDLE_ASSIST"] = "SUBMIT_GUIDE"
     first_message: str = Field(default="", max_length=20000)
 
 

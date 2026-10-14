@@ -1,6 +1,6 @@
-# DemandHub · Java → Python 迁移方案 v2.0
+# DemandHub · Java → Python 迁移方案 v2.1
 
-> 版本：v2.0 ｜ 日期：2026-10-11 ｜ 状态：已定稿，待启动 P1
+> 版本：v2.1 ｜ 日期：2026-10-12 ｜ 状态：已定稿，待启动 P1
 > 关联文档：《DemandHub_架构演进路线_v1.0》（其中"保留 Java PC 页面切契约""Java 不删除"两处口径被本文替代）、《DemandHub_Python重构方案_MVP_v1.0》、《DemandHub_系统数据库设计_v1.0》、《DemandHub_数据库设计_Python栈_v1.0》
 
 ---
@@ -205,9 +205,18 @@ flowchart LR
 
 > 通用门禁（每阶段收口必过）：`uv run pytest` 全绿 + `ruff check` 通过 + H5/admin `typecheck` `vitest` `build` 通过 + `scripts/e2e_mvp.py --agent-mode none` 通过 + 本阶段新增 e2e 场景全绿。**提交前必须全量验证**（既定纪律）。
 
-### P0 · 快速通道 + 打回闭环（✅ 已完成，2026-10-11 验收）
+### P0 · 快速通道 + 打回闭环（✅ 已完成，2026-10-11 验收；追问与判质于 2026-10-12 细化）
 
 mode=light/standard、轻量最小集 4 项、NEED_INFO 打回闭环、附件阶段一、口径显性化双标签。基线详见《项目记忆》。
+
+**追问与判质细化（2026-10-12 拍板，v2.1 增补）**——均落在 standards YAML / agent 纯函数层，不动表结构、不影响 P1 起的数据与服务设计：
+
+- **急单门控**：紧急度为紧急/特急且期望交付时间空时，插队最优先追问日期（承接"紧急请说明期望时间"承诺，点选快捷项只发枚举标签无时间信息可抽）；日期填上/问满即恢复。仅 TECH 生效，普通档不问、light 不门控。
+- **歧义词长句豁免**：vague_words 子串匹配只在短句（<18 字）且以模糊词为主体时判 VAGUE；长句里"方便/体验"多为正常结果陈述（"…导致阅读体验较差"）不误伤；"体验""满意"移出三标准词表。
+- **验收承认行为结果**：D8 合格条件在数字指标之外，并列承认可逐条核对的行为结果（可直接打开/正常显示/不再报错/无需手工/恢复正常等），修复"体验修复类验收无数字被误判不可检验"。
+- **可提交即停问软质量**：必填门槛达成（AI 已说"可以提交"）后，非空但被判"不够量化"的必填项不再主动追问，兑现"不影响提交、以后能补"；完善提示留表单卡片由用户/产品经理自愿补，质量兜底交给 P2 的受理打回机制。MISSING（真空着）不受此限仍追问。
+- **日期锚点**：submit_guide 提示词注入"今天是 YYYY-MM-DD"，省略年份的日期（10/30、月底前）以今天为基准换算，今年已过顺延明年；规则层拦截早于今天的交付日期。
+- **追问话术明示意图**：痛点问句前缀"关于『现在最麻烦的事』"、验收前缀"关于『怎样算做完』"，用户可直观知道 AI 在问哪个要素。
 
 ---
 
@@ -247,6 +256,7 @@ mode=light/standard、轻量最小集 4 项、NEED_INFO 打回闭环、附件阶
 **② 后端**
 - 状态机引擎（core/statemachine）：配置表加载 + `/admin/state-machines/reload` 热重载；规则含角色校验（ADMIN 直通）；非法流转统一错误码；
 - triage：`GET /triage/queue|pool`、`POST /triage/{id}/accept|return|close|assign`、`POST /triage/{id}/claim`（DB 乐观锁防抢单）、`change-type`；
+  - 受理打回承接 P0 新口径（2026-10-12）：提报侧"可提交即停问软质量"后，**要素质量的最终把关在受理环节**——受理人发现痛点/验收等不够具体时用 `return`（→ NEED_INFO）打回并附原因，与 P0 打回闭环同一链路；
 - 流转：`/demand/{id}/start|hold|resume|submit-acceptance|acceptance-review|split`；HOLD/RESUME 写叠加态；
 - 协作：solution（提交评审/评审/多方案 compare）、comment、effort（含 summary）、relation；拆实例落库（激活既有 ext.pendingSplits → split_from_id/split_group_id）；
 - 附件 bizType 扩展：DRAFT/DEMAND/SOLUTION/COMMENT（限额届时拍板是否对齐 Java 50MB/20 个）。

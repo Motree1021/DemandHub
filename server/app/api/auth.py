@@ -10,6 +10,7 @@ from app.core.errors import BizError, ErrorCode
 from app.core.result import ApiModel, ok
 from app.core.security import issue_token
 from app.db.models import User
+from app.services import auth_service
 from app.services.user_service import login_existing, upsert_from_sso
 from app.sso.chuangjin_ls import ChuangjinLsSsoClient
 from app.sso.schemas import ChannelSsoConfig, SsoProfile
@@ -31,7 +32,8 @@ def get_sso_client():
 def user_info(user: User) -> dict:
     return {"id": user.id, "userId": user.wecom_userid, "name": user.name,
             "deptName": user.dept_name, "deptPath": user.dept_path,
-            "channel": user.channel, "isAdmin": is_admin(user)}
+            "channel": user.channel, "isAdmin": is_admin(user),
+            "role": user.role, "mustChangePwd": user.must_change_pwd}
 
 
 def login_response(user: User):
@@ -124,3 +126,70 @@ async def test_login(payload: TestLogin, db: AsyncSession = Depends(get_db)):
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)):
     return ok(user_info(user))
+
+
+# ---------- P1 账密登录（仅管理后台使用，与 H5 渠道 SSO 完全独立） ----------
+
+class AccountLogin(ApiModel):
+    login_account: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=64, repr=False)
+
+    @field_validator("login_account")
+    @classmethod
+    def trim_account(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("登录账号不能为空")
+        return value
+
+
+@router.post("/login")
+async def account_login(payload: AccountLogin, db: AsyncSession = Depends(get_db)):
+    # 失败计数/锁定也随事务提交（业务错误照常入库），错误在事务提交后再抛出
+    error = None
+    async with db.begin():
+        try:
+            user = await auth_service.login_with_password(db, payload.login_account, payload.password)
+            refresh_token = await auth_service.issue_refresh(db, user)
+        except BizError as exc:
+            error = exc
+    if error is not None:
+        raise error
+    token, expires_in = issue_token(user)
+    return ok({"accessToken": token, "refreshToken": refresh_token, "tokenType": "Bearer",
+               "expiresIn": expires_in, "mustChangePwd": user.must_change_pwd,
+               "user": user_info(user)})
+
+
+class ChangePassword(ApiModel):
+    old_password: str = Field(min_length=1, max_length=64, repr=False)
+    new_password: str = Field(min_length=8, max_length=64, repr=False)
+
+
+@router.post("/change-password")
+async def change_password(payload: ChangePassword, user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    async with db.begin():
+        fresh = await db.get(User, user.id)
+        await auth_service.change_password(db, fresh, payload.old_password, payload.new_password)
+    return ok({"success": True})
+
+
+class RefreshPayload(ApiModel):
+    refresh_token: str = Field(min_length=1, max_length=512, repr=False)
+
+
+@router.post("/refresh")
+async def refresh(payload: RefreshPayload, db: AsyncSession = Depends(get_db)):
+    async with db.begin():
+        user, new_refresh = await auth_service.rotate_refresh(db, payload.refresh_token)
+    token, expires_in = issue_token(user)
+    return ok({"accessToken": token, "refreshToken": new_refresh,
+               "tokenType": "Bearer", "expiresIn": expires_in})
+
+
+@router.post("/logout")
+async def logout(payload: RefreshPayload, db: AsyncSession = Depends(get_db)):
+    async with db.begin():
+        await auth_service.revoke_refresh(db, payload.refresh_token)
+    return ok({"success": True})

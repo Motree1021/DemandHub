@@ -26,12 +26,20 @@ export function demandModeOf(form: DemandForm): 'light' | 'standard' {
   const mode = form.ext?.mode as DemandMode | undefined
   return mode?.level === 'light' ? 'light' : 'standard'
 }
+export type DemandStatus =
+  'DRAFT' | 'SUBMITTED' | 'NEED_INFO' | 'TRIAGE' | 'ANALYZING' | 'SOLUTION_REVIEW' |
+  'CONFIRMED' | 'IN_PROGRESS' | 'ACCEPTANCE' | 'DONE' | 'CLOSED'
 export interface DemandEntity extends DemandForm {
   id: number; demandNo: string | null; subtypeCode: string | null; revision: number
-  status: 'DRAFT' | 'SUBMITTED' | 'NEED_INFO' | 'CLOSED'
+  status: DemandStatus
   submitterId: number; submitterName: string | null; submitterDept: string | null; channel: string; sessionId: number | null
   submittedAt: string | null; closedAt: string | null; closeReason: string | null; createdAt: string; updatedAt: string; quality: ElementStatus[]
   changeLogs: ChangeLog[]
+  // P2 流转字段：老数据（4 态口径）可能缺省，前端全部按可选处理
+  assigneeId?: number | null; assigneeName?: string | null
+  onHold?: boolean; holdReason?: string | null
+  confirmedAt?: string | null; doneAt?: string | null
+  qualityScore?: number | null; satisfactionScore?: number | null
 }
 // 打回待补充（方案③）：管理员打回原因存 ext.returnReason，重提成功后由服务端清除
 export interface ReturnReason { reason: string; returnedBy?: string; returnedAt?: string }
@@ -123,5 +131,16 @@ export const adminDemands = (query: AdminQuery): Promise<PageResult<DemandEntity
 // 管理员打回待补充（方案③）：仅已提交需求可打回，原因必填，服务端写留痕并往会话注入播报
 export const returnDemand = (id: number, reason: string): Promise<DemandEntity> => post(`/admin/demand/${id}/return`, { reason })
 export const getDemand = (id: number): Promise<DemandDetail> => get(`/demand/${id}`)
+// P2 状态时间线与验收：flow 接口返回流转留痕 + 当前用户可用操作（按钮显隐以它为准）
+export interface TransitionLog {
+  id: number; fromStatus: string | null; fromStatusLabel: string | null
+  toStatus: string; toStatusLabel: string; event: string; eventLabel: string
+  operatorName: string | null; holdFlag: boolean; comment: string | null; createdAt: string
+}
+export interface FlowDetail { transitions: TransitionLog[]; availableActions: { event: string; label: string }[] }
+export const getFlow = (id: number): Promise<FlowDetail> => get(`/demand/${id}/flow`)
+export const acceptanceReview = (id: number, data: {
+  result: 'PASS' | 'REJECT'; qualityScore?: number; satisfactionScore?: number; opinion?: string
+}): Promise<DemandEntity> => post(`/demand/${id}/acceptance-review`, data)
 export const downloadMarkdown = (id: number, name: string): Promise<void> => downloadFile(`/demand/${id}/export.md`, `${name}.md`)
 export const downloadXlsx = (query: Omit<AdminQuery, 'page' | 'size'>): Promise<void> => downloadFile('/admin/demand/export.xlsx', 'demandhub.xlsx', nonEmptyQuery(query) as Record<string, string>)

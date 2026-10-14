@@ -26,6 +26,19 @@ TYPE_SIGNAL_KEYS = {
     "function": ("系统应该", "系统必须", "自动", "支持", "接口", "报表", "推送", "按钮", "页面", "字段"),
 }
 
+# P3 处理辅助契约：prompt 内含输出契约标记时分流（只验证 wire format）
+ASSIST_QUESTIONS = {"questions": ["核心使用角色与使用频次？", "数据来源与口径确认人？", "与上下游系统的边界？",
+                                  "性能与数据权限约束？", "里程碑拆分与关键依赖？"]}
+ASSIST_SOLUTION = {"specContent": "（AI 生成，需人工确认）需求理解：晨会前自动汇总渠道持仓并出具报表。",
+                   "solutionContent": "（AI 生成，需人工确认）方案：每日 7:30 跑批生成，支持导出与对账。"}
+
+# embedding 契约：关键词维度向量（确定性，文本关键词重叠越多余弦越高），只验证 wire format 与召回链路
+EMBED_KEYS = ("持仓", "报表", "晨会", "渠道", "导出", "对账", "客户经理", "自动")
+
+
+def embed_vector(text):
+    return [1.0 if key in text else 0.0 for key in EMBED_KEYS]
+
 
 def type_signals(text):
     votes = {}
@@ -67,9 +80,37 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError):
             self.send_error(400)
             return
+        if self.path.rstrip("/") in {"/v3/embeddings", "/embeddings"}:
+            self._embed(body)
+            return
         if self.path.rstrip("/") not in {"/v3/chat/completions", "/chat/completions"}:
             self.send_error(404)
             return
+        joined = "".join(str(message.get("content", "")) for message in body.get("messages", []))
+        if '{"questions"' in joined:
+            output = dict(ASSIST_QUESTIONS)  # 处理辅助：调研问题清单契约
+        elif '"specContent"' in joined:
+            output = dict(ASSIST_SOLUTION)  # 处理辅助：方案初稿契约
+        else:
+            output = self._guide_output(body)
+        raw = json.dumps(output, ensure_ascii=False)
+        self._completion(body, raw)
+
+    def _embed(self, body):
+        inputs = body.get("input") or ""
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        data = [{"object": "embedding", "index": index, "embedding": embed_vector(str(text))}
+                for index, text in enumerate(inputs)]
+        payload = json.dumps({"object": "list", "data": data, "model": body.get("model") or "contract-mock",
+                              "usage": {"prompt_tokens": 1, "total_tokens": 1}}, ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _guide_output(self, body):
         output = dict(EXTRACTION)
         for message in body.get("messages", []):
             if message.get("role") != "user":
@@ -91,7 +132,9 @@ class Handler(BaseHTTPRequestHandler):
         # FR-06 对话修改契约：用户明确说「目标…改…」时输出 B1 变更补丁（数字须可在原文溯源）
         if "改" in text and "目标" in text:
             output["structured"].setdefault("elements", {}).setdefault("B", {})["businessGoal"] = "把晨会准备时间从40分钟降到5分钟"
-        raw = json.dumps(output, ensure_ascii=False)
+        return output
+
+    def _completion(self, body, raw):
         if body.get("stream"):
             pieces = [raw[start:start + 80] for start in range(0, len(raw), 80)]
             data = "".join("data: " + json.dumps({"id": "contract-mock", "object": "chat.completion.chunk", "created": int(time.time()), "model": "contract-mock", "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}, ensure_ascii=False) + "\n\n" for piece in pieces) + "data: [DONE]\n\n"

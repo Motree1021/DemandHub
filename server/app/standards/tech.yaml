@@ -399,6 +399,7 @@ elements:
   label: 建议方案
   kind: text
   path: elements.D.proposedSolution
+  assessed: false  # 提报人设想仅供受理方参考（2026-10-13 拍板）：不参与质量评估，质量计数为 x/27
   ok_when: 如实记录提报人设想的实现方式/候选方案及选择关系（如二选一），供受理方评估；非最终方案，可留空
 follow_up_order:
 - techSubtype

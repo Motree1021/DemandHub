@@ -40,6 +40,7 @@ async def test_upload_png_and_receipt(client, auth_headers, attachment_dir):
     assert data["code"] == 0, response.text
     assert data["data"] == {"id": data["data"]["id"], "demandId": draft["id"], "fileName": "logo.png",
                             "kind": "IMAGE", "kindLabel": "图片", "size": len(PNG),
+                            "bizType": "DEMAND", "bizId": draft["id"],
                             "createdAt": data["data"]["createdAt"]}
     # 文件落盘在配置目录下（storage_key 不外泄），路径不含原始文件名的路径部分
     stored = list((attachment_dir / str(draft["id"])).glob("*.png"))

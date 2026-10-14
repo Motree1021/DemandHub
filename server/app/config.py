@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     llm_failure_threshold: int = Field(default=3, ge=1)
     llm_failure_cooldown_s: float = Field(default=60, gt=0)
     attachment_dir: str = "storage/attachments"
+    report_dir: str = "storage/reports"
+    admin_initial_password: str = Field(default="", repr=False)
+    refresh_token_ttl_days: int = Field(default=7, ge=1, le=90)
+    sla_scan_enabled: bool = True
+    sla_scan_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    stat_refresh_enabled: bool = True
+    stat_refresh_interval_seconds: int = Field(default=300, ge=30, le=86400)
 
     @model_validator(mode="after")
     def validate_environment(self):

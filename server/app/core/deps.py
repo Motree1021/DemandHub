@@ -24,7 +24,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
 
 
 def is_admin(user: User) -> bool:
-    return user.wecom_userid in get_settings().admin_ids
+    """过渡兼容：role=='ADMIN' 或命中企微白名单，满足其一即管理员（P4 白名单退役）。"""
+    return user.role == "ADMIN" or user.wecom_userid in get_settings().admin_ids
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
@@ -33,4 +34,28 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-__all__ = ["get_db", "get_current_user", "require_admin", "is_admin"]
+def require_role(*roles: str):
+    """角色守卫工厂：require_role("MANAGER") 返回 Depends。
+
+    有效角色 = 静态 role ∪ 生效授权（demand_role_grant）；任一命中即放行，否则 403。
+    ADMIN 直通（is_admin 兼容企微白名单过渡期）。
+    """
+    allowed = set(roles)
+
+    async def checker(user: User = Depends(get_current_user)) -> User:
+        if is_admin(user):
+            return user
+        # 延迟导入避免 core→services 循环依赖；角色查询同 get_current_user 用独立短事务，
+        # 避免在请求级 session 上 autobegin 与端点 db.begin() 撞事务
+        from app.services import role_service
+
+        async with get_session_factory()() as db:
+            user_roles = await role_service.effective_roles(db, user)
+        if allowed.isdisjoint(user_roles):
+            raise BizError(ErrorCode.FORBIDDEN)
+        return user
+
+    return checker
+
+
+__all__ = ["get_db", "get_current_user", "require_admin", "require_role", "is_admin"]

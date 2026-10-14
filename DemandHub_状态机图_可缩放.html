@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DemandHub 状态机图（可缩放）</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #f5f7fa; height: 100vh; display: flex; flex-direction: column; }
+  header { background: #fff; border-bottom: 1px solid #e4e7ed; padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; color: #303133; margin-right: 8px; }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button { border: 1px solid #dcdfe6; background: #fff; color: #606266; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  .tabs button.active { background: #1e88e5; border-color: #1e88e5; color: #fff; }
+  .legend { display: flex; gap: 12px; align-items: center; font-size: 12px; color: #606266; }
+  .legend i { display: inline-block; width: 14px; height: 14px; border: 2px solid; border-radius: 3px; margin-right: 4px; vertical-align: -2px; }
+  .tools { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .tools button { border: 1px solid #dcdfe6; background: #fff; color: #606266; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  .tools .scale { font-size: 13px; color: #909399; min-width: 52px; text-align: center; }
+  .hint { font-size: 12px; color: #909399; }
+  .viewport { flex: 1; overflow: hidden; position: relative; cursor: grab; display: none; }
+  .viewport.active { display: block; }
+  .viewport:active { cursor: grabbing; }
+  .canvas { position: absolute; transform-origin: 0 0; padding: 40px; }
+  .mermaid { background: #fff; border: 1px solid #e4e7ed; border-radius: 8px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,.04); margin-bottom: 24px; }
+  .caption { font-size: 14px; color: #606266; background: #fff; border-left: 4px solid #1e88e5; border-radius: 4px; padding: 10px 14px; margin-bottom: 16px; max-width: 900px; line-height: 1.6; }
+  .caption b { color: #303133; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DemandHub 状态机图</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="legend">
+    <span><i style="background:#e3f2fd;border-color:#1e88e5"></i>在途状态</span>
+    <span><i style="background:#fff8e1;border-color:#f9a825"></i>待补充</span>
+    <span><i style="background:#e8f5e9;border-color:#43a047"></i>已完成</span>
+    <span><i style="background:#f4f4f5;border-color:#909399"></i>已关闭</span>
+    <span><i style="background:#fdf6ec;border-color:#e6a23c"></i>挂起</span>
+  </div>
+  <div class="tools">
+    <span class="hint">滚轮缩放 / 拖拽平移</span>
+    <button onclick="zoom(1.25)">放大</button>
+    <button onclick="zoom(0.8)">缩小</button>
+    <button onclick="resetView()">重置</button>
+    <span class="scale" id="scaleLabel">100%</span>
+  </div>
+</header>
+
+<!-- ============ 图 1：主流程 ============ -->
+<div class="viewport active" data-name="主流程">
+  <div class="canvas">
+    <div class="caption"><b>主流程（Happy Path）</b>：从新建草稿到验收通过的完整正向路径，共 9 个状态、10 次流转。按"S"形阅读：每行从左读起，行尾顺箭头换行。</div>
+    <pre class="mermaid">
+%%{init: {'themeVariables': {'fontSize': '20px'}, 'flowchart': {'rankSpacing': 70, 'nodeSpacing': 50}}}%%
+flowchart TB
+    subgraph R1[" "]
+        direction LR
+        DRAFT["草稿"] -->|"SUBMIT 提交"| SUBMITTED["待受理"]
+        SUBMITTED -->|"ACCEPT 受理"| TRIAGE["待分派"]
+    end
+    subgraph R2[" "]
+        direction RL
+        ANALYZING["分析中"] -->|"SUBMIT_REVIEW 提评审"| SOLUTION_REVIEW["方案待评审"]
+        SOLUTION_REVIEW -->|"REVIEW_PASS 评审通过"| CONFIRMED["已确认"]
+    end
+    subgraph R3[" "]
+        direction LR
+        IN_PROGRESS["处理中"] -->|"SUBMIT_ACCEPTANCE 提验收"| ACCEPTANCE["待验收"]
+        ACCEPTANCE -->|"ACCEPT_PASS 验收通过"| DONE["已完成"]
+    end
+    TRIAGE -->|"ASSIGN 分派 / CLAIM 领取"| ANALYZING
+    CONFIRMED -->|"START 开工"| IN_PROGRESS
+    classDef inflight fill:#e3f2fd,stroke:#1e88e5,stroke-width:2px,color:#0d47a1;
+    classDef terminal fill:#e8f5e9,stroke:#43a047,stroke-width:2px,color:#1b5e20;
+    class DRAFT,SUBMITTED,TRIAGE,ANALYZING,SOLUTION_REVIEW,CONFIRMED,IN_PROGRESS,ACCEPTANCE inflight;
+    class DONE terminal;
+    style R1 fill:none,stroke:none;
+    style R2 fill:none,stroke:none;
+    style R3 fill:none,stroke:none;
+    </pre>
+  </div>
+</div>
+
+<!-- ============ 图 2：旁路与异常 ============ -->
+<div class="viewport" data-name="旁路与异常">
+  <div class="canvas">
+    <div class="caption"><b>旁路一：退回补充与关闭</b>。"待受理 ⇄ 待补充"是管理员打回、提报人补充后重提的循环；"已关闭"是撤销/不受理/重复需求的终点，进入后不可恢复。</div>
+    <pre class="mermaid">
+%%{init: {'themeVariables': {'fontSize': '20px'}, 'flowchart': {'rankSpacing': 80, 'nodeSpacing': 60}}}%%
+flowchart TB
+    SUBMITTED["待受理"] <-->|"管理员 RETURN 退回补充 ⇄ 提报人 SUBMIT 补充后重提"| NEED_INFO["待补充"]
+    DRAFT["草稿"] -->|"WITHDRAW 撤销草稿"| CLOSED["已关闭"]
+    SUBMITTED -->|"WITHDRAW 提报人撤销 / CLOSE 不受理"| CLOSED
+    NEED_INFO -->|"WITHDRAW 撤销"| CLOSED
+    TRIAGE["待分派"] -->|"CLOSE 关闭"| CLOSED
+    classDef inflight fill:#e3f2fd,stroke:#1e88e5,stroke-width:2px,color:#0d47a1;
+    classDef wait fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#e65100;
+    classDef closed fill:#f4f4f5,stroke:#909399,stroke-width:2px,color:#606266;
+    class DRAFT,SUBMITTED,TRIAGE inflight;
+    class NEED_INFO wait;
+    class CLOSED closed;
+    </pre>
+    <div class="caption"><b>旁路二：打回与退单</b>。三条独立的"往回走"通道：方案评审打回重写、处理人退单回池、验收打回返工。</div>
+    <pre class="mermaid">
+%%{init: {'themeVariables': {'fontSize': '20px'}, 'flowchart': {'rankSpacing': 70, 'nodeSpacing': 50}}}%%
+flowchart LR
+    SOLUTION_REVIEW["方案待评审"] -->|"REVIEW_REJECT 评审打回（管理员）"| ANALYZING["分析中"]
+    ANALYZING -->|"RETURN_POOL 退回处理池（处理人）"| TRIAGE["待分派"]
+    ACCEPTANCE["待验收"] -->|"ACCEPT_REJECT 验收打回（提报人）"| IN_PROGRESS["处理中"]
+    classDef inflight fill:#e3f2fd,stroke:#1e88e5,stroke-width:2px,color:#0d47a1;
+    class SOLUTION_REVIEW,ANALYZING,TRIAGE,ACCEPTANCE,IN_PROGRESS inflight;
+    </pre>
+  </div>
+</div>
+
+<!-- ============ 图 3：挂起与恢复 ============ -->
+<div class="viewport" data-name="挂起与恢复">
+  <div class="canvas">
+    <div class="caption"><b>挂起与恢复（ON_HOLD 叠加态）</b>：4 个在途态都可以挂起，恢复后回到挂起前的状态。挂起中唯一可执行的动作是 RESUME。<br>注：图中 4 个"挂起 ON_HOLD"是<b>同一个叠加态</b>，为避免连线交叉复制展示；实现上主状态列不动，由快照列记录挂起前状态。</div>
+    <pre class="mermaid">
+%%{init: {'themeVariables': {'fontSize': '20px'}, 'flowchart': {'rankSpacing': 80, 'nodeSpacing': 60}}}%%
+flowchart TB
+    subgraph P1[" "]
+        direction LR
+        ANALYZING["分析中"] <-->|"HOLD 挂起 ⇄ RESUME 恢复"| OH1(["挂起 ON_HOLD"])
+        SOLUTION_REVIEW["方案待评审"] <-->|"HOLD 挂起 ⇄ RESUME 恢复"| OH2(["挂起 ON_HOLD"])
+    end
+    subgraph P2[" "]
+        direction LR
+        CONFIRMED["已确认"] <-->|"HOLD 挂起 ⇄ RESUME 恢复"| OH3(["挂起 ON_HOLD"])
+        IN_PROGRESS["处理中"] <-->|"HOLD 挂起 ⇄ RESUME 恢复"| OH4(["挂起 ON_HOLD"])
+    end
+    classDef inflight fill:#e3f2fd,stroke:#1e88e5,stroke-width:2px,color:#0d47a1;
+    classDef hold fill:#fdf6ec,stroke:#e6a23c,stroke-width:2px,color:#b88230;
+    class ANALYZING,SOLUTION_REVIEW,CONFIRMED,IN_PROGRESS inflight;
+    class OH1,OH2,OH3,OH4 hold;
+    style P1 fill:none,stroke:none;
+    style P2 fill:none,stroke:none;
+    </pre>
+  </div>
+</div>
+
+<!-- ============ 图 4：完整总图 ============ -->
+<div class="viewport" data-name="完整总图">
+  <div class="canvas">
+    <div class="caption"><b>完整总图（备查）</b>：全部 12 态与所有流转边。中间三行是主流程，两侧是旁路与挂起。细节多时用滚轮放大局部查看；CHANGE_TYPE（类型修正，8 个在途态自环）与 SPLIT（拆分）未画出，见说明文档第 3 节。</div>
+    <pre class="mermaid">
+%%{init: {'themeVariables': {'fontSize': '16px'}, 'flowchart': {'rankSpacing': 60, 'nodeSpacing': 40}}}%%
+flowchart TB
+    subgraph R1[" "]
+        direction LR
+        DRAFT["草稿"] -->|"SUBMIT 提交"| SUBMITTED["待受理"]
+        SUBMITTED -->|"ACCEPT 受理"| TRIAGE["待分派"]
+    end
+    subgraph R2[" "]
+        direction RL
+        ANALYZING["分析中"] -->|"SUBMIT_REVIEW 提评审"| SOLUTION_REVIEW["方案待评审"]
+        SOLUTION_REVIEW -->|"REVIEW_PASS 通过"| CONFIRMED["已确认"]
+    end
+    subgraph R3[" "]
+        direction LR
+        IN_PROGRESS["处理中"] -->|"SUBMIT_ACCEPTANCE 提验收"| ACCEPTANCE["待验收"]
+        ACCEPTANCE -->|"ACCEPT_PASS 通过"| DONE["已完成"]
+    end
+    TRIAGE -->|"ASSIGN 分派 / CLAIM 领取"| ANALYZING
+    CONFIRMED -->|"START 开工"| IN_PROGRESS
+
+    SUBMITTED <-->|"RETURN 退回补充 ⇄ SUBMIT 重提"| NEED_INFO["待补充"]
+    DRAFT -->|"WITHDRAW"| CLOSED["已关闭"]
+    SUBMITTED -->|"WITHDRAW / CLOSE"| CLOSED
+    NEED_INFO -->|"WITHDRAW"| CLOSED
+    TRIAGE -->|"CLOSE"| CLOSED
+    ANALYZING -->|"RETURN_POOL 退单"| TRIAGE
+    SOLUTION_REVIEW -->|"REVIEW_REJECT 打回"| ANALYZING
+    ACCEPTANCE -->|"ACCEPT_REJECT 打回"| IN_PROGRESS
+
+    ANALYZING <-->|"HOLD ⇄ RESUME"| ON_HOLD(["挂起 ON_HOLD"])
+    SOLUTION_REVIEW <-->|"HOLD ⇄ RESUME"| ON_HOLD
+    CONFIRMED <-->|"HOLD ⇄ RESUME"| ON_HOLD
+    IN_PROGRESS <-->|"HOLD ⇄ RESUME"| ON_HOLD
+
+    classDef inflight fill:#e3f2fd,stroke:#1e88e5,stroke-width:2px,color:#0d47a1;
+    classDef wait fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#e65100;
+    classDef terminal fill:#e8f5e9,stroke:#43a047,stroke-width:2px,color:#1b5e20;
+    classDef closed fill:#f4f4f5,stroke:#909399,stroke-width:2px,color:#606266;
+    classDef hold fill:#fdf6ec,stroke:#e6a23c,stroke-width:2px,color:#b88230;
+    class DRAFT,SUBMITTED,TRIAGE,ANALYZING,SOLUTION_REVIEW,CONFIRMED,IN_PROGRESS,ACCEPTANCE inflight;
+    class NEED_INFO wait;
+    class DONE terminal;
+    class CLOSED closed;
+    class ON_HOLD hold;
+    style R1 fill:none,stroke:none;
+    style R2 fill:none,stroke:none;
+    style R3 fill:none,stroke:none;
+    </pre>
+  </div>
+</div>
+
+<script>
+mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { curve: 'linear' } });
+
+let scale = 1, tx = 0, ty = 0;
+const scaleLabel = document.getElementById('scaleLabel');
+
+function activeCanvas() {
+  return document.querySelector('.viewport.active .canvas');
+}
+function apply() {
+  const c = activeCanvas();
+  if (c) c.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  scaleLabel.textContent = Math.round(scale * 100) + '%';
+}
+function zoom(f) { scale = Math.min(5, Math.max(0.2, scale * f)); apply(); }
+function resetView() { scale = 1; tx = 0; ty = 0; apply(); }
+
+document.querySelectorAll('.viewport').forEach(vp => {
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoom(e.deltaY < 0 ? 1.12 : 0.89);
+  }, { passive: false });
+  let dragging = false, sx = 0, sy = 0;
+  vp.addEventListener('pointerdown', e => { dragging = true; sx = e.clientX - tx; sy = e.clientY - ty; vp.setPointerCapture(e.pointerId); });
+  vp.addEventListener('pointermove', e => { if (!dragging) return; tx = e.clientX - sx; ty = e.clientY - sy; apply(); });
+  vp.addEventListener('pointerup', () => { dragging = false; });
+});
+
+const tabsEl = document.getElementById('tabs');
+document.querySelectorAll('.viewport').forEach((vp, i) => {
+  const btn = document.createElement('button');
+  btn.textContent = vp.dataset.name;
+  if (i === 0) btn.classList.add('active');
+  btn.onclick = () => {
+    document.querySelectorAll('.viewport').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+    vp.classList.add('active');
+    btn.classList.add('active');
+    resetView();
+  };
+  tabsEl.appendChild(btn);
+});
+apply();
+</script>
+</body>
+</html>

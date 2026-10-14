@@ -7,10 +7,10 @@ from fastapi.responses import FileResponse, Response
 from pydantic import Field, field_validator
 
 from app.agent.overview import schedule_overview_rewrite
-from app.core.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db, require_role
 from app.core.errors import BizError, ErrorCode
 from app.core.result import ApiModel, ok
-from app.services import attachment_service
+from app.services import attachment_service, flow_service, rag_service
 from app.services import demand_service as service
 from app.services.attachment_service import MAX_SIZE
 from app.services.export import to_markdown
@@ -59,6 +59,14 @@ class ChangeMode(ApiModel):
     level: Literal["light", "standard"]
 
 
+class UpdateElements(ApiModel):
+    expected_revision: int = Field(ge=0)
+    elements: dict[str, dict[str, Any]]
+
+
+handler_plus = require_role("ADMIN", "HANDLER")
+
+
 @router.post("")
 async def create(payload: CreateDraft, user=Depends(get_current_user), db=Depends(get_db)):
     async with db.begin():
@@ -92,6 +100,18 @@ async def update(
     # 手工改要素保存后：后台异步重写需求概述（失败静默，保存已完成的响应不受影响）
     if payload.notify_changes:
         schedule_overview_rewrite(demand.id, user.id)
+    return ok(result)
+
+
+@router.patch("/{demand_id}/elements")
+async def update_elements(
+    demand_id: int, payload: UpdateElements, user=Depends(handler_plus), db=Depends(get_db)
+):
+    """管理端改要素（详情页双击编辑）：处理人/管理员改 B/C/D 要素，终态禁改、乐观锁、留痕、质量重算。"""
+    async with db.begin():
+        result = await service.update_elements(
+            db, user, demand_id, payload.model_dump(by_alias=True)
+        )
     return ok(result)
 
 
@@ -147,12 +167,15 @@ async def detail(demand_id: int, user=Depends(get_current_user), db=Depends(get_
 
 @router.post("/{demand_id}/attachments")
 async def upload_attachment(
-    demand_id: int, file: UploadFile = File(...), user=Depends(get_current_user), db=Depends(get_db)
+    demand_id: int, file: UploadFile = File(...),
+    biz_type: str = Query("DEMAND", alias="bizType"), biz_id: int | None = Query(None, alias="bizId"),
+    user=Depends(get_current_user), db=Depends(get_db)
 ):
     # 读取上限+1 字节：超大文件不必整份载入内存即可拒绝
     payload = await file.read(MAX_SIZE + 1)
     async with db.begin():
-        row = await attachment_service.save_attachment(db, user, demand_id, file.filename, payload)
+        row = await attachment_service.save_attachment(
+            db, user, demand_id, file.filename, payload, biz_type=biz_type, biz_id=biz_id)
     return ok(attachment_service.serialize_attachment(row))
 
 
@@ -184,3 +207,90 @@ async def delete_attachment(
     async with db.begin():
         await attachment_service.delete_attachment(db, user, demand_id, attachment_id)
     return ok()
+
+
+# ---- P2 流转接口：全部经状态机引擎，归属校验在服务层 ----
+
+
+class HoldBody(ApiModel):
+    reason: str = Field(min_length=1, max_length=256)
+
+
+class AcceptanceReviewBody(ApiModel):
+    result: str = Field(pattern="^(PASS|REJECT)$")
+    quality_score: int | None = Field(default=None, ge=1, le=5)
+    satisfaction_score: int | None = Field(default=None, ge=1, le=5)
+    opinion: str | None = Field(default=None, max_length=2000)
+
+
+class SplitItem(ApiModel):
+    title: str = Field(min_length=1, max_length=128)
+    summary: str | None = Field(default=None, max_length=2000)
+
+
+class SplitBody(ApiModel):
+    items: list[SplitItem] | None = None  # 缺省全量消费 ext.pendingSplits
+
+
+@router.get("/{demand_id}/flow")
+async def flow(demand_id: int, user=Depends(get_current_user), db=Depends(get_db)):
+    """状态时间线 + 当前用户可用操作（前端按钮显隐唯一依据）。"""
+    return ok(await flow_service.flow_detail(db, user, demand_id))
+
+
+@router.post("/{demand_id}/start")
+async def start(demand_id: int, user=Depends(get_current_user), db=Depends(get_db)):
+    async with db.begin():
+        demand = await flow_service.start(db, user, demand_id)
+        result = await service.serialize_with_logs(db, demand)
+    return ok(result)
+
+
+@router.post("/{demand_id}/hold")
+async def hold(demand_id: int, payload: HoldBody,
+               user=Depends(get_current_user), db=Depends(get_db)):
+    async with db.begin():
+        demand = await flow_service.hold(db, user, demand_id, payload.reason)
+        result = await service.serialize_with_logs(db, demand)
+    return ok(result)
+
+
+@router.post("/{demand_id}/resume")
+async def resume(demand_id: int, user=Depends(get_current_user), db=Depends(get_db)):
+    async with db.begin():
+        demand = await flow_service.resume(db, user, demand_id)
+        result = await service.serialize_with_logs(db, demand)
+    return ok(result)
+
+
+@router.post("/{demand_id}/submit-acceptance")
+async def submit_acceptance(demand_id: int, user=Depends(get_current_user), db=Depends(get_db)):
+    async with db.begin():
+        demand = await flow_service.submit_acceptance(db, user, demand_id)
+        result = await service.serialize_with_logs(db, demand)
+    return ok(result)
+
+
+@router.post("/{demand_id}/acceptance-review")
+async def acceptance_review(demand_id: int, payload: AcceptanceReviewBody,
+                            user=Depends(get_current_user), db=Depends(get_db)):
+    async with db.begin():
+        demand = await flow_service.acceptance_review(
+            db, user, demand_id, result=payload.result,
+            quality_score=payload.quality_score, satisfaction_score=payload.satisfaction_score,
+            opinion=payload.opinion)
+        result = await service.serialize_with_logs(db, demand)
+    if payload.result == "PASS":
+        # ACCEPT_PASS → DONE：异步向量化入 RAG 知识库（蓝本 RagVectorizeConsumer 同语义）
+        rag_service.schedule_vectorize(demand_id)
+    return ok(result)
+
+
+@router.post("/{demand_id}/split")
+async def split(demand_id: int, payload: SplitBody | None = None,
+                user=Depends(get_current_user), db=Depends(get_db)):
+    async with db.begin():
+        items = [item.model_dump() for item in payload.items] if payload and payload.items else None
+        children = await flow_service.split(db, user, demand_id, items)
+        result = [await service.serialize_with_logs(db, child) for child in children]
+    return ok(result)

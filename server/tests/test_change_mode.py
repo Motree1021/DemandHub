@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.agent.guide import GuideService
 from app.agent.schemas import GuideChatRequest
 from app.core.errors import BizError, ErrorCode
-from app.db.models import AgentMessage, Demand, DemandChangeLog
+from app.db.models import AgentMessage, Demand, DemandChangeLog, User
 from app.services import demand_service, session_service
 from tests.test_guide import FakeArk
 
@@ -98,7 +98,11 @@ async def test_change_mode_blocked_during_return(session_factory, user):
             await demand_service.submit(db, user, did, demand.revision)
     async with session_factory() as db:
         async with db.begin():
-            admin = user  # conftest user 即 mvp-admin（ADMIN_WECOM_USERIDS）
+            # P2 起打回走状态机 RETURN 事件（roles=ADMIN）：需真实管理员操作
+            admin = User(name="管理员", wecom_userid=f"cm-admin-{uuid4().hex[:8]}",
+                         channel="CHUANGJIN_LS", role="ADMIN")
+            db.add(admin)
+            await db.flush()
             await demand_service.return_demand(db, admin, did, "请补充使用场景")
     with pytest.raises(BizError) as error:
         await change_mode(session_factory, user, did, "light")

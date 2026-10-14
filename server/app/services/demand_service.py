@@ -6,9 +6,9 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert
 
-from app.core.deps import is_admin
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
+from app.core.statemachine import engine
 from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, PromptVersion, now
 from app.services import session_service
 from app.services.demand_no import next_no
@@ -46,7 +46,7 @@ def serialize_change_log(row: DemandChangeLog) -> dict:
             "source": row.source, "changedBy": row.changed_by, "createdAt": encode(row.created_at)}
 
 
-def serialize_demand(demand: Demand, change_logs: list | None = None) -> dict:
+def serialize_demand(demand: Demand, change_logs: list | None = None, assignee_name: str | None = None) -> dict:
     result = {"id": demand.id, "demandNo": demand.demand_no, **form_of(demand),
               "subtypeCode": demand.subtype_code, "revision": demand.revision,
               "fieldSources": demand.field_sources or {}, "status": demand.status,
@@ -56,8 +56,25 @@ def serialize_demand(demand: Demand, change_logs: list | None = None) -> dict:
               "standardVersionId": demand.standard_version_id, "qualityContentHash": demand.quality_content_hash,
               "changeLogs": change_logs or [],
               "submittedAt": demand.submitted_at, "closedAt": demand.closed_at,
-              "closeReason": demand.close_reason, "createdAt": demand.created_at, "updatedAt": demand.updated_at}
+              "closeReason": demand.close_reason, "createdAt": demand.created_at, "updatedAt": demand.updated_at,
+              # P2 流转字段
+              "assigneeId": demand.assignee_id, "assigneeName": assignee_name,
+              "onHold": demand.hold_snapshot_status is not None,
+              "holdSnapshotStatus": demand.hold_snapshot_status, "holdReason": demand.hold_reason,
+              "confirmedAt": demand.confirmed_at, "doneAt": demand.done_at,
+              "qualityScore": demand.quality_score, "satisfactionScore": demand.satisfaction_score,
+              "splitFromId": demand.split_from_id, "splitGroupId": demand.split_group_id}
     return encode(result)
+
+
+async def assignee_names_map(db, demands: list[Demand]) -> dict[int, str]:
+    """批量取处理人姓名（列表序列化避免 N+1）。"""
+    ids = {d.assignee_id for d in demands if d.assignee_id}
+    if not ids:
+        return {}
+    from app.db.models import User
+    rows = (await db.execute(select(User.id, User.name).where(User.id.in_(ids)))).all()
+    return dict(rows)
 
 
 async def change_logs_map(db, demand_ids: list[int]) -> dict[int, list]:
@@ -72,7 +89,8 @@ async def change_logs_map(db, demand_ids: list[int]) -> dict[int, list]:
 
 
 async def serialize_with_logs(db, demand: Demand) -> dict:
-    return serialize_demand(demand, (await change_logs_map(db, [demand.id]))[demand.id])
+    assignee_name = (await assignee_names_map(db, [demand])).get(demand.assignee_id)
+    return serialize_demand(demand, (await change_logs_map(db, [demand.id]))[demand.id], assignee_name)
 
 
 def normalized(form: dict) -> tuple[dict, Standard | None]:
@@ -291,6 +309,39 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
     return demand
 
 
+# 管理端改要素（2026-10-13 拍板）：处理人/管理员在需求详情页双击编辑 B/C/D 要素。
+# 与提报人 update_draft 分线——不走草稿态校验；终态禁改、乐观锁、要素留痕、质量重算口径与提交链路一致
+ADMIN_EDIT_FORBID_STATUSES = ("DONE", "CLOSED")
+
+
+async def update_elements(db, user, demand_id: int, payload: dict) -> dict:
+    from app.services.flow_service import can_view_demand
+    demand = await db.get(Demand, demand_id, with_for_update=True)
+    if demand is None or not can_view_demand(user, demand):
+        raise BizError(ErrorCode.DEMAND_NOT_FOUND)
+    if demand.status in ADMIN_EDIT_FORBID_STATUSES:
+        raise BizError(ErrorCode.BIZ_ERROR, "终态需求不可再修改要素")
+    if demand.revision != payload["expectedRevision"]:
+        raise BizError(ErrorCode.CONFLICT)
+    before = form_of(demand)
+    patch_elements = payload.get("elements") or {}
+    form, std = normalized({**before, "elements": merge_elements(before["elements"], patch_elements)})
+    sources = dict(demand.field_sources or {})
+    for path, value in paths({"elements": patch_elements}).items():
+        if value != rules.get_value(before, path):
+            sources[path] = "user"
+    assign(demand, form, sources)
+    write_change_logs(db, demand, before, form, sources, user.id)
+    if std is not None:
+        light = rules.demand_mode(form) == "light"
+        demand.quality = [{"key": item.key, "status": item.status, "note": item.note}
+                          for item in rules.assess(std, form, light=light)]
+    demand.revision += 1
+    demand.updated_at = now()
+    await db.flush()
+    return {"demand": await serialize_with_logs(db, demand), "quality": demand.quality or []}
+
+
 async def apply_agent_patch(db, user, demand, *, expected_revision: int, patch: dict, field_sources: dict | None = None) -> Demand:
     assert_editable(demand, expected_revision)
     if demand.submitter_id != user.id:
@@ -335,8 +386,8 @@ async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
                            "returnedAt": now().isoformat(timespec="seconds")}
     ext["mode"] = {"level": "standard", "evidence": "管理员打回待补充，按完整口径补齐后重新提交"}
     demand.ext = ext
-    demand.status = "NEED_INFO"
-    demand.revision += 1
+    # P2 硬约束：打回经状态机 RETURN 事件（SUBMITTED → NEED_INFO）并写 transition_log
+    await engine.transition(db, demand_id, "RETURN", admin_user, comment=reason_text)
     db.add(DemandChangeLog(demand_id=demand.id, field_key="status", old_value="SUBMITTED", new_value="NEED_INFO",
                            source="admin", changed_by=admin_user.id))
     db.add(DemandChangeLog(demand_id=demand.id, field_key="ext.returnReason", old_value=None,
@@ -414,8 +465,13 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
         demand.demand_no = await next_no(db, demand.demand_type_code, now().date())
     demand.submitter_name, demand.submitter_dept = user.name, user.dept_name
     demand.channel = user.channel
-    demand.status, demand.submitted_at = "SUBMITTED", now()
-    demand.revision += 1
+    demand.submitted_at = now()
+    # P5 组织回填（蓝本口径）：提报人组织=dept_id 映射未命中挂 900；承接组织=类型默认承接组织
+    from app.services import org_service
+    demand.submitter_org_id = await org_service.resolve_user_org_id(db, user)
+    demand.assignee_org_id = await org_service.resolve_type_org_id(db, demand.demand_type_code)
+    # P2 硬约束：状态变更必须经状态机引擎并写 transition_log（提交/重提同为 SUBMIT 事件）
+    await engine.transition(db, demand_id, "SUBMIT", user, comment="补充后重新提交" if was_returned else None)
     if was_returned:
         # 打回补齐重提成功：清除待处理的打回原因（历史打回记录在 change_log 可查），并写状态留痕
         ext = dict(demand.ext or {})
@@ -437,9 +493,9 @@ async def close(db, user, demand_id: int, reason: str) -> Demand:
     # 草稿撤销与已提交撤回同一出口（DRAFT/SUBMITTED/NEED_INFO → CLOSED）；CLOSED 不可重复流转
     if demand.status not in ("DRAFT", "SUBMITTED", "NEED_INFO"):
         raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION)
-    demand.status, demand.close_reason, demand.closed_at = "CLOSED", reason, now()
-    demand.revision += 1
-    await db.flush()
+    # P2 硬约束：经状态机 WITHDRAW 事件（提报人撤销）并写 transition_log
+    await engine.transition(db, demand_id, "WITHDRAW", user, comment=reason,
+                            field_update={"close_reason": reason, "closed_at": now()})
     return demand
 
 
@@ -463,7 +519,8 @@ async def list_records(db, user=None, *, page=1, size=20, **query):
     total = (await db.execute(select(func.count()).select_from(statement.subquery()))).scalar_one()
     records = (await db.execute(statement.order_by(Demand.created_at.desc(), Demand.id.desc()).offset((page-1)*size).limit(size))).scalars().all()
     logs = await change_logs_map(db, [d.id for d in records])
-    return {"records": [serialize_demand(d, logs[d.id]) for d in records], "total": total,
+    names = await assignee_names_map(db, records)
+    return {"records": [serialize_demand(d, logs[d.id], names.get(d.assignee_id)) for d in records], "total": total,
             "size": size, "current": page, "pages": (total + size - 1) // size}
 
 
@@ -476,7 +533,9 @@ async def standard_for(db, demand: Demand) -> Standard | None:
 
 async def detail(db, user, demand_id: int) -> dict:
     demand = await db.get(Demand, demand_id)
-    if demand is None or (demand.submitter_id != user.id and not is_admin(user)):
+    # P2 可见性：提报人/管理员 之外，处理人可查看已进入流转的需求（管理视角详情页）
+    from app.services.flow_service import can_view_demand
+    if demand is None or not can_view_demand(user, demand):
         raise BizError(ErrorCode.DEMAND_NOT_FOUND)
     std = await standard_for(db, demand)
     messages = []
@@ -486,6 +545,8 @@ async def detail(db, user, demand_id: int) -> dict:
             "structuredPayload": json.dumps(row.structured_payload, ensure_ascii=False) if row.structured_payload else None,
             "createdAt": encode(row.created_at)} for row in rows]
     from app.services import attachment_service
-    return {"demand": serialize_demand(demand, (await change_logs_map(db, [demand.id]))[demand.id]), "quality": demand.quality or [],
+    return {"demand": serialize_demand(demand, (await change_logs_map(db, [demand.id]))[demand.id],
+                                       (await assignee_names_map(db, [demand])).get(demand.assignee_id)),
+            "quality": demand.quality or [],
             "standard": std.model_dump(mode="json", by_alias=True) if std else None, "messages": messages,
             "attachments": await attachment_service.serialize_list(db, demand.id)}

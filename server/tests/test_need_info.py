@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.agent.guide import GuideService
 from app.agent.schemas import GuideChatRequest
 from app.core.errors import BizError, ErrorCode
-from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog
+from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, User
 from app.services import demand_service, session_service
 from tests.test_guide import FakeArk
 
@@ -44,6 +44,18 @@ async def make_submitted(factory, user, *, elements=None, ext=None, session=Fals
             return submitted.id, submitted.revision, submitted.demand_no
 
 
+@pytest.fixture
+async def admin(session_factory):
+    """P2 起打回走状态机 RETURN 事件（roles=ADMIN）：服务层调用须传真实管理员。"""
+    async with session_factory() as db:
+        async with db.begin():
+            user = User(name="管理员", wecom_userid="p0-admin", channel="CHUANGJIN_LS", role="ADMIN")
+            db.add(user)
+            await db.flush()
+            db.expunge(user)
+            return user
+
+
 async def admin_return(factory, admin_user, demand_id):
     async with factory() as db:
         async with db.begin():
@@ -56,18 +68,18 @@ async def get_demand(factory, demand_id):
 
 
 @pytest.mark.asyncio
-async def test_return_requires_submitted(session_factory, user):
+async def test_return_requires_submitted(session_factory, user, admin):
     did, rev, _ = await make_submitted(session_factory, user)
     async with session_factory() as db:
         async with db.begin():
             await demand_service.close(db, user, did, "撤销")  # CLOSED 不可打回
     with pytest.raises(BizError) as error:
-        await admin_return(session_factory, user, did)
+        await admin_return(session_factory, admin, did)
     assert error.value.code == ErrorCode.ILLEGAL_STATE_TRANSITION.code
 
 
 @pytest.mark.asyncio
-async def test_admin_return_writes_reason_logs_and_locks_standard(session_factory, user):
+async def test_admin_return_writes_reason_logs_and_locks_standard(session_factory, user, admin):
     """打回四件套：状态流转+原因留痕（change_log 两行）+mode 升 standard（轻量需求不得回快速通道）+编号保留。"""
     did, rev, demand_no = await make_submitted(session_factory, user, session=True)
     # 预置轻量模式：打回后必须升 standard
@@ -75,7 +87,7 @@ async def test_admin_return_writes_reason_logs_and_locks_standard(session_factor
         async with db.begin():
             demand = await db.get(Demand, did)
             demand.ext = {**demand.ext, "mode": {"level": "light", "evidence": "换logo"}}
-    await admin_return(session_factory, user, did)
+    await admin_return(session_factory, admin, did)
     demand = await get_demand(session_factory, did)
     assert demand.status == "NEED_INFO" and demand.demand_no == demand_no  # 编号保留：管理员按编号跟踪
     assert demand.ext["returnReason"]["reason"] == RETURN_REASON
@@ -89,14 +101,14 @@ async def test_admin_return_writes_reason_logs_and_locks_standard(session_factor
 
 
 @pytest.mark.asyncio
-async def test_return_reopens_session_and_appends_notice(session_factory, user):
+async def test_return_reopens_session_and_appends_notice(session_factory, user, admin):
     """会话重开 ACTIVE + 注入引述打回原因的播报（kind=returnNotice，不参与质量快照回放）。"""
     did, rev, _ = await make_submitted(session_factory, user, session=True)
     async with session_factory() as db:
         demand = await db.get(Demand, did)
         session_id = demand.session_id
         assert (await db.get(AgentSession, session_id)).status == "CLOSED"  # 提交后会话关闭
-    await admin_return(session_factory, user, did)
+    await admin_return(session_factory, admin, did)
     async with session_factory() as db:
         assert (await db.get(AgentSession, session_id)).status == "ACTIVE"
         notice = (await db.execute(select(AgentMessage).where(AgentMessage.session_id == session_id,
@@ -106,18 +118,18 @@ async def test_return_reopens_session_and_appends_notice(session_factory, user):
 
 
 @pytest.mark.asyncio
-async def test_return_without_session_is_fine(session_factory, user):
+async def test_return_without_session_is_fine(session_factory, user, admin):
     """无会话的直报需求打回不炸：补填入口由表单/新建会话兜底。"""
     did, rev, _ = await make_submitted(session_factory, user, session=False)
-    await admin_return(session_factory, user, did)
+    await admin_return(session_factory, admin, did)
     assert (await get_demand(session_factory, did)).status == "NEED_INFO"
 
 
 @pytest.mark.asyncio
-async def test_need_info_resubmit_flow(session_factory, user):
+async def test_need_info_resubmit_flow(session_factory, user, admin):
     """打回→对话补填（AI 链路放行）→重提：清 returnReason、写状态留痕、保留编号、会话关闭。"""
     did, rev, demand_no = await make_submitted(session_factory, user, session=True)
-    await admin_return(session_factory, user, did)
+    await admin_return(session_factory, admin, did)
     demand = await get_demand(session_factory, did)
     rev = demand.revision
     # NEED_INFO 下打回播报不参与快照回放，对话链路正常放行：AI 引述打回原因后补齐 C 区缺口
@@ -153,12 +165,12 @@ async def test_need_info_resubmit_flow(session_factory, user):
 
 
 @pytest.mark.asyncio
-async def test_light_demand_return_resubmit_blocked_by_full_gate(session_factory, user):
+async def test_light_demand_return_resubmit_blocked_by_full_gate(session_factory, user, admin):
     """轻量需求打回后按 12 项完整口径：最小集齐也不放行，C/D 缺口重新拦截。"""
     light = {"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}}
     did, rev, _ = await make_submitted(session_factory, user, elements=light,
                                         ext={"mode": {"level": "light", "evidence": "换logo微调"}})
-    await admin_return(session_factory, user, did)
+    await admin_return(session_factory, admin, did)
     demand = await get_demand(session_factory, did)
     async with session_factory() as db:
         with pytest.raises(Exception) as error:
@@ -168,9 +180,9 @@ async def test_light_demand_return_resubmit_blocked_by_full_gate(session_factory
 
 
 @pytest.mark.asyncio
-async def test_need_info_can_close(session_factory, user):
+async def test_need_info_can_close(session_factory, user, admin):
     did, rev, _ = await make_submitted(session_factory, user)
-    await admin_return(session_factory, user, did)
+    await admin_return(session_factory, admin, did)
     await get_demand(session_factory, did)
     async with session_factory() as db:
         async with db.begin():

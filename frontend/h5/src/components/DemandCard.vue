@@ -29,8 +29,13 @@ import { demandModeOf } from '@/api/demand'
 import { statusLabel, typeLabel, urgencyLabel, fmtTime } from '@/utils/format'
 const props = defineProps<{ demand: DemandEntity; showSubmitter?: boolean; continuable?: boolean }>()
 const emit = defineEmits<{ (event: 'open', id: number): void; (event: 'continue', id: number): void; (event: 'close', id: number): void }>()
-// 状态图标与配色（st-* 类）一一对应：草稿=编辑中、已提交=已通过、待补充=被打回、已撤销=已回收
-const statusIcon = computed(() => ({ DRAFT: 'edit', SUBMITTED: 'passed', NEED_INFO: 'replay', CLOSED: 'revoke' } as Record<string, string>)[props.demand.status || ''] || 'records')
+// 状态图标与配色（st-* 类）一一对应：草稿=编辑中、已提交=已通过、待补充=被打回、流转中=进度、待验收=待办、已完成=对勾、已撤销=已回收
+const STATUS_ICONS: Record<string, string> = {
+  DRAFT: 'edit', SUBMITTED: 'passed', NEED_INFO: 'replay', TRIAGE: 'checked',
+  ANALYZING: 'records', SOLUTION_REVIEW: 'records', CONFIRMED: 'certificate',
+  IN_PROGRESS: 'underway-o', ACCEPTANCE: 'todo-list-o', DONE: 'checked', CLOSED: 'revoke',
+}
+const statusIcon = computed(() => STATUS_ICONS[props.demand.status || ''] || 'records')
 const isLight = computed(() => demandModeOf(props.demand) === 'light')
 </script>
 <style scoped>
@@ -41,6 +46,10 @@ const isLight = computed(() => demandModeOf(props.demand) === 'light')
 .demand-card.st-submitted { --accent: #1f3a8a; --accent-tint: #e0e7ff; --accent-deep: #1f3a8a; }
 .demand-card.st-need_info { --accent: #f97316; --accent-tint: #ffedd5; --accent-deep: #c2410c; }
 .demand-card.st-closed { --accent: #c0c4cc; --accent-tint: #f3f4f6; --accent-deep: #909399; }
+/* P2 流转中状态统一品牌蓝系，待验收橙色提醒需行动，已完成绿色 */
+.demand-card.st-triage, .demand-card.st-analyzing, .demand-card.st-solution_review, .demand-card.st-confirmed, .demand-card.st-in_progress { --accent: #1f3a8a; --accent-tint: #e0e7ff; --accent-deep: #1f3a8a; }
+.demand-card.st-acceptance { --accent: #f97316; --accent-tint: #ffedd5; --accent-deep: #c2410c; }
+.demand-card.st-done { --accent: #16a34a; --accent-tint: #dcfce7; --accent-deep: #15803d; }
 /* 已撤销卡片整体灰色化：紧急徽章不再用红色 */
 .demand-card.st-closed .badge.urgent { background: var(--accent-tint); color: var(--accent-deep); }
 .status-icon { flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-tint); color: var(--accent-deep); display: flex; align-items: center; justify-content: center; font-size: 19px; margin-top: 2px; }

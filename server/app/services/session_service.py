@@ -1,4 +1,4 @@
-"""会话只绑定本人唯一草稿，事务交由API或编排负责。"""
+"""会话：SUBMIT_GUIDE 绑定本人唯一草稿；HANDLE_ASSIST 为需求级共享工作区（每需求一个）。"""
 import json
 from uuid import uuid4
 
@@ -9,15 +9,17 @@ from app.db.models import AgentMessage, AgentSession, Demand
 
 
 async def create(db, user, scene, demand_id, first_message=""):
+    if scene == "HANDLE_ASSIST":
+        return await _create_assist(db, user, demand_id)
     if scene != "SUBMIT_GUIDE":
-        raise BizError(ErrorCode.PARAM_INVALID, "仅支持提报启发会话")
+        raise BizError(ErrorCode.PARAM_INVALID, "不支持的会话场景")
     demand = (await db.execute(select(Demand).where(Demand.id == demand_id, Demand.submitter_id == user.id).with_for_update())).scalar_one_or_none()
     if demand is None:
         raise BizError(ErrorCode.DEMAND_NOT_FOUND)
     # NEED_INFO（管理员打回待补充，方案③）：无会话的打回需求也允许进入对话补填
     if demand.status not in ("DRAFT", "NEED_INFO"):
         raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "会话仅能绑定本人可编辑需求")
-    existing = (await db.execute(select(AgentSession).where(AgentSession.demand_id == demand_id))).scalar_one_or_none()
+    existing = (await db.execute(select(AgentSession).where(AgentSession.demand_id == demand_id, AgentSession.scene == scene))).scalar_one_or_none()
     if existing:
         if existing.user_id != user.id or demand.session_id != existing.id:
             raise BizError(ErrorCode.CONFLICT, "草稿会话绑定不一致")
@@ -32,12 +34,27 @@ async def create(db, user, scene, demand_id, first_message=""):
     return agent_session
 
 
+async def _create_assist(db, user, demand_id):
+    """处理辅助会话：需求级共享（(demand_id, scene) 唯一），谁打开谁接入同一会话。"""
+    demand = (await db.execute(select(Demand).where(Demand.id == demand_id).with_for_update())).scalar_one_or_none()
+    if demand is None:
+        raise BizError(ErrorCode.DEMAND_NOT_FOUND)
+    existing = (await db.execute(select(AgentSession).where(AgentSession.demand_id == demand_id, AgentSession.scene == "HANDLE_ASSIST"))).scalar_one_or_none()
+    if existing:
+        return existing
+    agent_session = AgentSession(session_no=uuid4().hex, user_id=user.id, scene="HANDLE_ASSIST", demand_id=demand_id, title=(demand.title or "")[:30] or "处理辅助", status="ACTIVE")
+    db.add(agent_session)
+    await db.flush()
+    return agent_session
+
+
 async def require_owned(db, user, session_id, lock=False):
-    statement = select(AgentSession).where(AgentSession.id == session_id, AgentSession.user_id == user.id)
+    statement = select(AgentSession).where(AgentSession.id == session_id)
     if lock:
         statement = statement.with_for_update()
     result = (await db.execute(statement)).scalar_one_or_none()
-    if result is None:
+    # SUBMIT_GUIDE 严格本人；HANDLE_ASSIST 需求级共享（处理人更替/管理员查看不断会话）
+    if result is None or (result.scene == "SUBMIT_GUIDE" and result.user_id != user.id):
         raise BizError(ErrorCode.AGENT_SESSION_NOT_FOUND)
     return result
 

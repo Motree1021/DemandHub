@@ -5,7 +5,7 @@ import pytest
 import pytest_asyncio
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from alembic import command
@@ -44,8 +44,13 @@ async def session_factory(monkeypatch):
     async def clean():
         async with factory() as db:
             async with db.begin():
-                for table in reversed(Base.metadata.sorted_tables):
-                    await db.execute(delete(table))
+                # demand.split_from_id 自引用外键（P2 拆分子需求）：清库期间临时关 FK 校验
+                await db.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+                try:
+                    for table in reversed(Base.metadata.sorted_tables):
+                        await db.execute(delete(table))
+                finally:
+                    await db.execute(text("SET FOREIGN_KEY_CHECKS=1"))
     await clean()
     yield factory
     await clean()
