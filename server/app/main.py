@@ -46,10 +46,12 @@ def create_app(settings=None):
         openapi_url="/demandhub-api/openapi.json" if settings.app_env == "dev" else None)
     register_exception_handlers(app)
     app.include_router(build_router(settings))
-    # 管理后台静态托管（P1）：构建产物随服务同容器发布，前端用 hash 路由无需 rewrite
+    # 管理后台静态托管（P1）：构建产物随服务同容器发布，前端用 hash 路由无需 rewrite。
+    # 挂载路径须带 api_root_path 前缀：网关不剥前缀转发，API 路由均以 /demandhub-api 注册，
+    # 静态挂载挂 /admin 会因路径不匹配 404（本地直连 :8000/admin/ 能通掩盖了该问题）
     admin_dist = Path(__file__).resolve().parents[2] / "frontend" / "admin" / "dist"
     if admin_dist.is_dir():
-        app.mount("/admin", StaticFiles(directory=admin_dist, html=True), name="admin")
+        app.mount(f"{settings.api_root_path}/admin", StaticFiles(directory=admin_dist, html=True), name="admin")
     if settings.app_env == "dev":
         app.add_middleware(CORSMiddleware, allow_origins=[v.strip() for v in settings.cors_origins.split(",")],
             allow_credentials=False, allow_methods=["GET", "POST", "PUT"], allow_headers=["Authorization", "Content-Type"])
