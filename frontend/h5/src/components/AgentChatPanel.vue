@@ -54,7 +54,7 @@
     <van-button v-if="pending && !sending" size="small" plain type="primary" @click="retry">重试上一条</van-button>
     <div class="input-row">
       <button class="attach-btn" :disabled="sending || uploading" aria-label="上传附件" @click="attachVisible = true">＋</button>
-      <van-field v-model="input" type="textarea" rows="2" autosize :disabled="sending" placeholder="继续说，或粘贴大段需求…" />
+      <van-field v-model="input" type="textarea" rows="2" autosize :disabled="sending" placeholder="可以打字输入，也可以用输入法的语音输入，或粘贴大段需求…" />
       <van-button type="primary" :loading="sending" :disabled="!input.trim() || unavailable" @click="send">发送</van-button>
     </div>
     <van-action-sheet v-model:show="attachVisible" :actions="attachActions" cancel-text="取消" close-on-click-action
