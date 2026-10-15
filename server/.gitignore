@@ -1,6 +1,7 @@
 .venv/
 .env
 __pycache__/
+frontend/admin/dist/
 .pytest_cache/
 .ruff_cache/
 *.pyc

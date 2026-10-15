@@ -5,6 +5,8 @@ RUN pip install --no-cache-dir uv==0.12.5
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
+# 管理后台静态产物：本地构建 frontend/admin 后拷入本目录（见 .gitignore），路径与 app/main.py 的 admin_dist 对齐（容器内 /frontend/admin/dist）
+COPY frontend/admin/dist /frontend/admin/dist
 RUN useradd -r -u 10001 app && chown -R app /app
 USER app
 EXPOSE 8000
