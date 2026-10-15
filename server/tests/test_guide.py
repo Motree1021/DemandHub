@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.agent.guide import GuideService, build_prompt
-from app.agent.llm_client import ArkClient, StreamEvent
+from app.agent.llm_client import ArkClient, LlmContentRejected, StreamEvent
 from app.agent.schemas import GuideChatRequest
 from app.config import Settings
 from app.core.errors import BizError
@@ -191,6 +191,22 @@ async def test_invalid_complete_output_repairs_once_then_counts_failure(session_
             assert error.value.code == 1401
     assert fake.calls == fake.repairs == 3
     assert not fake.available() and fake.consecutive_failures == 3
+    assert await message_count(session_factory) == 0
+
+
+async def test_content_rejected_maps_to_1405_without_message_saved(session_factory, user):
+    """输入被内容安全审核拦截（2026-10-15 拍板）：转 1405 提示改写（区别于 1401 稍后再试），不写消息。"""
+
+    class RejectedArk(FakeArk):
+        async def stream_json(self, messages):
+            raise LlmContentRejected
+            yield StreamEvent("final")  # pragma: no cover - 保持异步生成器形态
+
+    did, sid, rev = await make_draft(session_factory, user)
+    async with session_factory() as db:
+        with pytest.raises(BizError) as error:
+            await GuideService(db, user, RejectedArk()).execute(request(did, sid, rev))
+        assert error.value.code == 1405
     assert await message_count(session_factory) == 0
 
 

@@ -44,7 +44,8 @@ class ChuangjinLsSsoClient:
             if self.client:
                 response = await self.client.post(cfg.base_url.rstrip("/") + VERIFY_PATH, content=body, headers=headers, timeout=cfg.timeout_ms / 1000)
             else:
-                async with httpx.AsyncClient() as client:
+                # trust_env=False：不隐式继承系统代理——本机代理软件会把内网身份服务请求劫走（实测返回 502/1102）
+                async with httpx.AsyncClient(trust_env=False) as client:
                     response = await client.post(cfg.base_url.rstrip("/") + VERIFY_PATH, content=body, headers=headers, timeout=cfg.timeout_ms / 1000)
         except httpx.TransportError:
             raise self.transport_failure() from None

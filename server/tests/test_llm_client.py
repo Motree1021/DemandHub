@@ -5,7 +5,7 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
-from app.agent.llm_client import ArkClient, LlmUnavailable
+from app.agent.llm_client import ArkClient, LlmContentRejected, LlmUnavailable
 from app.config import Settings
 
 
@@ -44,17 +44,49 @@ async def test_stream_final_complete_json_and_no_transport_success_reset(respx_m
     await client.close()
 
 
-async def test_http_500_fails_fast_and_actual_settings_cooldown(respx_mock, llm_settings):
+async def test_http_500_auto_retry_then_cooldown(respx_mock, llm_settings):
+    # 5xx 属可重试瞬时错误：每次请求 = 首次 + 自动重试 1 次（2026-10-15 拍板），重试仍败计一次请求级失败
     route = respx_mock.post("https://ark.test/v3/chat/completions").respond(500, json={"error": {"message": "upstream-secret"}})
-    client = mocked_client(llm_settings, respx_mock, clock=lambda: 100)
+    client = mocked_client(llm_settings, respx_mock, clock=lambda: 100, retry_delay=0)
     for _ in range(3):
         with pytest.raises(LlmUnavailable):
             await collect(client)
-    assert route.call_count == 3  # SDK重试已经关闭。
+    assert route.call_count == 6  # 3 次请求 × 2 次尝试
     assert not client.available() and client.cooldown_until == 160
     with pytest.raises(LlmUnavailable):
         await collect(client)
-    assert route.call_count == 3
+    assert route.call_count == 6
+    await client.close()
+
+
+async def test_retryable_error_auto_recovers_without_failure_count(respx_mock, llm_settings):
+    """瞬时 5xx 自动重试 1 次即恢复：不计失败、用户无感。"""
+    raw = '{"structured":{},"elements":[]}'
+    route = respx_mock.post("https://ark.test/v3/chat/completions")
+    route.side_effect = [httpx.Response(500, json={"error": {"message": "upstream glitch"}}), httpx.Response(200, text=sse_body(raw), headers={"content-type": "text/event-stream"})]
+    client = mocked_client(llm_settings, respx_mock, retry_delay=0)
+    result = await collect(client)
+    assert result[0].raw == raw and route.call_count == 2 and client.consecutive_failures == 0
+    await client.close()
+
+
+async def test_content_rejected_not_retried_not_counted(respx_mock, llm_settings):
+    """内容安全审核拦截 → LlmContentRejected：不重试、不计熔断，由 guide 转 1405 提示改写。"""
+    route = respx_mock.post("https://ark.test/v3/chat/completions").respond(400, json={"error": {"code": "ContentFilter", "message": "The input text contains sensitive information."}})
+    client = mocked_client(llm_settings, respx_mock, retry_delay=0)
+    with pytest.raises(LlmContentRejected):
+        await collect(client)
+    assert route.call_count == 1 and client.consecutive_failures == 0
+    await client.close()
+
+
+async def test_429_auto_retry_once_then_unavailable(respx_mock, llm_settings):
+    """限流 429 属可重试错误：重试 1 次仍败计一次请求级失败。"""
+    route = respx_mock.post("https://ark.test/v3/chat/completions").respond(429, json={"error": {"message": "rate limited"}})
+    client = mocked_client(llm_settings, respx_mock, retry_delay=0)
+    with pytest.raises(LlmUnavailable):
+        await collect(client)
+    assert route.call_count == 2 and client.consecutive_failures == 1
     await client.close()
 
 
@@ -104,14 +136,23 @@ class BrokenStream(httpx.AsyncByteStream):
 
 
 @pytest.mark.parametrize("error", [httpx.ReadError, httpx.RemoteProtocolError, httpx.ReadTimeout])
-async def test_stream_read_error_counted_and_resource_closed(llm_settings, error):
-    broken = BrokenStream(error)
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=broken))
+async def test_stream_read_error_retried_counted_and_resource_closed(llm_settings, error):
+    # 流读取中断属可重试瞬时错误（2026-10-15 拍板）：换一条新流自动重试 1 次，仍败计一次请求级失败
+    streams, calls = [], 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        stream = BrokenStream(error)
+        streams.append(stream)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+
+    transport = httpx.MockTransport(handler)
     sdk = AsyncOpenAI(api_key="fake", base_url="https://ark.test/v3", http_client=httpx.AsyncClient(transport=transport), max_retries=0)
-    client = ArkClient(llm_settings, client=sdk)
+    client = ArkClient(llm_settings, client=sdk, retry_delay=0)
     with pytest.raises(LlmUnavailable):
         await collect(client)
-    assert client.consecutive_failures == 1 and broken.closed
+    assert calls == 2 and client.consecutive_failures == 1 and all(stream.closed for stream in streams)
     await client.close()
 
 

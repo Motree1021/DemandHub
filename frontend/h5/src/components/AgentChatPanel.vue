@@ -36,7 +36,7 @@
         <div class="msg-row user"><div class="ava me">我</div><div class="msg-bubble">{{ pending?.message }}</div></div>
         <div class="msg-row assistant"><div class="ava ag">AI</div><div class="msg-bubble">{{ partialReply || (thinking ? '正在思考和整理…' : '正在处理…') }}</div></div>
       </template>
-      <p v-if="failure" class="failure">{{ failure }}<br>原输入与请求已保留。可重试恢复已保存结果。</p>
+      <p v-if="failure" class="failure">{{ failure }}<template v-if="pending"><br>原输入与请求已保留。可重试恢复已保存结果。</template></p>
       <div v-if="latest?.granularityHint" class="hint-banner">
         <strong>{{ latest.granularityHint.level === 'too_broad' ? '需求有点大，先聚焦' : '需求有点细，补上下文' }}</strong>
         <small>收敛标准：{{ latest.granularityHint.converge }}</small>
@@ -157,8 +157,9 @@ async function run(request: GuideRequest) {
   } catch (error) {
     if (generation !== runGeneration || props.demandId !== request.demandId || props.sessionId !== request.sessionId) return
     input.value = request.message
-    // 明确冲突表示这次请求没有成功；下一次同样文字使用最新revision和新requestId。
-    if (error instanceof StreamError && error.code === 409) { pending.value = null; persistPending() }
+    // 409冲突与1405内容审核拒绝都不会因原样重试而成功：清pending不出现"重试上一条"；
+    // 1405的改写提示经failure展示，输入框已恢复原文供调整后重新发送。
+    if (error instanceof StreamError && (error.code === 409 || error.code === 1405)) { pending.value = null; persistPending() }
     failure.value = error instanceof Error && error.name === 'AbortError' ? '请求已取消，完成状态尚未确认' : error instanceof Error ? error.message : '发送失败'
     unavailable.value = error instanceof StreamError && error.code === 1401
   } finally {

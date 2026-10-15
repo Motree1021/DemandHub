@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from app.agent.llm_client import LlmUnavailable, get_llm_client
+from app.agent.llm_client import LlmContentRejected, LlmUnavailable, get_llm_client
 from app.agent.policy import process
 from app.agent.schemas import ElementStatus, GuideChatRequest, GuideResult, parse_model_output
 from app.core.errors import BizError, ErrorCode
@@ -146,6 +146,9 @@ class GuideService:
                         raise LlmUnavailable from None
                     final = repaired
                 self.llm.on_success()
+            except LlmContentRejected:
+                # 内容审核拦截（2026-10-15 拍板）：提示可改写文案，区别于 1401 的"稍后再试"死循环
+                raise BizError(ErrorCode.AI_CONTENT_REJECTED) from None
             except LlmUnavailable:
                 raise BizError(ErrorCode.AI_SERVICE_UNAVAILABLE) from None
             from app.services.demand_service import apply_agent_patch

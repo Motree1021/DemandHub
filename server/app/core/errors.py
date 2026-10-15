@@ -35,6 +35,7 @@ class ErrorCode(Enum):
     AGENT_SESSION_NOT_FOUND = (1402, "会话不存在")
     AGENT_DRAFT_NOT_FOUND = (1403, "草稿不存在")
     AGENT_DRAFT_CONFIRMED = (1404, "草稿已处理")
+    AI_CONTENT_REJECTED = (1405, "这段文字未能通过平台内容安全审核，请调整表述后重试")
 
     @property
     def code(self) -> int:

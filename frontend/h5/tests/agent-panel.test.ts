@@ -88,6 +88,22 @@ describe('Agent当前草稿、失败和幂等恢复', () => {
     await retry(wrapper)
     expect(wrapper.emitted('complete')?.[0][0]).toMatchObject({ qualityComplete: false })
   })
+  it('1405内容审核拒绝：展示改写提示、不降级、清pending无重试按钮', async () => {
+    mocks.stream.mockRejectedValueOnce(new StreamError(1405, '这段文字未能通过平台内容安全审核，请调整表述后重试'))
+    const { wrapper } = createWrapper(); await flushPromises(); await send(wrapper)
+    // 输入框恢复原文供改写；提示文案不含"可重试"误导后缀；不出现"重试上一条"；不触发AI不可用降级
+    expect(wrapper.find('textarea').element).toHaveProperty('value', '同一句需求')
+    expect(wrapper.text()).toContain('这段文字未能通过平台内容安全审核，请调整表述后重试')
+    expect(wrapper.text()).not.toContain('可重试恢复已保存结果')
+    expect(sessionStorage.getItem('demandhub_h5_pending_1')).toBeNull()
+    expect(wrapper.findAll('button').some(button => button.text() === '重试上一条')).toBe(false)
+    expect(wrapper.emitted('unavailable')).toBeUndefined()
+    // 用户改写后正常重发：走新请求
+    mocks.stream.mockImplementationOnce(async request => payload(request))
+    await send(wrapper, '调整后的表述')
+    expect(mocks.stream.mock.calls[1][0].message).toBe('调整后的表述')
+    expect(wrapper.emitted('complete')?.[0][0]).toMatchObject({ qualityComplete: false })
+  })
 })
 
 describe('手改要素播报卡片', () => {

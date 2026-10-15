@@ -14,7 +14,8 @@ BASE = "/demandhub-api"
 
 async def test_live_contract_sso(client):
     import httpx
-    async with httpx.AsyncClient() as mock:
+    # trust_env=False：不继承系统代理（本机代理软件会把 127.0.0.1 请求劫走返回 502）
+    async with httpx.AsyncClient(trust_env=False) as mock:
         ticket = (await mock.post("http://127.0.0.1:8199/ticket", json={"channelUserId": "real-contract-user", "name": "契约用户"})).json()["ticket"]
     response = await client.get(BASE + "/auth/channel-sso", params={"channel": "chuangjinls", "ticket": ticket})
     assert response.json()["code"] == 0

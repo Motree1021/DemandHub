@@ -1,4 +1,6 @@
+import logging
 from contextlib import asynccontextmanager
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -12,8 +14,23 @@ from app.db.session import get_engine
 from app.standards.loader import load_all
 
 
+def _configure_agent_file_logging():
+    """agent 日志落盘（2026-10-15 拍板）：1401/1405 对用户是黑盒，文件留痕供排查。
+    按天轮转保留 7 天；propagate 保持默认，终端输出不受影响。"""
+    log_dir = Path(__file__).resolve().parents[1] / "logs"
+    log_dir.mkdir(exist_ok=True)
+    agent_logger = logging.getLogger("app.agent")
+    if any(isinstance(handler, TimedRotatingFileHandler) for handler in agent_logger.handlers):
+        return  # --reload 或测试多次 create_app 时防重复挂 handler
+    handler = TimedRotatingFileHandler(log_dir / "agent.log", when="midnight", backupCount=7, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    agent_logger.addHandler(handler)
+    agent_logger.setLevel(logging.WARNING)
+
+
 def create_app(settings=None):
     settings = settings or get_settings()
+    _configure_agent_file_logging()
 
     @asynccontextmanager
     async def lifespan(app):
