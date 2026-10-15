@@ -78,14 +78,15 @@ async def test_first_question_is_saved_target_and_success_commits_before_message
         stream = GuideService(db, user, fake).stream(req)
         assert "event: processing" in await anext(stream)
         first = await anext(stream)
-        assert "event: message" in first and "紧急" in first
+        # 紧急度沉底（2026-10-15 拍板）：首问 C1 目标用户而非紧急度
+        assert "event: message" in first and "给谁用" in first
         async with session_factory() as observer:
             persisted = await observer.get(Demand, did)
             session = await observer.get(AgentSession, sid)
             saved = (await observer.execute(select(AgentMessage).where(AgentMessage.role == "ASSISTANT"))).scalar_one()
             version = await observer.get(PromptVersion, saved.prompt_version_id)
             assert persisted.revision == revision + 1
-            assert session.asked_target == saved.structured_payload["askedTarget"] == "urgency"
+            assert session.asked_target == saved.structured_payload["askedTarget"] == "userRole"
             assert "{{standard_section}}" in version.snapshot["promptTemplate"]
             assert "{{standard_section}}" not in version.snapshot["renderedPrompt"]
             assert len(version.snapshot["injectedStandards"]) == 3

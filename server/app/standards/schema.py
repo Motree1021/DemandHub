@@ -51,6 +51,10 @@ class Element(StandardModel):
     # 追问锚定：首次追问引用已填的关联要素（如 B1←C2 用户目标、B4←C1 目标用户），避免重复追问
     anchor_key: str = ""
     ask_anchor: str = ""
+    # 双锚定（2026-10-15 拍板，C3 使用场景←C1 角色+C2 任务）：两个锚值都已填时用 ask_anchor2，
+    # 话术须把已识别的锚值引述出来请用户确认/纠正，再问未覆盖的缺口；仅主锚有值时仍用 ask_anchor
+    anchor_key2: str = ""
+    ask_anchor2: str = ""
 
     @property
     def field_path(self) -> str:

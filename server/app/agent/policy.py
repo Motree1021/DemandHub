@@ -217,11 +217,13 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     """选下一个追问目标。
 
     追问顺序：A/C/D 必填先问完（用户先补"给谁用、什么场景、痛点、验收"等具体信息），
-    B 区业务要素排最后；且 B 区仅在判型为业务需求（business=True）时才追问，
+    B 区业务要素次之；且 B 区仅在判型为业务需求（business=True）时才追问，
     日常功能需求完全不问 B 区（与提交门槛 active_zones 口径一致）。
+    紧急程度沉底最后问（2026-10-15 拍板）：排期类信息待需求本体问齐后再确认；
+    答"紧急/特急"时急单门控承接追问期望交付时间，恰好收尾。
 
-    light 模式（2026-10-11 方案②）：只追问最小集 {紧急度→期望效果(D8)→标题兜底}，
-    每项最多问一次（合计≤2轮，对齐"紧急度→标题+效果一次确认"拍板口径），
+    light 模式（2026-10-11 方案②）：只追问最小集 {期望效果(D8)→标题兜底→紧急度}，
+    每项最多问一次（合计≤2轮，对齐拍板口径；紧急度 2026-10-15 起同步沉底），
     C/D 其余要素与 B 区一律不问；content 永不追问（A8 底稿由系统首条消息回填）。
 
     急单门控（2026-10-12 拍板）：紧急度为紧急/特急而期望交付时间还空着时，插队最优先
@@ -239,8 +241,9 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
     required = [e.key for e in standard.elements if e.required and not e.system]
-    # light 追问顺序固定：紧急度先问（模板化好答），期望效果次之并连带标题确认，标题仅兜底
-    light_order = ["urgency", "acceptanceCriteria", "title"]
+    # light 追问顺序固定（2026-10-15 拍板紧急度同步沉底）：期望效果先问并连带标题确认，
+    # 标题仅兜底，紧急度最后
+    light_order = ["acceptanceCriteria", "title", "urgency"]
 
     def eligible(key):
         field = field_of.get(key)
@@ -250,7 +253,9 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
             if key not in light_order:
                 return False
             element = by_key.get(key)
-            return element is not None and element.status not in {"OK", "SKIP"} and element.attempts < 1
+            # 只问真空着的项（2026-10-15）：有值但笼统（VAGUE）不追问——light 承诺最少打扰，
+            # 与"可提交即停问软质量"同口径；也避免用户已答过（哪怕笼统）又被反问的观感
+            return element is not None and element.status == "MISSING" and element.attempts < 1
         if field.zone == "B" and not business:
             return False
         element = by_key.get(key)
@@ -271,8 +276,8 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
         delivery = by_key.get("expectDeliveryAt")
         if delivery is not None and delivery.status not in {"OK", "SKIP"} and delivery.attempts < standard.max_attempts:
             return delivery
-    # 稳定排序：B 区沉底，其余（A/C/D 及 MATL/TRAIN 无分区要素）保持 yaml 原顺序在前
-    ordered = sorted(required, key=lambda k: 1 if field_of[k].zone == "B" else 0)
+    # 稳定排序：A/C/D 必填在前（保持 yaml 原顺序），B 区沉底，紧急程度最后（2026-10-15 拍板）
+    ordered = sorted(required, key=lambda k: (k == "urgency", 1 if field_of[k].zone == "B" else 0))
     for key in ordered + standard.follow_up_order:
         if eligible(key):
             return by_key[key]
@@ -295,19 +300,33 @@ def quick_replies(standard, target):
     return result
 
 
+def _anchor_snippet(standard, form, key):
+    """取锚定要素的当前值并截断为引述片段；要素不存在或值为空时返回空串。"""
+    anchor_field = next((e for e in standard.elements if e.key == key), None)
+    if anchor_field is None:
+        return ""
+    value = str(get_value(form, anchor_field.field_path) or "").strip()
+    if not value:
+        return ""
+    return value[:20] + ("…" if len(value) > 20 else "")
+
+
 def anchored_template(standard, field, form):
     """首次追问锚定（2026-10-10 用户拍板）：引用已填的关联要素组织问句——
     B1 业务目标←C2 用户目标（上下游因果）、B4 干系人←C1 目标用户（受益方可由使用者推导），
-    关联要素为空或未配置时返回空串，回落到普通追问模板。"""
-    if not field.ask_anchor or not field.anchor_key:
+    关联要素为空或未配置时返回空串，回落到普通追问模板。
+    双锚定（2026-10-15 拍板，C3 使用场景←C1 角色+C2 任务）：anchor_key2 配置且两个锚值
+    都已填时优先用 ask_anchor2——话术把两段已识别信息都引述出来请用户确认/纠正，
+    再问模板未覆盖的缺口（如时机/频率）；仅主锚有值时仍用 ask_anchor。"""
+    snippet = _anchor_snippet(standard, form, field.anchor_key) if field.anchor_key else ""
+    if not snippet:
         return ""
-    anchor_field = next((e for e in standard.elements if e.key == field.anchor_key), None)
-    if anchor_field is None:
+    if field.anchor_key2 and field.ask_anchor2:
+        snippet2 = _anchor_snippet(standard, form, field.anchor_key2)
+        if snippet2:
+            return field.ask_anchor2.replace("{anchor}", snippet).replace("{anchor2}", snippet2)
+    if not field.ask_anchor:
         return ""
-    anchor_value = str(get_value(form, anchor_field.field_path) or "").strip()
-    if not anchor_value:
-        return ""
-    snippet = anchor_value[:20] + ("…" if len(anchor_value) > 20 else "")
     return field.ask_anchor.replace("{anchor}", snippet)
 
 

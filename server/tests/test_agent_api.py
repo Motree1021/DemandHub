@@ -26,7 +26,8 @@ async def test_success_sse_contract_immediate_query_and_replay(client, auth_head
     messages = (await client.get(f'/demandhub-api/agent/session/{req["sessionId"]}/messages', headers=auth_headers)).json()["data"]
     assert len(messages) == 2 and isinstance(messages[-1]["structuredPayload"], str)
     payload = json.loads(messages[-1]["structuredPayload"])
-    assert payload["revision"] == 1 and payload["askedTarget"] == "urgency"
+    # 紧急度沉底（2026-10-15 拍板）：首个必填缺口按 yaml 顺序是 C1 目标用户
+    assert payload["revision"] == 1 and payload["askedTarget"] == "userRole"
     again = await client.post("/demandhub-api/agent/guide/chat", headers=auth_headers, json=req)
     assert again.json()["code"] == 0 and fake.calls == 1
     req["message"] = "换一个消息"

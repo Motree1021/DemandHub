@@ -1,6 +1,7 @@
 import pytest
 
 from app.agent.policy import (
+    anchored_template,
     complete_elements,
     inherit_and_count,
     merge_mode_signal,
@@ -367,14 +368,14 @@ def test_light_follow_up_limited_to_minimal_set_once_each():
     standard = get("TECH")
     base = light_form()
     elements = assess(standard, base, light=True)
-    # light 首问紧急度（固定顺序：紧急度→期望效果→标题兜底）；standard 口径 A3 子类已退出追问（2026-10-15），
-    # 按 yaml 必填顺序补首个缺口——此处紧急度仍空，故问 urgency
-    assert pick_follow_up(standard, elements, light=True).key == "urgency"
-    assert pick_follow_up(standard, elements).key == "urgency"
-    once = inherit_and_count(elements, elements, "urgency", False, standard=standard, previous_form=base, form=base)
-    assert pick_follow_up(standard, once, light=True).key == "acceptanceCriteria"
-    twice = inherit_and_count(once, elements, "acceptanceCriteria", False, standard=standard, previous_form=base, form=base)
-    # 每项只问一次：两轮后即使期望效果仍缺也不再追问，C 区缺口更不问（合计≤2轮）
+    # light 首问期望效果（2026-10-15 紧急度沉底：期望效果→标题兜底→紧急度）；standard 口径
+    # 紧急度同步沉底，A3 子类已退出追问，按 yaml 必填顺序首个缺口是 C1 目标用户
+    assert pick_follow_up(standard, elements, light=True).key == "acceptanceCriteria"
+    assert pick_follow_up(standard, elements).key == "userRole"
+    once = inherit_and_count(elements, elements, "acceptanceCriteria", False, standard=standard, previous_form=base, form=base)
+    assert pick_follow_up(standard, once, light=True).key == "urgency"
+    twice = inherit_and_count(once, elements, "urgency", False, standard=standard, previous_form=base, form=base)
+    # 每项只问一次：两轮后即使紧急度仍缺也不再追问，C 区缺口更不问（合计≤2轮）
     assert pick_follow_up(standard, twice, light=True) is None
 
 
@@ -453,11 +454,29 @@ def test_light_first_judgment_announcement_once_only():
     assert "我按轻量提报帮你登记" not in result["reply"]
 
 
-def test_light_mode_asks_urgency_before_any_template_field():
+def test_light_mode_asks_effect_before_urgency():
+    """light 模式紧急度沉底（2026-10-15 拍板）：首问期望效果（连带确认 AI 代拟标题），紧急度最后问。"""
     output = ModelOutput(structured={}, elements=[], mode_signal=ModeSignalOutput(level="light", evidence="换logo"))
     result = process(output, light_form(), {}, [], None, {}, "把首页顶部logo换成新设计的蓝色版本")
-    assert result["askedTarget"] == "urgency" and not result["canSubmit"]
-    assert "紧急" in result["reply"] and "给谁用" not in result["reply"]
+    assert result["askedTarget"] == "acceptanceCriteria" and not result["canSubmit"]
+    assert "期望的效果" in result["reply"] and "给谁用" not in result["reply"]
+    assert "有多紧急" not in result["reply"]
+
+
+def test_scenario_anchor_quotes_known_role_and_task():
+    """C3 双锚定（2026-10-15 拍板）：角色/任务已识别时场景追问引述已知信息请用户确认或纠正，
+    只问未覆盖的缺口（双锚→时机/频率），不再重复问「谁（角色）」。"""
+    standard = get("TECH")
+    field = next(e for e in standard.elements if e.key == "useScenario")
+    # 双锚（角色+任务都已知）：引述两者，只问时机/频率
+    both = anchored_template(standard, field, {"elements": {"C": {"userRole": "吉林交行产品经理张铮", "userGoal": "制作口播数字人短视频"}}})
+    assert "「吉林交行产品经理张铮」" in both and "「制作口播数字人短视频」" in both
+    assert "谁（角色）" not in both and "纠正" in both and "什么时间" in both
+    # 单锚（仅角色已知）：引述角色，问时机/频率+做什么
+    single = anchored_template(standard, field, {"elements": {"C": {"userRole": "吉林交行产品经理张铮"}}})
+    assert "「吉林交行产品经理张铮」" in single and "谁（角色）" not in single and "纠正" in single
+    # 角色未知：返回空串，回落 ask_missing 原话术（照旧问谁/什么时间/做什么）
+    assert anchored_template(standard, field, {"elements": {"C": {"userGoal": "制作口播数字人短视频"}}}) == ""
 
 
 def test_mode_standard_is_sticky_in_conversation():
