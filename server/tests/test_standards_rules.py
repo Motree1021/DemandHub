@@ -53,7 +53,7 @@ def tech(**overrides):
 
 def test_full_element_collection_and_positive_java_examples():
     result = assess(get("TECH"), tech())
-    assert len(result) == 27  # 30 要素减 A4/A5 system 快照，再减 D9 建议方案（2026-10-13 起不参与质量评估）
+    assert len(result) == 26  # 30 要素减 A4/A5 system 快照，再减 D9 建议方案与 A3 子类（2026-10-15 起均不参与质量评估）
     assert all(e.status == "OK" and e.attempts == 0 for e in result)
 
 
@@ -65,7 +65,15 @@ def test_proposed_solution_not_assessed():
     assert all(e.key != "proposedSolution" for e in result)
 
 
-@pytest.mark.parametrize("zone,key,value,note", [("C", "useScenario", "方便一下", "含歧义词"), ("C", "useScenario", "全部内容经过说明之后确实完整但没有关键词", "看不出"), ("D", "acceptanceCriteria", "希望改得好", "缺可检验"), ("B", "businessValue", "也许很有意义", "缺量化"), ("A", "techSubtype", "UNKNOWN", "选项"), ("C", "useScenario", "", "未填写")])
+def test_tech_subtype_not_assessed_or_blocking():
+    """A3 子类改 AI 自动归类（2026-10-15 拍板）：assessed:false 不进质量计数；选填空值不拦提交。"""
+    form = tech(**{"A__techSubtype": None})
+    result = assess(get("TECH"), form)
+    assert all(e.key != "techSubtype" for e in result)
+    assert schema_errors(get("TECH"), form, required=True, active_zones={"A", "C", "D"}) == []
+
+
+@pytest.mark.parametrize("zone,key,value,note", [("C", "useScenario", "方便一下", "含歧义词"), ("C", "useScenario", "全部内容经过说明之后确实完整但没有关键词", "看不出"), ("D", "acceptanceCriteria", "希望改得好", "缺可检验"), ("B", "businessValue", "也许很有意义", "缺量化"), ("C", "useScenario", "", "未填写")])
 def test_negative_java_examples(zone, key, value, note):
     item = next(e for e in assess(get("TECH"), tech(**{f"{zone}__{key}": value})) if e.key == key)
     assert item.status != "OK" and note in item.note

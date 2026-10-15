@@ -36,7 +36,6 @@ function createWrapper() {
   const wrapper = mount(Report, { global: { plugins: [Vant], stubs: { AppLayout: { template: '<div><slot /></div>' }, AgentChatPanel: PanelStub, FieldEditSheet: FieldEditSheetStub, 'van-popup': PopupStub } } })
   wrappers.push(wrapper); return wrapper
 }
-async function clickButton(wrapper: VueWrapper, label: string) { await wrapper.findAll('button').find(button => button.text().includes(label))!.trigger('click'); await flushPromises() }
 // 手改要素经要素卡单字段编辑入口（FieldEditSheet）：edit-field 打开、save 落本地
 const titleField = standard.elements[0]; const contentField = standard.elements[2]
 async function editField(wrapper: VueWrapper, field: Standard['elements'][number], value: unknown) {
@@ -78,40 +77,26 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('report 对话页骨架', () => {
-  it('新用户进入展示欢迎语与三个入口', async () => {
+  it('新用户进入展示欢迎语与用户故事示例，不再有引导入口按钮', async () => {
     const wrapper = createWrapper(); await flushPromises()
     expect(wrapper.text()).toContain('需求收集助手')
-    expect(wrapper.text()).toContain('我有一个清晰的需求要提报')
-    expect(wrapper.text()).toContain('一段话完整需求示例')
-    expect(wrapper.text()).toContain('我只有一个模糊想法')
+    // 示例直接展示（用户故事手法：角色→时机→任务→效果），无需点击展开
+    expect(wrapper.text()).toContain('作为银行渠道部的客户经理')
+    expect(wrapper.text()).toContain('作为谁 / 什么时候或什么场景')
+    // 三入口已隐藏（2026-10-15 调整）
+    expect(wrapper.text()).not.toContain('我有一个清晰的需求要提报')
+    expect(wrapper.text()).not.toContain('一段话完整需求示例')
+    expect(wrapper.text()).not.toContain('我只有一个模糊想法')
+    // 纯展示：不建草稿/会话/发消息
+    expect(mocks.createDraft).not.toHaveBeenCalled()
+    expect(mocks.updateDraft).not.toHaveBeenCalled()
+    expect(mocks.createAgentSession).not.toHaveBeenCalled()
   })
   it('步骤条初始在表达步', async () => {
     const wrapper = createWrapper(); await flushPromises()
     const steps = wrapper.findAll('.step')
     expect(steps.map(step => step.text())).toEqual(['表达', '拆解', '追问', '提交'])
     expect(steps[0].classes()).toContain('on')
-  })
-  it('点「我只有一个模糊想法」仅展示本地引导，不建草稿/会话/发消息', async () => {
-    const wrapper = createWrapper(); await flushPromises()
-    await clickButton(wrapper, '我只有一个模糊想法')
-    // 本地回显入口语与固定引导语
-    expect(wrapper.text()).toContain('请一步步帮我想清楚')
-    expect(wrapper.text()).toContain('一步步想清楚')
-    // 未做第二步操作：无任何持久化动作
-    expect(mocks.createDraft).not.toHaveBeenCalled()
-    expect(mocks.updateDraft).not.toHaveBeenCalled()
-    expect(mocks.createAgentSession).not.toHaveBeenCalled()
-  })
-  it('示例区：展开显示两个示例，无复制按钮，不触发持久化', async () => {
-    const wrapper = createWrapper(); await flushPromises()
-    await clickButton(wrapper, '一段话完整需求示例')
-    expect(wrapper.text()).toContain('示例一 · 完整型（目标/场景/功能/验收都带）')
-    expect(wrapper.text()).toContain('示例二 · 简洁型（目标/场景/功能/验收精简）')
-    expect(wrapper.text()).not.toContain('复制示例')
-    // 不触发草稿保存/会话创建/消息发送
-    expect(mocks.createDraft).not.toHaveBeenCalled()
-    expect(mocks.updateDraft).not.toHaveBeenCalled()
-    expect(mocks.createAgentSession).not.toHaveBeenCalled()
   })
 })
 

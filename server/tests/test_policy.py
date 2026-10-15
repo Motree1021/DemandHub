@@ -200,7 +200,7 @@ def test_matl_urgent_gate_not_applicable():
 
 def test_missing_collection_cannot_fake_quality_complete():
     result = process(ModelOutput(structured={}, elements=[]), form(), {}, [], None, {}, "报表")
-    assert len(result["elements"]) == 27  # 30 要素减 A4/A5 system 快照，再减 D9 不参与评估（2026-10-13）
+    assert len(result["elements"]) == 26  # 30 要素减 A4/A5 system 快照，再减 D9 与 A3 子类不参与评估（2026-10-15）
     assert not result["canSubmit"] and not result["ready"]
     assert not result["qualityComplete"] and not result["guidanceComplete"]
     # 无业务判型：先追问 A/C/D，首个缺口是 C 区目标用户，不追问 B 区
@@ -367,9 +367,10 @@ def test_light_follow_up_limited_to_minimal_set_once_each():
     standard = get("TECH")
     base = light_form()
     elements = assess(standard, base, light=True)
-    # light 首问紧急度（固定顺序：紧急度→期望效果→标题兜底）；standard 口径则先问 A 区子类等模板项
+    # light 首问紧急度（固定顺序：紧急度→期望效果→标题兜底）；standard 口径 A3 子类已退出追问（2026-10-15），
+    # 按 yaml 必填顺序补首个缺口——此处紧急度仍空，故问 urgency
     assert pick_follow_up(standard, elements, light=True).key == "urgency"
-    assert pick_follow_up(standard, elements).key == "techSubtype"
+    assert pick_follow_up(standard, elements).key == "urgency"
     once = inherit_and_count(elements, elements, "urgency", False, standard=standard, previous_form=base, form=base)
     assert pick_follow_up(standard, once, light=True).key == "acceptanceCriteria"
     twice = inherit_and_count(once, elements, "acceptanceCriteria", False, standard=standard, previous_form=base, form=base)
@@ -465,8 +466,8 @@ def test_mode_standard_is_sticky_in_conversation():
     output = ModelOutput(structured={}, elements=[], mode_signal=ModeSignalOutput(level="light", evidence="其实只想改个logo"))
     result = process(output, prev, {}, [], None, {}, "其实只想改个logo")
     assert result["mode"]["level"] == "standard"
-    # 常规口径追问恢复：A 区子类缺口照问（light 最小集不含 techSubtype）
-    assert result["askedTarget"] == "techSubtype"
+    # 常规口径追问恢复：A3 子类已退出追问（2026-10-15），恢复后按必填顺序问首个 C 区缺口
+    assert result["askedTarget"] == "userRole"
 
 
 def test_mode_upgrade_to_standard_announces_and_reapplies_full_gate():
@@ -486,13 +487,15 @@ COZE_SOLUTION = "方案1：将系统从coze平台迁移到公司自己的H5服�
 
 
 def test_proposed_solution_first_extraction_announced():
-    """coze 样本：候选方案如实落 D9（保留二选一关系），回复前置「已记入建议方案·供评估」话术，且不追问 D9。"""
+    """coze 样本：候选方案如实落 D9（保留二选一关系），回复后置引述式「已记入建议方案·供评估」话术
+    （2026-10-15 调整：引述原文片段+置于追问之后，误归类时用户能认出并纠正），且不追问 D9。"""
     output = ModelOutput(structured={"elements": {"D": {"proposedSolution": COZE_SOLUTION}}},
                          elements=[], mode_signal=ModeSignalOutput(level="standard", evidence="平台迁移+域名备案，实现路径有分量"))
     result = process(output, form(), {}, [], None, {}, "期望的解决方案：1.迁移到公司H5服务器用fenhang域名；2.在火山为coze申请企业域名并备案。2选1")
     assert result["structured"]["elements"]["D"]["proposedSolution"] == COZE_SOLUTION
-    assert result["reply"].startswith("你提到的设想做法我记到「建议方案」里了")
-    assert "由产品和技术评估" in result["reply"]
+    # 引述式：话术中含 proposedSolution 原文片段（超长截 30 字加省略号），且整句提醒位于回复末尾（追问在前）
+    assert "你说的「方案1：将系统从coze平台迁移到公司自己的H5服务器" in result["reply"]
+    assert result["reply"].endswith("记到「建议方案」里了，会随需求一起给受理方参考——最终做法由产品和技术评估后再定。")
     assert result["askedTarget"] != "proposedSolution"
 
 
@@ -514,3 +517,15 @@ def test_proposed_solution_not_in_gates_or_follow_ups():
     # A/C/D 12 项必填齐全、D9 为空：照常可提交
     result = process(ModelOutput(structured={}, elements=[]), acd_filled_form(), {}, [], None, {}, "报表")
     assert result["canSubmit"] is True and result["askedTarget"] is None
+
+
+def test_tech_subtype_never_asked_and_not_blocking():
+    """A3 子类改 AI 自动归类（2026-10-15 拍板）：选填、不入 follow_up_order，空值不追问、不拦提交。"""
+    standard = get("TECH")
+    assert "techSubtype" not in standard.follow_up_order
+    assert not any(e.key == "techSubtype" and e.required for e in standard.elements)
+    # A/C/D 必填齐全、A3 为空：照常可提交，且不会把 A3 选为追问目标
+    form_no_subtype = acd_filled_form()
+    del form_no_subtype["elements"]["A"]["techSubtype"]
+    result = process(ModelOutput(structured={}, elements=[]), form_no_subtype, {}, [], None, {}, "报表")
+    assert result["canSubmit"] is True and result["askedTarget"] != "techSubtype"

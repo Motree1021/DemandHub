@@ -381,19 +381,22 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     granularity = detect_granularity(standard, merged, text)
     impacts = impact_hints(previous_form, merged)
     # D9 建议方案首次抽取播报（2026-10-12 拍板）：用户设想的候选方案/实现路径此前被五区白名单
-    # 静默丢弃，AI 还回「都记好了」构成误导；现在落库后由模板层告知"已记入、供评估、非定案"，
-    # 与打回引述/口径播报同机制走前置拼接（模型自述不可靠）。仅 TECH 标准有 D9，MATL/TRAIN 跳过
+    # 静默丢弃，AI 还回「都记好了」构成误导；现在落库后由模板层告知"已记入、供评估、非定案"（模型自述不可靠）。
+    # 2026-10-15 调整：播报改引述式（截取原文片段，误归类时用户能认出是哪句、可纠正），并后置到追问之后——
+    # 此前抽象概括+前置，用户不知哪句被归为"设想做法"、先听方案再被追问，观感莫名其妙。仅 TECH 标准有 D9，MATL/TRAIN 跳过
     solution_notice = ""
     solution_field = next((f for f in standard.elements if f.key == "proposedSolution"), None)
     if solution_field is not None and blank(get_value(form, solution_field.field_path)) and not blank(get_value(merged, solution_field.field_path)):
-        solution_notice = "你提到的设想做法我记到「建议方案」里了，会随需求一起给受理方参考——最终采用哪个，由产品和技术评估后再定。"
+        solution_text = get_value(merged, solution_field.field_path).replace("\n", " ").strip()
+        snippet = solution_text if len(solution_text) <= 30 else solution_text[:30] + "…"
+        solution_notice = f"你说的「{snippet}」我先记到「建议方案」里了，会随需求一起给受理方参考——最终做法由产品和技术评估后再定。"
     reply = reply_for(standard, target, merged, light=light, business=is_business)
     if mode_upgraded:
         reply = "这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。" + reply
     if mode_first_light:
         reply = "这个需求听起来是个小改动，我按轻量提报帮你登记，只确认几项关键信息就行。" + reply
     if solution_notice:
-        reply = solution_notice + " " + reply
+        reply = reply + " " + solution_notice
     if impacts:
         reply = " ".join(impacts) + " " + reply
     if granularity:

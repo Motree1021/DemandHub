@@ -11,31 +11,10 @@
             <div class="msg-row assistant">
               <div class="ava ag">AI</div>
               <div class="msg-bubble">
-                你好，我是需求收集助手，负责帮你把需求提报清楚。你可以直接说一句话诉求、整段粘贴整理好的文字，用输入法语音转文字也行。我会自动拆解成要素表单，缺什么会主动问你。先试试：
-                <div class="entry-opts">
-                  <button type="button" class="opt primary" @click="focusInput">我有一个清晰的需求要提报</button>
-                  <button type="button" class="opt" @click="toggleExamples">一段话完整需求示例</button>
-                  <button type="button" class="opt" @click="sendFuzzy">我只有一个模糊想法</button>
-                </div>
-              </div>
-            </div>
-            <template v-if="fuzzyGuide">
-              <div class="msg-row user">
-                <div class="ava me">我</div>
-                <div class="msg-bubble">我只有一个模糊想法，请一步步帮我想清楚</div>
-              </div>
-              <div class="msg-row assistant">
-                <div class="ava ag">AI</div>
-                <div class="msg-bubble">没关系，我们一步步想清楚。先用大白话说说：是谁、在什么场景下、遇到了什么麻烦？现在是怎么对付的？哪怕说得零散也没关系，我会接着追问帮你补齐。</div>
-              </div>
-            </template>
-            <div v-if="examplesVisible" class="msg-row assistant">
-              <div class="ava ag">AI</div>
-              <div class="msg-bubble">
-                <p class="example-tip">把目标、场景、功能、验收写进一段话，我一次就能拆解完整。参考下面两个示例的写法，在输入框写出你自己的需求后发送：</p>
-                <div v-for="example in EXAMPLES" :key="example.title" class="example-card">
-                  <strong>{{ example.title }}</strong>
-                  <p>{{ example.text }}</p>
+                你好，我是需求收集助手，负责帮你把需求提报清楚。你可以直接说一句话诉求、整段粘贴整理好的文字，用输入法语音转文字也行。我会自动拆解成要素表单，缺什么会主动问你。
+                <div class="example-card">
+                  <strong>参考示例（作为谁 / 什么时候或什么场景 / 要做什么 / 做完想看到什么效果）：</strong>
+                  <p>{{ EXAMPLE }}</p>
                 </div>
               </div>
             </div>
@@ -69,7 +48,7 @@
   </app-layout>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import AppLayout from '@/components/AppLayout.vue'
@@ -89,13 +68,11 @@ const saving = ref(false); const submitting = ref(false); const agentBusy = ref(
 const error = ref(''); const conflict = ref(false)
 const fieldEditVisible = ref(false); const editingField = ref<StandardFieldDefinition | null>(null); const editingValue = ref<unknown>(null)
 const panelRef = ref<InstanceType<typeof AgentChatPanel> | null>(null)
-const lastPayload = ref<GuidePayload | null>(null); const examplesVisible = ref(false); const fuzzyGuide = ref(false)
+const lastPayload = ref<GuidePayload | null>(null)
 // 页面标题经 document.title 传给宿主小程序原生导航栏（H5 内不渲染标题栏，避免双标题）
-// 一段话示例（原型 §示例引导）：覆盖完整型/简洁型两种典型业务需求文本
-const EXAMPLES = [
-  { title: '示例一 · 完整型（目标/场景/功能/验收都带）', text: '我们部门每天晨会要统计各渠道销量，现在手工从三个系统导数据拼 Excel，要 40 分钟还容易错。希望做一个自动报表，每天早上 8 点前生成，包含各渠道销量明细和排名，自动推送企微群；验收标准是每个交易日 8:00 前生成、数据与核心系统一致。' },
-  { title: '示例二 · 简洁型（目标/场景/功能/验收精简）', text: '客户经理每月要导出客户持仓清单发给客户，希望系统每月末自动生成 Excel 并邮件推送，验收是每月最后一天 18:00 前发出、覆盖全部客户。' },
-]
+// 欢迎语示例（2026-10-15 调整）：隐藏原三入口按钮（清晰需求/示例/模糊想法），直接展示一条用户故事手法的
+// 需求示例（作为谁→什么时候→要做什么→想看到什么效果），只作参照不提供一键填入，避免示例原文污染需求文本
+const EXAMPLE = '作为银行渠道部的客户经理，我希望每天晨会前一打开企微，就能看到系统自动生成的各渠道销量报表（含明细和排名）。现在我得从三个系统导数手工拼 Excel，每次约 40 分钟还容易出错。希望每个交易日早上 8:00 前生成并推送到企微群，数据与核心系统对账一致。'
 // FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；业务占优才激活 B 区必填门槛（对齐服务端 business_confirmed）
 const typeRecognition = computed(() => form.ext.typeRecognition as TypeRecognition | undefined)
 const businessConfirmed = computed(() => {
@@ -138,7 +115,7 @@ function resetNewDraft() {
   Object.assign(form, newForm()); draftId.value = null; sessionId.value = null; revision.value = 0
   quality.value = []; dirty.value = true; savedDemand = null; createPayload = null
   error.value = ''; conflict.value = false; clientRequestId = crypto.randomUUID()
-  lastPayload.value = null; examplesVisible.value = false; fuzzyGuide.value = false
+  lastPayload.value = null
 }
 const locked = computed(() => saving.value || submitting.value || agentBusy.value || initializing.value)
 const requiredComplete = computed(() => !!form.title?.trim() && !!form.demandTypeCode && !!form.content?.trim())
@@ -307,13 +284,6 @@ function onUnavailable(value: boolean) {
   if (!value) return
   showToast('AI 暂不可用，请稍后再试')
 }
-// 欢迎语三入口（对齐原型）：大段粘贴聚焦输入；示例展开供参照（不提供复制，避免原样照抄）；模糊想法先给本地固定引导语（不发消息、不建草稿），用户真正发送第一条内容时才创建草稿——只点入口不做第二步操作不会留下空草稿
-function focusInput() {
-  nextTick(() => (panelRef.value?.$el as HTMLElement | undefined)?.querySelector('textarea')?.focus())
-}
-function scrollChatToBottom() { panelRef.value?.scrollToBottom?.() }
-function toggleExamples() { examplesVisible.value = !examplesVisible.value; scrollChatToBottom() }
-function sendFuzzy() { fuzzyGuide.value = true; focusInput(); scrollChatToBottom() }
 let initializationGeneration = 0
 async function initialize() {
   const generation = ++initializationGeneration
@@ -351,12 +321,7 @@ onMounted(initialize)
 .ava.me { background: #c7d2fe; color: #312e81; }
 .msg-bubble { background: #fff; border: 1px solid #e5e9f2; border-radius: 12px; border-top-left-radius: 4px; padding: 10px 12px; font-size: 14px; line-height: 1.7; max-width: 88%; overflow-wrap: anywhere; }
 .msg-row.user .msg-bubble { color: #fff; background: #1f3a8a; border-color: #1f3a8a; border-radius: 12px; border-top-right-radius: 4px; }
-.entry-opts { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
-.opt { border: 1px solid #a7b8d8; color: #1f3a8a; background: #fff; border-radius: 16px; padding: 9px 14px; font-size: 13px; text-align: left; line-height: 1.5; min-height: 40px; }
-.opt.primary { background: #1f3a8a; border-color: #1f3a8a; color: #fff; }
-.opt:disabled { opacity: 0.5; }
-.example-tip { font-size: 13px; color: #555; line-height: 1.7; margin: 0 0 10px; }
-.example-card { border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.example-card { border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
 .example-card strong { font-size: 13px; color: #3730a3; }
 .example-card p { font-size: 13px; line-height: 1.8; color: #444; margin: 8px 0 0; white-space: pre-wrap; }
 /* 归类与提报口径面板（方案④）：底部圆角弹层，宽屏下限宽居中与页面壳一致 */

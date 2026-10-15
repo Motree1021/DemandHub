@@ -32,21 +32,23 @@ elements:
     TECH: 科技需求
     MATL: 物料需求
     TRAIN: 培训需求
+# A3 科技需求子类（2026-10-15 拍板）：管理端分类/统计标签，不驱动判型、B 区激活、轻重判定、分派等任何业务逻辑。
+# 提报人难以区分（"系统开发/集成/运维"对业务人员是术语），改为 AI 按提报内容自动归类（判别规则见 submit_guide.md）、
+# 永不追问：选填不入提交门槛、assessed:false 不进质量评估（计数 x/26，同 D9 口径——AI 判的字段不让提报人背质量分）；
+# 判不出或跨界归 OTHER 不留空。H5 表单保留选填展示（AI 值可见可改），管理端照常展示/编辑，改型清空后下轮对话自动重判。
 - key: techSubtype
   code: A3
   zone: A
   label: 科技需求子类
   kind: enum
   path: elements.A.techSubtype
-  required: true
+  assessed: false
   options:
     SYS_DEV: 系统开发
     DATA_RPT: 数据报表
     SYS_INT: 系统集成
     OPS_OPT: 运维优化
     OTHER: 其他
-  ask_missing: 为了把需求记录清楚，这个科技需求更接近哪一类？
-  ask_l1: 这个需求更接近系统开发、数据报表、系统集成、运维优化中的哪一类？
 - key: requester
   code: A4
   zone: A
@@ -399,10 +401,9 @@ elements:
   label: 建议方案
   kind: text
   path: elements.D.proposedSolution
-  assessed: false  # 提报人设想仅供受理方参考（2026-10-13 拍板）：不参与质量评估，质量计数为 x/27
+  assessed: false  # 提报人设想仅供受理方参考（2026-10-13 拍板）：不参与质量评估（2026-10-15 起计数 x/26，A3 亦退出评估）
   ok_when: 如实记录提报人设想的实现方式/候选方案及选择关系（如二选一），供受理方评估；非最终方案，可留空
 follow_up_order:
-- techSubtype
 - businessGoal
 - businessBackground
 - businessValue
