@@ -1,4 +1,5 @@
 import logging
+import sys
 from contextlib import asynccontextmanager
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -16,15 +17,21 @@ from app.standards.loader import load_all
 
 def _configure_agent_file_logging():
     """agent 日志落盘（2026-10-15 拍板）：1401/1405 对用户是黑盒，文件留痕供排查。
-    按天轮转保留 7 天；propagate 保持默认，终端输出不受影响。"""
+    按天轮转保留 7 天；另挂 stdout——h5pub 平台只采集 stdout，stderr 的 warning 会被丢弃。
+    propagate=False 避免 root 重复输出。"""
     log_dir = Path(__file__).resolve().parents[1] / "logs"
     log_dir.mkdir(exist_ok=True)
     agent_logger = logging.getLogger("app.agent")
     if any(isinstance(handler, TimedRotatingFileHandler) for handler in agent_logger.handlers):
         return  # --reload 或测试多次 create_app 时防重复挂 handler
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
     handler = TimedRotatingFileHandler(log_dir / "agent.log", when="midnight", backupCount=7, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    handler.setFormatter(formatter)
     agent_logger.addHandler(handler)
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(formatter)
+    agent_logger.addHandler(stdout_handler)
+    agent_logger.propagate = False
     agent_logger.setLevel(logging.WARNING)
 
 
