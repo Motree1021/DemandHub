@@ -142,7 +142,8 @@ class GuideService:
                         result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry)
                     except (ValueError, TypeError, KeyError):
                         self.llm.on_failure()
-                        logger.warning("模型输出连续两次解析失败，按AI不可用处理（首次原始输出前80字符：%s）", str(final.raw)[:80])
+                        # 记尾部而非头部：截断类故障病灶在结尾（头部 80 字符看不出，2026-10-16 拍板）
+                        logger.warning("模型输出连续两次解析失败，按AI不可用处理（首次原始输出尾部200字符：%s）", str(final.raw)[-200:])
                         raise LlmUnavailable from None
                     final = repaired
                 self.llm.on_success()

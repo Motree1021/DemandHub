@@ -68,7 +68,10 @@ class ArkClient:
         self.cooldown_until = 0.0
 
     def _options(self, messages, *, stream):
-        options = dict(model=self.settings.llm_chat_model, messages=messages, temperature=0.3, max_tokens=1500, response_format={"type": "json_object"}, stream=stream)
+        # max_tokens=8192（2026-10-16 拍板）：30要素结构化JSON在整段大段需求下实测需~1500 tokens，
+        # 原 1500 顶格会被截断→JSON解析失败→修复重试同样顶格→1401；8192 覆盖 20000 字最长输入。
+        # 官方上限 384k、默认 4k，token 按实际生成量计费，调大上限不增加常规成本。
+        options = dict(model=self.settings.llm_chat_model, messages=messages, temperature=0.3, max_tokens=8192, response_format={"type": "json_object"}, stream=stream)
         if stream:
             options["stream_options"] = {"include_usage": True}
         if self.settings.llm_thinking and self.thinking_supported:
