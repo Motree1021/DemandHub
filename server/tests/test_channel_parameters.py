@@ -35,15 +35,26 @@ def test_mode_defaults_to_ticket():
 
 
 @pytest.mark.parametrize("environment", ["dev", "prod"])
-def test_trusted_mode_rejected_outside_test(environment):
-    with pytest.raises(ValidationError, match="参数联调认证仅允许在测试环境启用"):
-        Settings(_env_file=None, app_env=environment, auth_dev_login=False,
-                 channel_entry_auth_mode="trusted_parameters")
+def test_trusted_mode_allowed_outside_test(environment):
+    # 明文直登为创金零售正式对接方式，dev/prod 均允许；prod 下不再强制 CHANNEL_LS_*（不回源）
+    settings = Settings(_env_file=None, app_env=environment, auth_dev_login=False, auth_test_login=False,
+                        channel_entry_auth_mode="trusted_parameters")
+    assert settings.channel_entry_auth_mode == "trusted_parameters"
 
 
-def test_trusted_mode_rejects_dev_login():
+async def test_trusted_mode_route_available_in_prod(session_factory):
+    settings = Settings(_env_file=None, app_env="prod", auth_dev_login=False, auth_test_login=False,
+                        channel_entry_auth_mode="trusted_parameters")
+    async with AsyncClient(transport=ASGITransport(app=create_app(settings), raise_app_exceptions=False), base_url="http://test") as client:
+        response = await client.post(PATH, json=PAYLOAD)
+        assert response.json()["code"] == 0
+        assert response.json()["data"]["user"]["userId"] == "host-user"
+
+
+@pytest.mark.parametrize("environment", ["test", "dev", "prod"])
+def test_trusted_mode_rejects_dev_login(environment):
     with pytest.raises(ValidationError, match="参数联调认证禁止同时启用 dev-login"):
-        Settings(_env_file=None, app_env="test", auth_dev_login=True,
+        Settings(_env_file=None, app_env=environment, auth_dev_login=True,
                  channel_entry_auth_mode="trusted_parameters")
 
 
@@ -53,6 +64,18 @@ async def test_ticket_mode_has_no_parameters_route(environment):
     async with AsyncClient(transport=ASGITransport(app=create_app(settings)), base_url="http://test") as client:
         response = await client.post(PATH, json=PAYLOAD)
         assert response.status_code == 404
+
+
+async def test_new_channel_user_defaults_to_reporter(parameters_client, session_factory):
+    """渠道新用户建档默认 REPORTER（最小权限）；管理员调整后的存量角色不被再次登录重置。"""
+    first = await parameters_client.post(PATH, json=PAYLOAD)
+    user = first.json()["data"]["user"]
+    assert user["role"] == "REPORTER" and user["roles"] == ["REPORTER"]
+    async with session_factory() as db:
+        async with db.begin():
+            (await db.get(User, user["id"])).role = "HANDLER"
+    second = await parameters_client.post(PATH, json=PAYLOAD)
+    assert second.json()["data"]["user"]["role"] == "HANDLER"
 
 
 async def test_parameters_mode_no_dev_login_and_ticket_compatible(parameters_client, monkeypatch):

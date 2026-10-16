@@ -50,6 +50,12 @@ async def get_viewable(db: AsyncSession, user: User, demand_id: int) -> Demand:
     roles = await role_service.effective_roles(db, user)
     if not can_view_demand(user, demand, roles):
         raise BizError(ErrorCode.DEMAND_NOT_FOUND)
+    # 类型权限（2026-10-16 拍板）：非本人提交的单，业务角色按 type_scope 判定；
+    # 与列表过滤同口径报"不存在"，不暴露单的存在性。提报人看本人、ADMIN 直通。
+    if demand.submitter_id != user.id:
+        codes = role_service.user_type_codes(user)
+        if codes is not None and demand.demand_type_code not in codes:
+            raise BizError(ErrorCode.DEMAND_NOT_FOUND)
     return demand
 
 

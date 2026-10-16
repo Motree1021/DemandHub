@@ -15,7 +15,7 @@ from app.services import role_service
 
 router = APIRouter(prefix="/admin/grants", dependencies=[Depends(require_admin)])
 
-RoleCode = Literal["ADMIN", "EXECUTIVE", "MANAGER", "HANDLER"]
+RoleCode = Literal["ADMIN", "EXECUTIVE", "MANAGER", "HANDLER", "REPORTER"]
 
 
 class GrantSave(ApiModel):

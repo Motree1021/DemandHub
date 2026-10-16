@@ -59,7 +59,9 @@ class User(Timestamps, Base):
     must_change_pwd: Mapped[bool] = mapped_column(default=False, server_default="0")
     fail_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     locked_until: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
-    role: Mapped[str] = mapped_column(String(16), default="HANDLER", server_default="HANDLER")
+    role: Mapped[str] = mapped_column(String(16), default="REPORTER", server_default="REPORTER")
+    # 需求类型权限（2026-10-16 拍板）：逗号分隔类型码，NULL=无权限；仅业务角色生效，ADMIN/REPORTER 不受限
+    type_scope: Mapped[str | None] = mapped_column(String(64))
 
 
 class RefreshToken(Base):
@@ -595,7 +597,45 @@ class DemandChannel(Timestamps, Base):
     app_id: Mapped[str | None] = mapped_column(String(64))
     callback_enabled: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE", server_default="ACTIVE")
+    # 渠道白名单：开关默认关（全放行），拦截页联系引导随渠道行走公开接口
+    whitelist_enabled: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    whitelist_contact: Mapped[str | None] = mapped_column(String(255))
     config_json: Mapped[dict | None] = mapped_column(JSON)
+
+
+class DemandChannelWhitelist(Timestamps, Base):
+    """渠道白名单（管「允许谁进」，与 dh_user 用户档案相互独立，登录命中才建档）。"""
+    __tablename__ = "demand_channel_whitelist"
+    __table_args__ = (
+        UniqueConstraint("channel_code", "channel_user_id", name="uk_whitelist_user"),
+        {"comment": "渠道白名单"},
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    channel_code: Mapped[str] = mapped_column(String(32))
+    channel_user_id: Mapped[str] = mapped_column(String(64))
+    display_name: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED", server_default="ENABLED")
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by_name: Mapped[str | None] = mapped_column(String(64))
+
+
+class DemandChannelWhitelistLog(Base):
+    """白名单操作留痕（增/删/启停/开关/文案；操作对象快照，行只增不改）。"""
+    __tablename__ = "demand_channel_whitelist_log"
+    __table_args__ = (
+        Index("ix_whitelist_log_channel", "channel_code", "created_at"),
+        {"comment": "渠道白名单操作留痕"},
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    action: Mapped[str] = mapped_column(String(24))
+    channel_code: Mapped[str] = mapped_column(String(32))
+    channel_user_id: Mapped[str | None] = mapped_column(String(64))
+    operator_id: Mapped[int] = mapped_column(BigInteger)
+    operator_name: Mapped[str] = mapped_column(String(64))
+    detail: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
 
 
 class DemandOrg(Timestamps, Base):

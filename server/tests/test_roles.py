@@ -24,10 +24,14 @@ ACD = {"A": {"techSubtype": "DATA_RPT"},
 
 # ---- 基座工具 ----
 
-async def make_user(factory, name, wecom_userid, role="HANDLER"):
+async def make_user(factory, name, wecom_userid, role="HANDLER", type_scope=None):
+    # 业务角色默认配全类型权限（贴合生产「必配」约束），按需用 type_scope 覆盖
+    if type_scope is None and role in ("EXECUTIVE", "MANAGER", "HANDLER"):
+        type_scope = "TECH,MATL,TRAIN"
     async with factory() as db:
         async with db.begin():
-            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role)
+            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role,
+                        type_scope=type_scope)
             db.add(user)
             await db.flush()
             db.expunge(user)
@@ -365,7 +369,7 @@ async def test_api_grant_admin_crud_and_elevation(client, session_factory, submi
 
 @pytest.mark.asyncio
 async def test_api_update_user_role(client, session_factory):
-    """ADMIN 调整静态角色：调整后即时生效（逐请求读库）。"""
+    """ADMIN 多角色保存：主角色切换即时生效（逐请求读库）；非法角色值 400。"""
     await make_user(session_factory, "小调", "p4-api-u7")
     admin_headers = await _login(client, "超管", "mvp-admin")
     user_headers = await _login(client, "小调", "p4-api-u7")
@@ -373,11 +377,81 @@ async def test_api_update_user_role(client, session_factory):
     uid = me.json()["data"]["id"]
 
     assert (await client.get("/demandhub-api/triage/queue", headers=user_headers)).json()["code"] == 403
-    updated = await client.put(f"/demandhub-api/admin/users/{uid}/role",
-                               headers=admin_headers, json={"role": "EXECUTIVE"})
+    updated = await client.put(f"/demandhub-api/admin/users/{uid}/roles",
+                               headers=admin_headers, json={"roles": ["EXECUTIVE"], "types": ["TECH"]})
     assert updated.json()["code"] == 0 and updated.json()["data"]["role"] == "EXECUTIVE"
+    assert updated.json()["data"]["roles"] == ["EXECUTIVE"]
     assert (await client.get("/demandhub-api/triage/queue", headers=user_headers)).json()["code"] == 0
     # 非法角色值 → 400（Literal 校验失败，统一响应体 body 业务码）
-    invalid = await client.put(f"/demandhub-api/admin/users/{uid}/role",
-                               headers=admin_headers, json={"role": "SUPERUSER"})
+    invalid = await client.put(f"/demandhub-api/admin/users/{uid}/roles",
+                               headers=admin_headers, json={"roles": ["SUPERUSER"]})
     assert invalid.json()["code"] == 400
+
+
+# ---- 6. 多角色保存（2026-10-16 方案A：主角色 + 空白兼任授权差量同步） ----
+
+@pytest.mark.asyncio
+async def test_sync_user_roles_concurrent_grants(session_factory):
+    """兼任角色落空白授权行并计入有效角色；收窄勾选即回收；带范围手工授权绝不动。"""
+    user = await make_user(session_factory, "多面", "p4-multi1", role="REPORTER")
+    async with session_factory() as db:
+        async with db.begin():
+            # 先手工配一条带范围授权（不应被同步触碰）
+            scoped = await role_service.create_grant(
+                db, user_id=user.id, role_code="EXECUTIVE", org_id=None,
+                demand_type_scope="TECH", effective_from=None, effective_to=None, granted_by=None)
+            roles = await role_service.sync_user_roles(db, user, ["HANDLER", "MANAGER"], ["TECH"], granted_by=None)
+            assert roles == ["MANAGER", "HANDLER"]  # 按 ROLE_CODES 顺序
+            fresh = await db.get(User, user.id)
+            assert fresh.role == "HANDLER"  # 主角色取首个（原 REPORTER 不在勾选内）
+            assert fresh.type_scope == "TECH"  # 业务角色必配类型权限（按人统一配）
+            assert await role_service.effective_roles(db, fresh) == frozenset({"HANDLER", "MANAGER", "EXECUTIVE"})
+            # 收窄：去掉 MANAGER → 空白授权回收；带范围的 EXECUTIVE 保留
+            roles = await role_service.sync_user_roles(db, fresh, ["HANDLER"], ["TECH"], granted_by=None)
+            assert roles == ["HANDLER"]
+            scoped_row = await db.get(type(scoped), scoped.id)
+            assert scoped_row.is_deleted == 0
+            assert await role_service.effective_roles(db, fresh) == frozenset({"HANDLER", "EXECUTIVE"})
+
+
+@pytest.mark.asyncio
+async def test_sync_user_roles_admin_forced_primary(session_factory):
+    """含 ADMIN 时强制主角色为 ADMIN（is_admin 不认授权）；空列表/非法码拒绝。"""
+    user = await make_user(session_factory, "兼任", "p4-multi2", role="HANDLER")
+    async with session_factory() as db:
+        async with db.begin():
+            roles = await role_service.sync_user_roles(db, user, ["HANDLER", "ADMIN"], ["TECH"], granted_by=None)
+            assert roles == ["ADMIN", "HANDLER"]
+            assert (await db.get(User, user.id)).role == "ADMIN"
+    with pytest.raises(BizError) as error:
+        async with session_factory() as db:
+            async with db.begin():
+                await role_service.sync_user_roles(db, user, [], granted_by=None)
+    assert error.value.code == 400
+
+
+@pytest.mark.asyncio
+async def test_api_update_user_roles_multi(client, session_factory):
+    """API 级多角色：兼任即时生效；me/login 响应带 roles 并集；本人不可调。"""
+    await make_user(session_factory, "小兼", "p4-api-u8", role="REPORTER")
+    admin_headers = await _login(client, "超管", "mvp-admin")
+    user_headers = await _login(client, "小兼", "p4-api-u8")
+    me = await client.get("/demandhub-api/auth/me", headers=user_headers)
+    uid = me.json()["data"]["id"]
+    assert me.json()["data"]["roles"] == ["REPORTER"]
+
+    updated = await client.put(f"/demandhub-api/admin/users/{uid}/roles",
+                               headers=admin_headers, json={"roles": ["REPORTER", "MANAGER"], "types": ["TECH"]})
+    assert updated.json()["code"] == 0
+    assert updated.json()["data"]["role"] == "REPORTER"  # 主角色在勾选内则保持不变
+    assert updated.json()["data"]["roles"] == ["MANAGER", "REPORTER"]
+    # 兼任 MANAGER 即时生效（无需重登），me 返回并集
+    did_queue = await client.get("/demandhub-api/triage/queue", headers=user_headers)
+    assert did_queue.json()["code"] == 0
+    me = await client.get("/demandhub-api/auth/me", headers=user_headers)
+    assert me.json()["data"]["roles"] == ["MANAGER", "REPORTER"]
+    # 管理员不能调整本人角色
+    admin_me = await client.get("/demandhub-api/auth/me", headers=admin_headers)
+    self_edit = await client.put(f"/demandhub-api/admin/users/{admin_me.json()['data']['id']}/roles",
+                                 headers=admin_headers, json={"roles": ["ADMIN"]})
+    assert self_edit.json()["code"] == 400

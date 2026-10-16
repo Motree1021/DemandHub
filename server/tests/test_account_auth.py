@@ -163,7 +163,8 @@ async def test_create_user_and_masked_list(client, admin, session_factory):
     headers = await admin_headers(client)
     created = await client.post(f"{BASE}/admin/users", headers=headers,
                                 json={"loginAccount": "new1", "name": "新人",
-                                      "initialPassword": "Abcd1234", "role": "HANDLER"})
+                                      "initialPassword": "Abcd1234", "role": "HANDLER",
+                                      "types": ["TECH"]})
     body = created.json()
     assert body["code"] == 0
     assert body["data"]["mustChangePwd"] is True
@@ -180,7 +181,8 @@ async def test_create_user_and_masked_list(client, admin, session_factory):
 
 async def test_disable_blocks_login_and_revokes_refresh(client, admin):
     await client.post(f"{BASE}/admin/users", headers=await admin_headers(client),
-                      json={"loginAccount": "v1", "name": "v", "initialPassword": "Abcd1234"})
+                      json={"loginAccount": "v1", "name": "v", "initialPassword": "Abcd1234",
+                            "types": ["TECH"]})
     data = (await login(client, "v1", "Abcd1234")).json()["data"]
     target = (await client.get(f"{BASE}/admin/users?keyword=v1",
                                headers=await admin_headers(client))).json()["data"]["list"][0]
@@ -204,7 +206,8 @@ async def test_cannot_disable_or_reset_self(client, admin):
 
 async def test_reset_password_forces_change_and_revokes(client, admin):
     await client.post(f"{BASE}/admin/users", headers=await admin_headers(client),
-                      json={"loginAccount": "w1", "name": "w", "initialPassword": "Abcd1234"})
+                      json={"loginAccount": "w1", "name": "w", "initialPassword": "Abcd1234",
+                            "types": ["TECH"]})
     old = (await login(client, "w1", "Abcd1234")).json()["data"]
     target = (await client.get(f"{BASE}/admin/users?keyword=w1",
                                headers=await admin_headers(client))).json()["data"]["list"][0]

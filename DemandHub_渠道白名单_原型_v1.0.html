@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DemandHub 渠道白名单 · 原型 v1.0</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; background: #f0f2f5; color: #303133; font-size: 14px; }
+  button { font-family: inherit; cursor: pointer; }
+
+  /* ===== 原型切换栏 ===== */
+  .proto-bar { background: #1f2d3d; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+  .proto-bar .logo { font-weight: 600; font-size: 13px; opacity: .75; }
+  .proto-tab { background: transparent; border: 1px solid rgba(255,255,255,.35); color: #fff; padding: 5px 16px; border-radius: 15px; font-size: 13px; }
+  .proto-tab.active { background: #fff; color: #1f2d3d; border-color: #fff; font-weight: 600; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ===== 管理后台布局 ===== */
+  .admin-wrap { display: flex; min-height: calc(100vh - 49px); }
+  .admin-side { width: 200px; background: #304156; color: #bfcbd9; flex-shrink: 0; }
+  .admin-side .sys-title { padding: 14px 18px; font-size: 12px; color: #8a97a8; }
+  .menu-item { padding: 12px 18px; font-size: 14px; cursor: pointer; }
+  .menu-item.active { background: #263445; color: #409EFF; border-right: 3px solid #409EFF; }
+  .admin-main { flex: 1; padding: 20px 24px; }
+
+  .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .page-head h2 { font-size: 18px; font-weight: 600; }
+  .page-head .crumb { font-size: 12px; color: #909399; margin-top: 4px; }
+
+  .card { background: #fff; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,21,41,.06); }
+
+  /* 渠道控制条 */
+  .channel-row { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .channel-name { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .channel-tag { background: #ecf5ff; color: #409EFF; font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+  .ctl-item { display: flex; align-items: center; gap: 10px; }
+  .ctl-label { color: #606266; font-size: 13px; }
+  .switch { width: 44px; height: 22px; border-radius: 11px; background: #dcdfe6; position: relative; border: none; transition: background .2s; }
+  .switch::after { content: ""; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: left .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .switch.on { background: #409EFF; }
+  .switch.on::after { left: 24px; }
+  .switch-state { font-size: 13px; font-weight: 600; }
+  .switch-state.off { color: #909399; }
+  .switch-state.on { color: #409EFF; }
+  .contact-text { font-size: 13px; color: #606266; background: #f5f7fa; border-radius: 4px; padding: 5px 10px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .warn-tip { width: 100%; margin-top: 10px; background: #fdf6ec; color: #b88230; border: 1px solid #faecd8; font-size: 12px; padding: 8px 12px; border-radius: 4px; }
+
+  /* 统计 */
+  .stat-row { display: flex; gap: 16px; margin-bottom: 16px; }
+  .stat-card { flex: 1; background: #fff; border-radius: 8px; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,21,41,.06); }
+  .stat-card .num { font-size: 26px; font-weight: 700; }
+  .stat-card .lbl { font-size: 13px; color: #909399; margin-top: 4px; }
+  .stat-card.blue .num { color: #409EFF; } .stat-card.orange .num { color: #e6a23c; } .stat-card.gray .num { color: #606266; }
+
+  /* 页签 */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #e4e7ed; margin-bottom: 14px; }
+  .tab { padding: 9px 16px; font-size: 14px; color: #606266; background: none; border: none; border-bottom: 2px solid transparent; }
+  .tab.active { color: #409EFF; border-bottom-color: #409EFF; font-weight: 600; }
+  .tab .badge { background: #f56c6c; color: #fff; font-size: 11px; border-radius: 8px; padding: 1px 6px; margin-left: 4px; }
+
+  /* 工具条与表格 */
+  .toolbar { display: flex; justify-content: space-between; margin-bottom: 12px; gap: 12px; }
+  .search-input { border: 1px solid #dcdfe6; border-radius: 4px; padding: 7px 12px; width: 260px; font-size: 13px; outline: none; }
+  .search-input:focus { border-color: #409EFF; }
+  .btn { border: 1px solid #dcdfe6; background: #fff; color: #606266; border-radius: 4px; padding: 7px 14px; font-size: 13px; }
+  .btn:hover { color: #409EFF; border-color: #c6e2ff; background: #ecf5ff; }
+  .btn-primary { background: #409EFF; border-color: #409EFF; color: #fff; }
+  .btn-primary:hover { background: #66b1ff; border-color: #66b1ff; color: #fff; }
+  .btn-danger-text { background: none; border: none; color: #f56c6c; font-size: 13px; padding: 2px 6px; }
+  .btn-text { background: none; border: none; color: #409EFF; font-size: 13px; padding: 2px 6px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 13px; color: #909399; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid #ebeef5; background: #fafafa; }
+  td { padding: 11px 12px; border-bottom: 1px solid #ebeef5; font-size: 13px; color: #606266; }
+  tr:hover td { background: #f5f7fa; }
+  .mono { font-family: Consolas, monospace; font-size: 12.5px; }
+  .tag { display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 4px; }
+  .tag-green { background: #f0f9eb; color: #67c23a; border: 1px solid #e1f3d8; }
+  .tag-gray { background: #f4f4f5; color: #909399; border: 1px solid #e9e9eb; }
+  .empty-note { text-align: center; color: #909399; padding: 26px 0; font-size: 13px; }
+
+  /* 弹窗 */
+  .mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 200; align-items: center; justify-content: center; }
+  .mask.show { display: flex; }
+  .dialog { background: #fff; border-radius: 8px; width: 440px; padding: 20px 24px; }
+  .dialog h3 { font-size: 16px; margin-bottom: 16px; }
+  .dialog .form-row { margin-bottom: 14px; }
+  .dialog .form-row label { display: block; font-size: 13px; color: #606266; margin-bottom: 6px; }
+  .dialog .form-row label .req { color: #f56c6c; margin-right: 2px; }
+  .dialog .form-row input, .dialog .form-row textarea { width: 100%; border: 1px solid #dcdfe6; border-radius: 4px; padding: 8px 10px; font-size: 13px; outline: none; font-family: inherit; }
+  .dialog .form-row input:focus, .dialog .form-row textarea:focus { border-color: #409EFF; }
+  .dialog .form-tip { font-size: 12px; color: #909399; margin-top: 5px; }
+  .dialog .dlg-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+  .confirm-body { font-size: 13.5px; color: #606266; line-height: 1.7; }
+  .confirm-body b { color: #303133; }
+  .confirm-body .risk { color: #e6a23c; }
+
+  /* H5 手机壳 */
+  .h5-stage { display: flex; justify-content: center; padding: 30px 0 50px; }
+  .phone { width: 375px; height: 720px; background: #f7f8fa; border-radius: 28px; border: 10px solid #1a1a1a; overflow: hidden; position: relative; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+  .phone .statusbar { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; font-size: 12px; color: #333; background: #fff; }
+  .phone .navbar { height: 44px; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #f2f2f2; }
+  .blocked-body { display: flex; flex-direction: column; align-items: center; padding: 90px 32px 0; text-align: center; }
+  .lock-icon { width: 88px; height: 88px; border-radius: 50%; background: #eef3fb; display: flex; align-items: center; justify-content: center; margin-bottom: 26px; }
+  .lock-icon svg { width: 42px; height: 42px; }
+  .blocked-title { font-size: 17px; font-weight: 600; color: #323233; margin-bottom: 12px; }
+  .blocked-desc { font-size: 13.5px; color: #969799; line-height: 1.8; margin-bottom: 26px; }
+  .contact-card { background: #fff; border-radius: 12px; padding: 14px 18px; width: 100%; text-align: left; border: 1px solid #eef0f4; }
+  .contact-card .cc-title { font-size: 12px; color: #969799; margin-bottom: 6px; }
+  .contact-card .cc-body { font-size: 14px; color: #323233; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="logo">DemandHub · 渠道白名单原型 v1.0</span>
+  <button class="proto-tab active" data-view="admin" onclick="switchView(this)">管理后台 · 白名单管理</button>
+  <button class="proto-tab" data-view="h5" onclick="switchView(this)">H5 · 拦截页</button>
+</div>
+
+<!-- ================= 管理后台 ================= -->
+<div class="view active" id="view-admin">
+  <div class="admin-wrap">
+    <div class="admin-side">
+      <div class="sys-title">系统管理</div>
+      <div class="menu-item">用户管理</div>
+      <div class="menu-item">组织管理</div>
+      <div class="menu-item">需求类型</div>
+      <div class="menu-item">渠道管理</div>
+      <div class="menu-item active">渠道白名单</div>
+      <div class="menu-item">通知模板</div>
+    </div>
+    <div class="admin-main">
+      <div class="page-head">
+        <div>
+          <h2>渠道白名单</h2>
+          <div class="crumb">控制哪些渠道用户可以进入 DemandHub H5</div>
+        </div>
+      </div>
+
+      <!-- 渠道控制条 -->
+      <div class="card">
+        <div class="channel-row">
+          <div class="channel-name">创金零售小程序 <span class="channel-tag">CHUANGJIN_LS</span></div>
+          <div class="ctl-item">
+            <span class="ctl-label">白名单校验</span>
+            <button class="switch on" id="masterSwitch" onclick="onMasterSwitch()"></button>
+            <span class="switch-state on" id="switchLabel">已开启</span>
+          </div>
+          <div class="ctl-item">
+            <span class="ctl-label">拦截页联系引导</span>
+            <span class="contact-text" id="contactText">请联系科技部需求管理员 张敏 开通访问权限（企业微信直接搜索）</span>
+            <button class="btn" onclick="openDlg('dlgContact')">编辑</button>
+          </div>
+          <div class="warn-tip" id="switchTip" style="display:none;">白名单校验已关闭：当前所有渠道用户均可进入 H5（自动建档）。开启后仅白名单内用户可进入。</div>
+        </div>
+      </div>
+
+      <!-- 统计 -->
+      <div class="stat-row">
+        <div class="stat-card blue"><div class="num">28</div><div class="lbl">已启用</div></div>
+        <div class="stat-card orange"><div class="num">3</div><div class="lbl">已停用</div></div>
+        <div class="stat-card gray"><div class="num">5</div><div class="lbl">待登记老用户</div></div>
+      </div>
+
+      <!-- 页签 -->
+      <div class="card">
+        <div class="tabs">
+          <button class="tab active" onclick="switchTab(this, 'tabList')">白名单</button>
+          <button class="tab" onclick="switchTab(this, 'tabPending')">待登记渠道用户 <span class="badge">5</span></button>
+          <button class="tab" onclick="switchTab(this, 'tabLog')">操作留痕</button>
+        </div>
+
+        <!-- 白名单列表 -->
+        <div id="tabList">
+          <div class="toolbar">
+            <input class="search-input" placeholder="搜索企微ID / 姓名">
+            <div style="display:flex;gap:10px;">
+              <button class="btn" onclick="openDlg('dlgBatch')">批量添加</button>
+              <button class="btn btn-primary" onclick="openDlg('dlgAdd')">+ 添加白名单</button>
+            </div>
+          </div>
+          <table>
+            <thead><tr>
+              <th>企微ID</th><th>姓名</th><th>状态</th><th>最近登录</th><th>登记人</th><th>登记时间</th><th style="width:130px">操作</th>
+            </tr></thead>
+            <tbody>
+              <tr><td class="mono">zhang.wei01</td><td>张伟</td><td><span class="tag tag-green">已启用</span></td><td>2026-10-16 09:42</td><td>admin</td><td>2026-10-14 10:02</td><td><button class="btn-text">停用</button><button class="btn-danger-text" onclick="openDlg('dlgRemove')">移除</button></td></tr>
+              <tr><td class="mono">li.na02</td><td>李娜</td><td><span class="tag tag-green">已启用</span></td><td>2026-10-15 17:20</td><td>admin</td><td>2026-10-14 10:03</td><td><button class="btn-text">停用</button><button class="btn-danger-text" onclick="openDlg('dlgRemove')">移除</button></td></tr>
+              <tr><td class="mono">wang.qiang03</td><td>王强</td><td><span class="tag tag-green">已启用</span></td><td>2026-10-16 08:15</td><td>admin</td><td>2026-10-14 10:05</td><td><button class="btn-text">停用</button><button class="btn-danger-text" onclick="openDlg('dlgRemove')">移除</button></td></tr>
+              <tr><td class="mono">chen.jing04</td><td>陈静</td><td><span class="tag tag-gray">已停用</span></td><td>2026-09-28 14:11</td><td>admin</td><td>2026-10-14 10:06</td><td><button class="btn-text">启用</button><button class="btn-danger-text" onclick="openDlg('dlgRemove')">移除</button></td></tr>
+              <tr><td class="mono">liu.yang05</td><td>刘洋</td><td><span class="tag tag-green">已启用</span></td><td>—（从未登录）</td><td>admin</td><td>2026-10-15 16:40</td><td><button class="btn-text">停用</button><button class="btn-danger-text" onclick="openDlg('dlgRemove')">移除</button></td></tr>
+              <tr><td class="mono">zhao.lei06</td><td>—</td><td><span class="tag tag-green">已启用</span></td><td>—（从未登录）</td><td>admin</td><td>2026-10-16 09:10</td><td><button class="btn-text">停用</button><button class="btn-danger-text" onclick="openDlg('dlgRemove')">移除</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 待登记渠道用户 -->
+        <div id="tabPending" style="display:none;">
+          <div class="warn-tip" style="margin:0 0 12px;">以下用户在系统中已有档案（白名单功能上线前自动建档），但尚未加入白名单。<b>开启白名单校验后，这些用户将被拦截</b>，请逐一确认后点击「加入白名单」。</div>
+          <table>
+            <thead><tr>
+              <th>企微ID</th><th>姓名</th><th>部门</th><th>最近登录</th><th>提报需求数</th><th style="width:120px">操作</th>
+            </tr></thead>
+            <tbody>
+              <tr><td class="mono">sun.qian07</td><td>孙倩</td><td>零售业务部</td><td>2026-10-15 11:26</td><td>4</td><td><button class="btn btn-primary" style="padding:5px 10px;">加入白名单</button></td></tr>
+              <tr><td class="mono">zhou.jie08</td><td>周杰</td><td>财富管理事业部</td><td>2026-10-12 15:48</td><td>2</td><td><button class="btn btn-primary" style="padding:5px 10px;">加入白名单</button></td></tr>
+              <tr><td class="mono">wu.fang09</td><td>吴芳</td><td>零售业务部</td><td>2026-10-08 09:33</td><td>1</td><td><button class="btn btn-primary" style="padding:5px 10px;">加入白名单</button></td></tr>
+              <tr><td class="mono">zheng.hao10</td><td>郑浩</td><td>机构业务部</td><td>2026-09-30 16:02</td><td>7</td><td><button class="btn btn-primary" style="padding:5px 10px;">加入白名单</button></td></tr>
+              <tr><td class="mono">qian.duo11</td><td>钱多</td><td>未匹配部门</td><td>2026-09-22 10:19</td><td>1</td><td><button class="btn btn-primary" style="padding:5px 10px;">加入白名单</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 操作留痕 -->
+        <div id="tabLog" style="display:none;">
+          <table>
+            <thead><tr>
+              <th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>详情</th>
+            </tr></thead>
+            <tbody>
+              <tr><td>2026-10-16 09:10</td><td>admin</td><td>添加白名单</td><td class="mono">zhao.lei06</td><td>姓名未填</td></tr>
+              <tr><td>2026-10-15 16:40</td><td>admin</td><td>添加白名单</td><td class="mono">liu.yang05</td><td>刘洋</td></tr>
+              <tr><td>2026-10-15 14:02</td><td>admin</td><td><span style="color:#e6a23c;">停用</span></td><td class="mono">chen.jing04</td><td>陈静</td></tr>
+              <tr><td>2026-10-15 09:30</td><td>admin</td><td><span style="color:#409EFF;">开启全局开关</span></td><td>—</td><td>关闭 → 开启</td></tr>
+              <tr><td>2026-10-14 18:22</td><td>admin</td><td>修改联系引导</td><td>—</td><td>更新为「请联系科技部需求管理员 张敏…」</td></tr>
+              <tr><td>2026-10-14 10:06</td><td>admin</td><td>添加白名单</td><td class="mono">chen.jing04</td><td>陈静</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= H5 拦截页 ================= -->
+<div class="view" id="view-h5">
+  <div class="h5-stage">
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span>📶 🔋</span></div>
+      <div class="navbar">科技需求收集</div>
+      <div class="blocked-body">
+        <div class="lock-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#7a9cc6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="10" width="16" height="10" rx="2"></rect>
+            <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+            <circle cx="12" cy="15" r="1.4" fill="#7a9cc6" stroke="none"></circle>
+          </svg>
+        </div>
+        <div class="blocked-title">非白名单用户，暂不支持访问</div>
+        <div class="blocked-desc">当前账号未在访问白名单内<br>暂时无法使用科技需求收集服务</div>
+        <div class="contact-card">
+          <div class="cc-title">如需开通访问权限</div>
+          <div class="cc-body" id="h5Contact">请联系科技部需求管理员 张敏 开通访问权限（企业微信直接搜索）</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 弹窗 ================= -->
+<!-- 添加白名单 -->
+<div class="mask" id="dlgAdd">
+  <div class="dialog">
+    <h3>添加白名单</h3>
+    <div class="form-row">
+      <label><span class="req">*</span>企微ID</label>
+      <input placeholder="请输入渠道侧企微用户ID，如 zhang.wei01">
+      <div class="form-tip">从渠道方（创金零售）提供的名单中获取，区分大小写</div>
+    </div>
+    <div class="form-row">
+      <label>姓名（选填）</label>
+      <input placeholder="便于日后核对，如 张伟">
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" onclick="closeDlg('dlgAdd')">取 消</button>
+      <button class="btn btn-primary" onclick="closeDlg('dlgAdd')">确认添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量添加 -->
+<div class="mask" id="dlgBatch">
+  <div class="dialog" style="width:540px;">
+    <h3>批量添加白名单</h3>
+    <div class="form-row">
+      <label><span class="req">*</span>企微ID 名单</label>
+      <textarea id="batchInput" rows="6" style="font-family:Consolas,monospace;" placeholder="每行一个企微ID，可从 Excel 整列直接粘贴&#10;如需同时登记姓名，用逗号 / Tab / 空格分隔：&#10;sun.qian07,孙倩&#10;zhou.jie08 周杰"></textarea>
+      <div class="form-tip">空行自动忽略；与现有白名单重复的自动跳过；粘贴后先「解析」再确认</div>
+    </div>
+    <div id="batchPreview" style="display:none;margin-bottom:14px;">
+      <div id="batchSummary" style="font-size:13px;margin-bottom:8px;"></div>
+      <div id="batchOkList" style="font-size:12.5px;color:#67c23a;background:#f0f9eb;border-radius:4px;padding:8px 10px;margin-bottom:6px;line-height:1.8;"></div>
+      <div id="batchDupList" style="font-size:12.5px;color:#909399;background:#f4f4f5;border-radius:4px;padding:8px 10px;margin-bottom:6px;line-height:1.8;display:none;"></div>
+      <div id="batchBadList" style="font-size:12.5px;color:#f56c6c;background:#fef0f0;border-radius:4px;padding:8px 10px;line-height:1.8;display:none;"></div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" onclick="closeDlg('dlgBatch')">取 消</button>
+      <button class="btn" id="btnParse" onclick="parseBatch()">解 析</button>
+      <button class="btn btn-primary" id="btnCommit" style="display:none;" onclick="closeDlg('dlgBatch')">确认添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全局开关确认 -->
+<div class="mask" id="dlgSwitch">
+  <div class="dialog">
+    <h3 id="dlgSwitchTitle">开启白名单校验</h3>
+    <div class="confirm-body" id="dlgSwitchBody"></div>
+    <div class="dlg-foot">
+      <button class="btn" onclick="closeDlg('dlgSwitch')">取 消</button>
+      <button class="btn btn-primary" onclick="confirmSwitch()">确 认</button>
+    </div>
+  </div>
+</div>
+
+<!-- 移除确认 -->
+<div class="mask" id="dlgRemove">
+  <div class="dialog">
+    <h3>移除白名单</h3>
+    <div class="confirm-body">确认将 <b>zhang.wei01（张伟）</b> 移出白名单？<br>移除后该用户<b>无法进入 H5</b>（已有系统档案保留，可随时重新加入）。</div>
+    <div class="dlg-foot">
+      <button class="btn" onclick="closeDlg('dlgRemove')">取 消</button>
+      <button class="btn btn-primary" style="background:#f56c6c;border-color:#f56c6c;" onclick="closeDlg('dlgRemove')">确认移除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 联系引导编辑 -->
+<div class="mask" id="dlgContact">
+  <div class="dialog">
+    <h3>编辑拦截页联系引导</h3>
+    <div class="form-row">
+      <label>引导文案</label>
+      <textarea rows="3">请联系科技部需求管理员 张敏 开通访问权限（企业微信直接搜索）</textarea>
+      <div class="form-tip">展示在被拦截用户看到的 H5 页面上，建议包含可触达的联系人或渠道</div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" onclick="closeDlg('dlgContact')">取 消</button>
+      <button class="btn btn-primary" onclick="closeDlg('dlgContact')">保 存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function switchView(btn) {
+    document.querySelectorAll('.proto-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + btn.dataset.view).classList.add('active');
+  }
+  function switchTab(btn, id) {
+    btn.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    ['tabList', 'tabPending', 'tabLog'].forEach(t => document.getElementById(t).style.display = t === id ? 'block' : 'none');
+  }
+  function openDlg(id) { document.getElementById(id).classList.add('show'); }
+  function closeDlg(id) { document.getElementById(id).classList.remove('show'); }
+
+  let swOn = true;
+  function onMasterSwitch() {
+    const body = document.getElementById('dlgSwitchBody');
+    const title = document.getElementById('dlgSwitchTitle');
+    if (swOn) {
+      title.textContent = '关闭白名单校验';
+      body.innerHTML = '关闭后，<b>所有渠道用户均可进入 H5</b>（白名单校验停用，自动建档）。<br><span class="risk">仅在白名单配置异常导致大面积误拦等紧急情况下使用。</span>确认关闭？';
+    } else {
+      title.textContent = '开启白名单校验';
+      body.innerHTML = '开启后，<b>仅白名单内的渠道用户可以进入 H5</b>。<br><span class="risk">未登记用户（含白名单功能上线前已自动建档的老用户）将被拦截，并看到「非白名单用户，暂不支持访问」页面。</span>确认开启？';
+    }
+    openDlg('dlgSwitch');
+  }
+  function confirmSwitch() {
+    swOn = !swOn;
+    document.getElementById('masterSwitch').classList.toggle('on', swOn);
+    const lbl = document.getElementById('switchLabel');
+    lbl.textContent = swOn ? '已开启' : '已关闭';
+    lbl.className = 'switch-state ' + (swOn ? 'on' : 'off');
+    document.getElementById('switchTip').style.display = swOn ? 'none' : 'block';
+    closeDlg('dlgSwitch');
+  }
+
+  /* ===== 批量添加解析（原型演示：真实解析逻辑） ===== */
+  const existingIds = ['zhang.wei01', 'li.na02', 'wang.qiang03', 'chen.jing04', 'liu.yang05', 'zhao.lei06'];
+  function parseBatch() {
+    const lines = document.getElementById('batchInput').value.split(/\r?\n/);
+    const seen = new Set(); const ok = [], dup = [], bad = [];
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) continue;
+      let id = t, name = '';
+      const byComma = t.split(/[,，\t]/).map(s => s.trim()).filter(Boolean);
+      if (byComma.length > 1) { id = byComma[0]; name = byComma[1]; }
+      else if (/\s/.test(t)) { const p = t.split(/\s+/); id = p[0]; name = p.slice(1).join(' '); }
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(id)) { bad.push(t); continue; }
+      const key = id.toLowerCase();
+      if (seen.has(key) || existingIds.some(e => e.toLowerCase() === key)) { dup.push(id); continue; }
+      seen.add(key);
+      ok.push(name ? id + '（' + name + '）' : id);
+    }
+    document.getElementById('batchPreview').style.display = 'block';
+    document.getElementById('batchSummary').innerHTML =
+      '解析结果：<b style="color:#67c23a;">可添加 ' + ok.length + ' 条</b> · 重复跳过 ' + dup.length + ' 条 · 格式无效 ' + bad.length + ' 条';
+    document.getElementById('batchOkList').innerHTML = ok.length ? ok.join('<br>') : '无可添加项';
+    const dupEl = document.getElementById('batchDupList');
+    if (dup.length) { dupEl.style.display = 'block'; dupEl.innerHTML = '重复（已存在或粘贴内容自身重复）：' + dup.join('、'); } else dupEl.style.display = 'none';
+    const badEl = document.getElementById('batchBadList');
+    if (bad.length) { badEl.style.display = 'block'; badEl.innerHTML = '格式无效（企微ID仅允许字母/数字/._-，≤64字符）：<br>' + bad.join('<br>'); } else badEl.style.display = 'none';
+    const commit = document.getElementById('btnCommit');
+    commit.style.display = ok.length ? 'inline-block' : 'none';
+    commit.textContent = '确认添加 ' + ok.length + ' 条';
+  }
+</script>
+</body>
+</html>

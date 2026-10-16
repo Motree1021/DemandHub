@@ -2,6 +2,8 @@
 
 角色口径（P4 对齐蓝本）：受理、打回、关闭、分派 = MANAGER；改型 = EXECUTIVE；领取 = HANDLER。
 并发领取用数据库行锁实现（无 Redis，既定降级口径）。
+类型权限（2026-10-16 拍板）：列表类按 user.type_scope 过滤，动作类过 assert_type_allowed；
+ADMIN 直通，REPORTER 不涉及（见 role_service.type_scope_condition）。
 """
 
 from sqlalchemy import case, func, select
@@ -10,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BizError, ErrorCode
 from app.core.statemachine import engine
 from app.db.models import Assignment, Demand, DemandRelation, User, now
+from app.services import role_service
 from app.standards.loader import get as get_standard
 
 URGENCY_RANK = case(
@@ -19,11 +22,19 @@ URGENCY_RANK = case(
 )
 
 
+def _scope_filters(user: User, filters: list) -> list:
+    """列表统一叠加类型权限条件：ADMIN → 原样；有权限 → IN；无权限 → 恒假查不到。"""
+    cond = role_service.type_scope_condition(user)
+    if cond is not None:
+        filters.append(cond)
+    return filters
+
+
 async def list_queue(
-    db: AsyncSession, *, urgency: str | None, type_code: str | None, page: int, size: int,
+    db: AsyncSession, user: User, *, urgency: str | None, type_code: str | None, page: int, size: int,
 ) -> tuple[list[Demand], int]:
     """受理队列：SUBMITTED 待受理，先提交先受理（FIFO）。"""
-    filters = [Demand.status == "SUBMITTED"]
+    filters = _scope_filters(user, [Demand.status == "SUBMITTED"])
     if urgency:
         filters.append(Demand.urgency == urgency)
     if type_code:
@@ -38,10 +49,10 @@ async def list_queue(
 
 
 async def list_pool(
-    db: AsyncSession, *, urgency: str | None, page: int, size: int,
+    db: AsyncSession, user: User, *, urgency: str | None, page: int, size: int,
 ) -> tuple[list[Demand], int]:
     """处理池：TRIAGE 已受理未认领，特急>紧急>普通，同级先提交优先。"""
-    filters = [Demand.status == "TRIAGE"]
+    filters = _scope_filters(user, [Demand.status == "TRIAGE"])
     if urgency:
         filters.append(Demand.urgency == urgency)
     total = (await db.execute(select(func.count(Demand.id)).where(*filters))).scalar_one()
@@ -53,10 +64,13 @@ async def list_pool(
     return list(rows), total
 
 
-async def counts(db: AsyncSession) -> dict[str, int]:
-    """队列/池计数（工作台徽标）。"""
-    queue = (await db.execute(select(func.count(Demand.id)).where(Demand.status == "SUBMITTED"))).scalar_one()
-    pool = (await db.execute(select(func.count(Demand.id)).where(Demand.status == "TRIAGE"))).scalar_one()
+async def counts(db: AsyncSession, user: User) -> dict[str, int]:
+    """队列/池计数（工作台徽标）：与列表同口径叠加类型权限。"""
+    cond = role_service.type_scope_condition(user)
+    queue_filters = [Demand.status == "SUBMITTED"] + ([cond] if cond is not None else [])
+    pool_filters = [Demand.status == "TRIAGE"] + ([cond] if cond is not None else [])
+    queue = (await db.execute(select(func.count(Demand.id)).where(*queue_filters))).scalar_one()
+    pool = (await db.execute(select(func.count(Demand.id)).where(*pool_filters))).scalar_one()
     return {"queue": queue, "pool": pool}
 
 
@@ -64,7 +78,7 @@ async def list_mine(
     db: AsyncSession, user: User, *, status: str | None, page: int, size: int,
 ) -> tuple[list[Demand], int]:
     """我的处理单：assignee_id=本人，按更新时间倒序。"""
-    filters = [Demand.assignee_id == user.id]
+    filters = _scope_filters(user, [Demand.assignee_id == user.id])
     if status:
         filters.append(Demand.status == status)
     else:
@@ -87,7 +101,7 @@ async def list_all(
     from app.core.deps import is_admin
     from app.services.flow_service import FLOW_STATUSES
 
-    filters = []
+    filters = _scope_filters(user, [])
     if not is_admin(user):
         filters.append(Demand.status.in_(sorted(FLOW_STATUSES)))
     if status:
@@ -113,7 +127,8 @@ async def _get(db: AsyncSession, demand_id: int) -> Demand:
 
 
 async def accept(db: AsyncSession, user: User, demand_id: int, comment: str | None) -> Demand:
-    await _get(db, demand_id)
+    demand = await _get(db, demand_id)
+    role_service.assert_type_allowed(user, demand.demand_type_code)
     await engine.transition(db, demand_id, "ACCEPT", user, comment=comment)
     return await _get(db, demand_id)
 
@@ -123,6 +138,8 @@ async def close(
 ) -> Demand:
     if not reason or not reason.strip():
         raise BizError(ErrorCode.PARAM_INVALID, "关闭原因必填")
+    demand = await _get(db, demand_id)
+    role_service.assert_type_allowed(user, demand.demand_type_code)
     if duplicate_of_id is not None:
         await _get(db, duplicate_of_id)
     await engine.transition(
@@ -139,15 +156,19 @@ async def close(
 async def assign(
     db: AsyncSession, user: User, demand_id: int, assignee_id: int, comment: str | None,
 ) -> Demand:
-    """经理分派：TRIAGE → ANALYZING，指定处理人（须为 ACTIVE 且有效角色含 HANDLER/ADMIN）。"""
-    from app.services import role_service
+    """经理分派：TRIAGE → ANALYZING，指定处理人（须为 ACTIVE 且有效角色含 HANDLER/ADMIN）。
 
+    类型权限双校验：经理本人对该类型有权限，且被分派处理人覆盖该类型（ADMIN 均直通）。
+    """
+    demand = await _get(db, demand_id)
+    role_service.assert_type_allowed(user, demand.demand_type_code)
     assignee = await db.get(User, assignee_id)
     if assignee is None or assignee.status != "ACTIVE":
         raise BizError(ErrorCode.USER_NOT_FOUND)
     assignee_roles = await role_service.effective_roles(db, assignee)
     if "HANDLER" not in assignee_roles and "ADMIN" not in assignee_roles:
         raise BizError(ErrorCode.BIZ_ERROR, "被分派人不是处理人")
+    role_service.assert_type_allowed(assignee, demand.demand_type_code)
     await engine.transition(
         db, demand_id, "ASSIGN", user,
         comment=comment, field_update={"assignee_id": assignee_id},
@@ -171,6 +192,7 @@ async def claim(db: AsyncSession, user: User, demand_id: int) -> Demand:
     )).scalar_one_or_none()
     if demand is None:
         raise BizError(ErrorCode.DEMAND_NOT_FOUND)
+    role_service.assert_type_allowed(user, demand.demand_type_code)
     if demand.assignee_id is not None:
         raise BizError(ErrorCode.DEMAND_ALREADY_CLAIMED)
     if demand.status != "TRIAGE":
@@ -190,11 +212,16 @@ async def claim(db: AsyncSession, user: User, demand_id: int) -> Demand:
 async def change_type(
     db: AsyncSession, user: User, demand_id: int, new_type_code: str, comment: str | None,
 ) -> Demand:
-    """类型修正：主状态不变；subtype_code 置空重收集（蓝本口径）。"""
+    """类型修正：主状态不变；subtype_code 置空重收集（蓝本口径）。
+
+    类型权限：原类型与新类型均须在当前用户权限范围内（改完越权单会立即对自己不可见）。
+    """
     if not new_type_code:
         raise BizError(ErrorCode.PARAM_INVALID, "新需求类型必填")
     get_standard(new_type_code)  # 非法类型抛 DEMAND_TYPE_INVALID
     demand = await _get(db, demand_id)
+    role_service.assert_type_allowed(user, demand.demand_type_code)
+    role_service.assert_type_allowed(user, new_type_code)
     if demand.demand_type_code == new_type_code:
         raise BizError(ErrorCode.BIZ_ERROR, "新类型与原类型相同")
     # P5 组织回填（蓝本口径）：类型修正 → 承接组织随新类型默认组织重路由

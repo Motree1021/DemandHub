@@ -66,17 +66,16 @@ class Settings(BaseSettings):
         parse_database_url(self.demandhub_database_url)
         if self.api_root_path != "/demandhub-api":
             raise ValueError("公开路径必须为 /demandhub-api")
-        if self.channel_entry_auth_mode == "trusted_parameters":
-            if self.app_env != "test":
-                raise ValueError("参数联调认证仅允许在测试环境启用")
-            if self.auth_dev_login:
-                raise ValueError("参数联调认证禁止同时启用 dev-login")
+        # 明文直登为创金零售正式对接方式（2026-10 双方协商），全环境可用；dev-login 后门与之互斥
+        if self.channel_entry_auth_mode == "trusted_parameters" and self.auth_dev_login:
+            raise ValueError("参数联调认证禁止同时启用 dev-login")
         if self.auth_test_login and self.app_env != "test":
             raise ValueError("测试登录仅允许在测试环境启用")
         if self.app_env == "prod":
             if self.auth_dev_login:
                 raise ValueError("生产环境禁止 dev-login")
-            if not all((self.channel_ls_base_url, self.channel_ls_app_key, self.channel_ls_app_secret)):
+            # 仅 ticket 回源模式才需要创金零售 SSO 配置；明文直登不调用回源接口
+            if self.channel_entry_auth_mode == "ticket" and not all((self.channel_ls_base_url, self.channel_ls_app_key, self.channel_ls_app_secret)):
                 raise ValueError("生产环境缺少创金零售 SSO 配置")
         return self
 

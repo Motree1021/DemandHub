@@ -52,10 +52,14 @@ PLAN_DATE = date(2026, 11, 1)
 
 # ---- 基座工具 ----
 
-async def make_user(factory, name, wecom_userid, role="HANDLER"):
+async def make_user(factory, name, wecom_userid, role="HANDLER", type_scope=None):
+    # 业务角色默认配全类型权限（贴合生产「必配」约束），按需用 type_scope 覆盖
+    if type_scope is None and role in ("EXECUTIVE", "MANAGER", "HANDLER"):
+        type_scope = "TECH,MATL,TRAIN"
     async with factory() as db:
         async with db.begin():
-            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role)
+            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role,
+                        type_scope=type_scope)
             db.add(user)
             await db.flush()
             db.expunge(user)
@@ -715,9 +719,9 @@ async def test_triage_lists_counts_assign_close_change_type(session_factory, use
     did1 = await make_submitted(session_factory, user)
     did2 = await make_submitted(session_factory, user)
     async with session_factory() as db:
-        counts = await triage_service.counts(db)
+        counts = await triage_service.counts(db, admin)
         assert counts == {"queue": 2, "pool": 0}
-        rows, total = await triage_service.list_queue(db, urgency=None, type_code=None, page=1, size=10)
+        rows, total = await triage_service.list_queue(db, admin, urgency=None, type_code=None, page=1, size=10)
         assert total == 2 and [r.id for r in rows] == [did1, did2]  # FIFO
     # 受理一条后改型（主状态不变）
     async with session_factory() as db:
@@ -748,9 +752,9 @@ async def test_triage_lists_counts_assign_close_change_type(session_factory, use
             demand2 = await db.get(Demand, did2)
             demand2.urgency = "CRITICAL"
     async with session_factory() as db:
-        counts = await triage_service.counts(db)
+        counts = await triage_service.counts(db, admin)
         assert counts == {"queue": 0, "pool": 2}
-        pool, _ = await triage_service.list_pool(db, urgency=None, page=1, size=10)
+        pool, _ = await triage_service.list_pool(db, admin, urgency=None, page=1, size=10)
         assert [r.id for r in pool] == [did2, did1]
     # 分派校验：停用用户 / 非处理人角色
     stranger = await make_user(session_factory, "观察员", "p2-viewer", role="USER")
@@ -878,7 +882,14 @@ async def test_api_role_gates(client, session_factory, user, admin):
     assert (await client.post(f"{BASE}/triage/{did}/accept", headers=user_headers, json={})).json()["code"] == 403
     accepted = await client.post(f"{BASE}/triage/{did}/accept", headers=admin_headers, json={})
     assert accepted.json()["code"] == 0 and accepted.json()["data"]["status"] == "TRIAGE"
-    # 领取 HANDLER 以上可执行（提报人角色同为 HANDLER，拍板口径）
+    # 提报人（REPORTER，渠道新用户默认角色）无领取权限；提升为处理人（HANDLER）并配类型权限后可领取
+    rejected = await client.post(f"{BASE}/triage/{did}/claim", headers=user_headers)
+    assert rejected.json()["code"] == 403
+    async with session_factory() as db:
+        async with db.begin():
+            promoted = await db.get(User, user.id)
+            promoted.role = "HANDLER"
+            promoted.type_scope = "TECH,MATL,TRAIN"
     claimed = await client.post(f"{BASE}/triage/{did}/claim", headers=user_headers)
     assert claimed.json()["code"] == 0 and claimed.json()["data"]["status"] == "ANALYZING"
     assert claimed.json()["data"]["assigneeName"] == "测试用户"

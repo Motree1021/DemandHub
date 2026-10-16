@@ -370,13 +370,13 @@ const assignees = ref<AssigneeOption[]>([])
 const assigneeId = ref<number>()
 
 async function openAssign() {
-  if (!assignees.value.length) {
-    try {
-      assignees.value = await triageApi.assignees()
-    } catch (e) {
-      ElMessage.error(errorMessage(e, '加载处理人失败'))
-      return
-    }
+  if (!demand.value) return
+  // 候选人按该需求类型过滤（类型权限），不可跨单缓存
+  try {
+    assignees.value = await triageApi.assignees(demand.value.demandTypeCode ?? '')
+  } catch (e) {
+    ElMessage.error(errorMessage(e, '加载处理人失败'))
+    return
   }
   assigneeId.value = undefined
   assignVisible.value = true

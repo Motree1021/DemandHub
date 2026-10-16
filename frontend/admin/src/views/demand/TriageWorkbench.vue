@@ -304,13 +304,12 @@ const assignRules: FormRules = {
 async function openAssign(row: DemandRow) {
   target.value = row
   Object.assign(assignForm, { assigneeId: undefined, comment: '' })
-  if (!assignees.value.length) {
-    try {
-      assignees.value = await triageApi.assignees()
-    } catch (e) {
-      ElMessage.error(errorMessage(e, '处理人列表加载失败'))
-      return
-    }
+  // 候选人按该需求类型过滤（类型权限），不可跨单缓存
+  try {
+    assignees.value = await triageApi.assignees(row.demandTypeCode ?? '')
+  } catch (e) {
+    ElMessage.error(errorMessage(e, '处理人列表加载失败'))
+    return
   }
   assignVisible.value = true
 }

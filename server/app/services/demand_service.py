@@ -378,6 +378,9 @@ async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
     demand = (await db.execute(select(Demand).where(Demand.id == demand_id).with_for_update())).scalar_one_or_none()
     if demand is None:
         raise BizError(ErrorCode.DEMAND_NOT_FOUND)
+    # 类型权限（2026-10-16 拍板）：经理打回也受 type_scope 约束（ADMIN 直通）
+    from app.services import role_service
+    role_service.assert_type_allowed(admin_user, demand.demand_type_code)
     if demand.status != "SUBMITTED":
         raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "仅已提交的需求可打回")
     reason_text = reason.strip()

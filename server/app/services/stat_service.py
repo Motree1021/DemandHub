@@ -65,26 +65,28 @@ def _inflight_cond():
     return Demand.status.notin_(INFLIGHT_EXCLUDE)
 
 
-async def _cycle_hours(db: AsyncSession, start, end) -> float | None:
+async def _cycle_hours(db: AsyncSession, start, end, cond=None) -> float | None:
     """范围内 DONE 单的 submitted→closed 平均小时（蓝本 avgCycleHours，保留 1 位）。"""
     minutes = func.avg(func.timestampdiff(text("MINUTE"), Demand.submitted_at, Demand.closed_at))
-    value = (await db.execute(
-        select(minutes).where(Demand.status == "DONE",
-                              Demand.closed_at.is_not(None), Demand.submitted_at.is_not(None),
-                              Demand.closed_at >= start, Demand.closed_at < end)
-    )).scalar_one()
+    filters = [Demand.status == "DONE",
+               Demand.closed_at.is_not(None), Demand.submitted_at.is_not(None),
+               Demand.closed_at >= start, Demand.closed_at < end]
+    if cond is not None:
+        filters.append(cond)
+    value = (await db.execute(select(minutes).where(*filters))).scalar_one()
     return None if value is None else round(float(value) / 60, 1)
 
 
-async def _sla_health(db: AsyncSession) -> dict[str, int]:
+async def _sla_health(db: AsyncSession, cond=None) -> dict[str, int]:
     """在途未挂起单的 SLA 健康度 {normal, warn, over}（与 sla_service 计时口径同源）。"""
     configs = (await db.execute(
         select(SlaConfig).where(SlaConfig.enabled.is_(True))
     )).scalars().all()
     config_map = {(c.demand_type_code, c.status): c for c in configs}
-    demands = (await db.execute(
-        select(Demand).where(_inflight_cond(), Demand.hold_snapshot_status.is_(None))
-    )).scalars().all()
+    filters = [_inflight_cond(), Demand.hold_snapshot_status.is_(None)]
+    if cond is not None:
+        filters.append(cond)
+    demands = (await db.execute(select(Demand).where(*filters))).scalars().all()
     health = {"normal": 0, "warn": 0, "over": 0}
     if not demands:
         return health
@@ -115,20 +117,30 @@ async def _sla_health(db: AsyncSession) -> dict[str, int]:
     return health
 
 
-async def manager_board(db: AsyncSession, range_kind: str = "month",
+async def manager_board(db: AsyncSession, user: User, range_kind: str = "month",
                         from_date: date | None = None, to_date: date | None = None) -> dict:
-    """经理/管理者看板（蓝本 ManagerBoardVO）：kpi + 12 周趋势 + 类型/渠道分布 + 部门在途 + SLA。"""
+    """经理/管理者看板（蓝本 ManagerBoardVO）：kpi + 12 周趋势 + 类型/渠道分布 + 部门在途 + SLA。
+
+    类型权限（2026-10-16 拍板）：全部指标只统计用户 type_scope 内类型（ADMIN 不过滤）。
+    """
+    from app.services import role_service
+
+    cond = role_service.type_scope_condition(user)
+
+    def f(filters: list) -> list:
+        return filters + ([cond] if cond is not None else [])
+
     start, end = resolve_range(range_kind, from_date, to_date)
     month_start = now().date().replace(day=1)
 
-    month_new = (await db.execute(select(func.count(Demand.id)).where(
-        Demand.submitted_at.is_not(None), Demand.submitted_at >= month_start))).scalar_one()
-    inflight = (await db.execute(select(func.count(Demand.id)).where(_inflight_cond()))).scalar_one()
-    done = (await db.execute(select(func.count(Demand.id)).where(
-        Demand.status == "DONE", Demand.closed_at >= start, Demand.closed_at < end))).scalar_one()
-    sla_health = await _sla_health(db)
+    month_new = (await db.execute(select(func.count(Demand.id)).where(*f([
+        Demand.submitted_at.is_not(None), Demand.submitted_at >= month_start])))).scalar_one()
+    inflight = (await db.execute(select(func.count(Demand.id)).where(*f([_inflight_cond()])))).scalar_one()
+    done = (await db.execute(select(func.count(Demand.id)).where(*f([
+        Demand.status == "DONE", Demand.closed_at >= start, Demand.closed_at < end])))).scalar_one()
+    sla_health = await _sla_health(db, cond)
     kpi = {"monthNew": month_new, "inflight": inflight, "done": done,
-           "slaOver": sla_health["over"], "avgCycleHours": await _cycle_hours(db, start, end)}
+           "slaOver": sla_health["over"], "avgCycleHours": await _cycle_hours(db, start, end, cond)}
 
     # 近 12 周趋势（周一起算）：newCnt=submitted_at 落桶、doneCnt=DONE 且 closed_at 落桶
     monday = now().date() - timedelta(days=now().date().weekday())
@@ -136,16 +148,16 @@ async def manager_board(db: AsyncSession, range_kind: str = "month",
     for offset in range(11, -1, -1):
         week_start = monday - timedelta(weeks=offset)
         week_end = week_start + timedelta(days=7)
-        new_cnt = (await db.execute(select(func.count(Demand.id)).where(
-            Demand.submitted_at >= week_start, Demand.submitted_at < week_end))).scalar_one()
-        done_cnt = (await db.execute(select(func.count(Demand.id)).where(
+        new_cnt = (await db.execute(select(func.count(Demand.id)).where(*f([
+            Demand.submitted_at >= week_start, Demand.submitted_at < week_end])))).scalar_one()
+        done_cnt = (await db.execute(select(func.count(Demand.id)).where(*f([
             Demand.status == "DONE",
-            Demand.closed_at >= week_start, Demand.closed_at < week_end))).scalar_one()
+            Demand.closed_at >= week_start, Demand.closed_at < week_end])))).scalar_one()
         trend.append({"weekStart": week_start, "newCnt": new_cnt, "doneCnt": done_cnt})
 
     type_rows = (await db.execute(
         select(Demand.demand_type_code, func.count(Demand.id))
-        .where(Demand.submitted_at >= start, Demand.submitted_at < end)
+        .where(*f([Demand.submitted_at >= start, Demand.submitted_at < end]))
         .group_by(Demand.demand_type_code).order_by(func.count(Demand.id).desc())
     )).all()
     type_distribution = [{"typeCode": code or "未知", "cnt": cnt} for code, cnt in type_rows]
@@ -153,7 +165,7 @@ async def manager_board(db: AsyncSession, range_kind: str = "month",
     channel_col = func.coalesce(Demand.channel, "未知")
     channel_rows = (await db.execute(
         select(channel_col, func.count(Demand.id))
-        .where(Demand.submitted_at >= start, Demand.submitted_at < end)
+        .where(*f([Demand.submitted_at >= start, Demand.submitted_at < end]))
         .group_by(channel_col).order_by(func.count(Demand.id).desc())
     )).all()
     channel_distribution = [{"channel": channel, "cnt": cnt} for channel, cnt in channel_rows]
@@ -162,7 +174,7 @@ async def manager_board(db: AsyncSession, range_kind: str = "month",
     dept_col = func.coalesce(Demand.submitter_dept, "未填写")
     dept_rows = (await db.execute(
         select(dept_col, func.count(Demand.id))
-        .where(_inflight_cond())
+        .where(*f([_inflight_cond()]))
         .group_by(dept_col).order_by(func.count(Demand.id).desc()).limit(10)
     )).all()
     dept_backlog = [{"dept": dept, "cnt": cnt} for dept, cnt in dept_rows]
@@ -172,33 +184,47 @@ async def manager_board(db: AsyncSession, range_kind: str = "month",
             "slaHealth": sla_health}
 
 
-async def org_board(db: AsyncSession, range_kind: str = "month",
+async def org_board(db: AsyncSession, user: User, range_kind: str = "month",
                     from_date: date | None = None, to_date: date | None = None) -> dict:
-    """组织看板（蓝本 OrgBoardVO）：受理/处理池/处理中/本周完成/人均在途/成员工作量。"""
+    """组织看板（蓝本 OrgBoardVO）：受理/处理池/处理中/本周完成/人均在途/成员工作量。
+
+    类型权限（2026-10-16 拍板）：需求类指标按 type_scope 过滤；工时联 demand 同口径过滤。
+    """
+    from app.services import role_service
+
+    cond = role_service.type_scope_condition(user)
+
+    def f(filters: list) -> list:
+        return filters + ([cond] if cond is not None else [])
+
     start, end = resolve_range(range_kind, from_date, to_date)
     monday = now().date() - timedelta(days=now().date().weekday())
 
-    pending_accept = (await db.execute(select(func.count(Demand.id)).where(
-        Demand.status == "SUBMITTED"))).scalar_one()
-    pool = (await db.execute(select(func.count(Demand.id)).where(
-        Demand.status == "TRIAGE"))).scalar_one()
-    processing = (await db.execute(select(func.count(Demand.id)).where(
-        Demand.status.in_(PROCESSING_STATUSES)))).scalar_one()
-    week_done = (await db.execute(select(func.count(Demand.id)).where(
-        Demand.status == "DONE", Demand.closed_at >= monday))).scalar_one()
+    pending_accept = (await db.execute(select(func.count(Demand.id)).where(*f([
+        Demand.status == "SUBMITTED"])))).scalar_one()
+    pool = (await db.execute(select(func.count(Demand.id)).where(*f([
+        Demand.status == "TRIAGE"])))).scalar_one()
+    processing = (await db.execute(select(func.count(Demand.id)).where(*f([
+        Demand.status.in_(PROCESSING_STATUSES)])))).scalar_one()
+    week_done = (await db.execute(select(func.count(Demand.id)).where(*f([
+        Demand.status == "DONE", Demand.closed_at >= monday])))).scalar_one()
 
     inflight_rows = (await db.execute(
         select(Demand.assignee_id, func.count(Demand.id))
-        .where(_inflight_cond(), Demand.assignee_id.is_not(None))
+        .where(*f([_inflight_cond(), Demand.assignee_id.is_not(None)]))
         .group_by(Demand.assignee_id)
     )).all()
     inflight_map = dict(inflight_rows)
     avg_inflight = (round(sum(inflight_map.values()) / len(inflight_map), 1)
                     if inflight_map else 0.0)
 
+    effort_filters = [EffortLog.work_date >= start, EffortLog.work_date < end]
+    if cond is not None:
+        effort_filters.append(cond)
     effort_rows = (await db.execute(
         select(EffortLog.user_id, func.coalesce(func.sum(EffortLog.hours), 0))
-        .where(EffortLog.work_date >= start, EffortLog.work_date < end)
+        .join(Demand, EffortLog.demand_id == Demand.id)
+        .where(*effort_filters)
         .group_by(EffortLog.user_id)
     )).all()
     effort_map = {user_id: float(hours) for user_id, hours in effort_rows}

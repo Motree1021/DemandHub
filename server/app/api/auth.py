@@ -10,7 +10,7 @@ from app.core.errors import BizError, ErrorCode
 from app.core.result import ApiModel, ok
 from app.core.security import issue_token
 from app.db.models import User
-from app.services import auth_service
+from app.services import auth_service, role_service, whitelist_service
 from app.services.user_service import login_existing, upsert_from_sso
 from app.sso.chuangjin_ls import ChuangjinLsSsoClient
 from app.sso.schemas import ChannelSsoConfig, SsoProfile
@@ -29,16 +29,21 @@ def get_sso_client():
         timeout_ms=settings.channel_ls_timeout_ms))
 
 
-def user_info(user: User) -> dict:
+def user_info(user: User, roles: frozenset[str] | set[str] | None = None) -> dict:
+    """登录态用户出参；roles=有效角色（静态 ∪ 授权），按 ROLE_CODES 定义顺序排序，缺省仅静态角色。"""
+    effective = roles if roles is not None else {user.role}
+    ordered = [code for code in role_service.ROLE_CODES if code in effective]
     return {"id": user.id, "userId": user.wecom_userid, "name": user.name,
             "deptName": user.dept_name, "deptPath": user.dept_path,
             "channel": user.channel, "isAdmin": is_admin(user),
-            "role": user.role, "mustChangePwd": user.must_change_pwd}
+            "role": user.role, "roles": ordered, "mustChangePwd": user.must_change_pwd}
 
 
-def login_response(user: User):
+async def login_response(db: AsyncSession, user: User):
     token, expires_in = issue_token(user)
-    return ok({"accessToken": token, "tokenType": "Bearer", "expiresIn": expires_in, "user": user_info(user)})
+    roles = await role_service.effective_roles(db, user)
+    return ok({"accessToken": token, "tokenType": "Bearer", "expiresIn": expires_in,
+               "user": user_info(user, roles)})
 
 
 class ChannelParameters(BaseModel):
@@ -76,8 +81,9 @@ async def channel_parameters(payload: ChannelParameters, db: AsyncSession = Depe
     profile = SsoProfile(user_id=payload.userid, name=payload.user_name,
                          dept_name=payload.department)
     async with db.begin():
+        await whitelist_service.assert_allowed(db, "CHUANGJIN_LS", profile.user_id)
         user = await upsert_from_sso(db, profile)
-    return login_response(user)
+    return await login_response(db, user)
 
 
 @router.get("/channel-sso")
@@ -87,8 +93,15 @@ async def channel_sso(channel: str = Query(...), ticket: str = Query(..., max_le
         raise BizError(ErrorCode.CHANNEL_DISABLED)
     profile = await get_sso_client().verify(ticket)
     async with db.begin():
+        await whitelist_service.assert_allowed(db, "CHUANGJIN_LS", profile.user_id)
         user = await upsert_from_sso(db, profile)
-    return login_response(user)
+    return await login_response(db, user)
+
+
+@router.get("/whitelist-contact")
+async def whitelist_contact(db: AsyncSession = Depends(get_db)):
+    """拦截页联系引导（公开接口：被拦用户无登录态，拿不到鉴权接口）。"""
+    return ok({"contact": await whitelist_service.get_contact(db, "CHUANGJIN_LS")})
 
 
 class DevLogin(ApiModel):
@@ -100,7 +113,7 @@ class DevLogin(ApiModel):
 async def dev_login(payload: DevLogin, db: AsyncSession = Depends(get_db)):
     async with db.begin():
         user = await upsert_from_sso(db, SsoProfile(user_id=payload.wecom_userid, name=payload.name))
-    return login_response(user)
+    return await login_response(db, user)
 
 
 class TestLogin(ApiModel):
@@ -120,12 +133,12 @@ class TestLogin(ApiModel):
 async def test_login(payload: TestLogin, db: AsyncSession = Depends(get_db)):
     async with db.begin():
         user = await login_existing(db, payload.wecom_userid, payload.name)
-    return login_response(user)
+    return await login_response(db, user)
 
 
 @router.get("/me")
-async def me(user: User = Depends(get_current_user)):
-    return ok(user_info(user))
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return ok(user_info(user, await role_service.effective_roles(db, user)))
 
 
 # ---------- P1 账密登录（仅管理后台使用，与 H5 渠道 SSO 完全独立） ----------
@@ -156,9 +169,10 @@ async def account_login(payload: AccountLogin, db: AsyncSession = Depends(get_db
     if error is not None:
         raise error
     token, expires_in = issue_token(user)
+    roles = await role_service.effective_roles(db, user)
     return ok({"accessToken": token, "refreshToken": refresh_token, "tokenType": "Bearer",
                "expiresIn": expires_in, "mustChangePwd": user.must_change_pwd,
-               "user": user_info(user)})
+               "user": user_info(user, roles)})
 
 
 class ChangePassword(ApiModel):

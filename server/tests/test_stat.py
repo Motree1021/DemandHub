@@ -30,10 +30,14 @@ from app.services import stat_service
 
 # ---- 基座工具 ----
 
-async def make_user(factory, name, wecom_userid, role="HANDLER"):
+async def make_user(factory, name, wecom_userid, role="HANDLER", type_scope=None):
+    # 业务角色默认配全类型权限（贴合生产「必配」约束），按需用 type_scope 覆盖
+    if type_scope is None and role in ("EXECUTIVE", "MANAGER", "HANDLER"):
+        type_scope = "TECH,MATL,TRAIN"
     async with factory() as db:
         async with db.begin():
-            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role)
+            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role,
+                        type_scope=type_scope)
             db.add(user)
             await db.flush()
             db.expunge(user)
@@ -62,9 +66,14 @@ async def insert_demand(factory, submitter, minutes_ago=0, **overrides):
             return demand.id
 
 
+def _board_admin():
+    """看板服务仅按 user 求类型过滤条件（不查库）；ADMIN 直通不过滤，保持旧断言口径。"""
+    return User(name="看板管理员", wecom_userid="p4t-board-admin", role="ADMIN")
+
+
 async def board(factory, *args, **kwargs):
     async with factory() as db:
-        return await stat_service.manager_board(db, *args, **kwargs)
+        return await stat_service.manager_board(db, _board_admin(), *args, **kwargs)
 
 
 # ---- 1. 时间范围 ----
@@ -199,7 +208,7 @@ async def test_org_board_counts(session_factory, submitter):
                         status="DONE", closed_at=now() - timedelta(days=10))  # 非本周
     data = None
     async with session_factory() as db:
-        data = await stat_service.org_board(db)
+        data = await stat_service.org_board(db, _board_admin())
     assert data["pendingAccept"] == 2
     assert data["pool"] == 1
     assert data["processing"] == 2
@@ -221,7 +230,7 @@ async def test_member_workload_and_avg_inflight(session_factory, submitter):
             db.add(EffortLog(demand_id=d1, user_id=h2.id, hours=2.0,
                              work_date=now().date() - timedelta(days=40)))  # 超出 month 范围
     async with session_factory() as db:
-        data = await stat_service.org_board(db, "month")
+        data = await stat_service.org_board(db, _board_admin(), "month")
     assert data["avgInflightPerHandler"] == 1.5  # 3 在途 / 2 处理人
     workload = {row["userName"]: row for row in data["memberWorkload"]}
     assert workload["处理一"]["inflightCnt"] == 2 and workload["处理一"]["effortHours"] == 3.5

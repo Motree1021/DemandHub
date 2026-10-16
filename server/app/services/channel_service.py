@@ -29,6 +29,8 @@ def serialize_channel(row: DemandChannel) -> dict:
         "appId": row.app_id,
         "callbackEnabled": bool(row.callback_enabled),
         "status": row.status,
+        "whitelistEnabled": bool(row.whitelist_enabled),
+        "whitelistContact": row.whitelist_contact,
         "configJson": _mask_config(row.config_json),
         "createdAt": row.created_at.isoformat(sep=" ", timespec="seconds") if row.created_at else None,
         "updatedAt": row.updated_at.isoformat(sep=" ", timespec="seconds") if row.updated_at else None,

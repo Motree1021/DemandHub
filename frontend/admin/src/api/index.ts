@@ -1,12 +1,17 @@
 import { del, get, patch, post, put } from './request'
 
-/** P4 四角色：管理员/管理者（改型）/经理（受理族）/处理人 */
-export type RoleCode = 'ADMIN' | 'EXECUTIVE' | 'MANAGER' | 'HANDLER'
+/** P4 五角色：管理员/管理者（改型）/经理（受理族）/处理人/提报人（渠道默认，最小权限） */
+export type RoleCode = 'ADMIN' | 'EXECUTIVE' | 'MANAGER' | 'HANDLER' | 'REPORTER'
+
+/** 需求类型权限（2026-10-16 拍板，按人统一配）：仅业务角色（管理者/经理/处理人）需要配；
+ * 管理员/提报人不受限；空 = 无权限（看不到也操作不了该类型需求） */
+export type TypeCode = 'TECH' | 'MATL' | 'TRAIN'
 
 export interface LoginUser {
   id: number
   name: string
   role: RoleCode
+  roles: RoleCode[]
   isAdmin: boolean
   mustChangePwd: boolean
 }
@@ -34,6 +39,8 @@ export interface UserRow {
   name: string
   wecomUserid: string
   role: RoleCode
+  roles: RoleCode[]
+  typeScope: TypeCode[] | null
   status: 'ACTIVE' | 'DISABLED'
   channel: string
   phone: string | null
@@ -47,9 +54,10 @@ export interface UserListResult { list: UserRow[]; total: number; page: number; 
 export const usersApi = {
   list: (params: { page: number; size: number; keyword?: string; role?: string; status?: string }) =>
     get<UserListResult>('/admin/users', params),
-  create: (data: { loginAccount: string; name: string; initialPassword: string; role: RoleCode }) =>
+  create: (data: { loginAccount: string; name: string; initialPassword: string; role: RoleCode; types?: TypeCode[] }) =>
     post<UserRow>('/admin/users', data),
-  updateRole: (id: number, role: RoleCode) => put<UserRow>(`/admin/users/${id}/role`, { role }),
+  updateRoles: (id: number, roles: RoleCode[], types?: TypeCode[]) =>
+    put<UserRow>(`/admin/users/${id}/roles`, { roles, types }),
   activate: (id: number) => put<UserRow>(`/admin/users/${id}/activate`),
   disable: (id: number) => put<UserRow>(`/admin/users/${id}/disable`),
   resetPassword: (id: number, newPassword: string) =>
@@ -102,7 +110,8 @@ export const triageApi = {
     get<PageResult<DemandRow>>('/triage/mine', params),
   demands: (params: { page: number; size: number; status?: string; urgency?: string; typeCode?: string }) =>
     get<PageResult<DemandRow>>('/triage/demands', params),
-  assignees: () => get<AssigneeOption[]>('/triage/assignees'),
+  // 分派候选人按需求类型过滤（类型权限管控点）：仅返回覆盖该类型的处理人，ADMIN 直通
+  assignees: (typeCode: string) => get<AssigneeOption[]>('/triage/assignees', { typeCode }),
   accept: (id: number, comment?: string) => post<DemandRow>(`/triage/${id}/accept`, { comment }),
   returnDemand: (id: number, reason: string) => post<DemandRow>(`/triage/${id}/return`, { reason }),
   close: (id: number, reason: string, duplicateOfId?: number) =>
@@ -557,6 +566,8 @@ export interface ChannelRow {
   appId: string | null
   callbackEnabled: boolean
   status: 'ACTIVE' | 'DISABLED'
+  whitelistEnabled: boolean
+  whitelistContact: string | null
   configJson: Record<string, unknown> | null
   createdAt: string
   updatedAt: string
@@ -581,6 +592,74 @@ export const channelApi = {
   unmapped: (channelCode?: string) =>
     get<DeptUnmappedRow[]>('/admin/channels/dept-unmapped', channelCode ? { channelCode } : undefined),
   removeUnmapped: (id: number) => del(`/admin/channels/dept-unmapped/${id}`),
+}
+
+// ---- 渠道白名单（仅 ADMIN；控制渠道用户能否进入 H5，全部操作后端落留痕） ----
+
+export interface WhitelistEntry {
+  id: number
+  channelCode: string
+  channelUserId: string
+  displayName: string | null
+  status: 'ENABLED' | 'DISABLED'
+  lastLoginAt: string | null
+  createdByName: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WhitelistListResult {
+  list: WhitelistEntry[]
+  total: number
+  page: number
+  size: number
+  stats: { enabled: number; disabled: number }
+}
+
+export interface WhitelistLogRow {
+  id: number
+  action: 'ADD' | 'ENABLE' | 'DISABLE' | 'REMOVE' | 'SWITCH_ON' | 'SWITCH_OFF' | 'UPDATE_CONTACT'
+  channelCode: string
+  channelUserId: string | null
+  operatorName: string
+  detail: string | null
+  createdAt: string
+}
+
+export interface WhitelistPendingRow {
+  userId: number
+  wecomUserid: string
+  name: string
+  deptName: string | null
+  lastLoginAt: string | null
+  demandCount: number
+}
+
+export interface WhitelistBatchResult {
+  added: number
+  addedIds: string[]
+  duplicated: string[]
+  invalid: string[]
+}
+
+export const whitelistApi = {
+  list: (channelCode: string, params: { page: number; size: number; keyword?: string; status?: string }) =>
+    get<WhitelistListResult>(`/admin/channels/${channelCode}/whitelist`, params),
+  add: (channelCode: string, data: { channelUserId: string; displayName?: string }) =>
+    post<WhitelistEntry>(`/admin/channels/${channelCode}/whitelist`, data),
+  addBatch: (channelCode: string, entries: { channelUserId: string; displayName?: string }[]) =>
+    post<WhitelistBatchResult>(`/admin/channels/${channelCode}/whitelist/batch`, { entries }),
+  updateStatus: (id: number, status: 'ENABLED' | 'DISABLED') =>
+    put<WhitelistEntry>(`/admin/channels/whitelist/${id}/status`, { status }),
+  remove: (id: number) => del(`/admin/channels/whitelist/${id}`),
+  logs: (channelCode: string, params: { page: number; size: number }) =>
+    get<{ list: WhitelistLogRow[]; total: number; page: number; size: number }>(
+      `/admin/channels/${channelCode}/whitelist/logs`, params),
+  pending: (channelCode: string) =>
+    get<WhitelistPendingRow[]>(`/admin/channels/${channelCode}/whitelist/pending`),
+  updateConfig: (channelCode: string, data: { whitelistEnabled?: boolean; whitelistContact?: string }) =>
+    put<{ whitelistEnabled: boolean; whitelistContact: string | null }>(
+      `/admin/channels/${channelCode}/whitelist/config`, data),
 }
 
 // ---- P5 组织管理（仅 ADMIN；物化路径树，移动=换父级） ----

@@ -58,7 +58,7 @@ async def queue(
     user=Depends(require_role("MANAGER", "EXECUTIVE")), db=Depends(get_db),
 ):
     rows, total = await triage_service.list_queue(
-        db, urgency=urgency, type_code=type_code, page=page, size=size)
+        db, user, urgency=urgency, type_code=type_code, page=page, size=size)
     return ok(await _serialize_page(db, rows, total, page, size))
 
 
@@ -68,13 +68,13 @@ async def pool(
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
     user=Depends(workbench), db=Depends(get_db),
 ):
-    rows, total = await triage_service.list_pool(db, urgency=urgency, page=page, size=size)
+    rows, total = await triage_service.list_pool(db, user, urgency=urgency, page=page, size=size)
     return ok(await _serialize_page(db, rows, total, page, size))
 
 
 @router.get("/counts")
 async def counts(user=Depends(workbench), db=Depends(get_db)):
-    return ok(await triage_service.counts(db))
+    return ok(await triage_service.counts(db, user))
 
 
 @router.get("/mine")
@@ -164,13 +164,21 @@ async def change_type(demand_id: int, payload: ChangeTypeBody,
 
 
 # 供分派弹窗选择处理人（ACTIVE 且有效角色含 HANDLER/ADMIN 的用户）
+# 类型权限（2026-10-16 拍板）：typeCode 必传，只出「ADMIN 或类型范围覆盖该需求」的处理人
 @router.get("/assignees")
-async def assignees(user=Depends(manager_only), db=Depends(get_db)):
+async def assignees(typeCode: str = Query(...), user=Depends(manager_only), db=Depends(get_db)):
     from sqlalchemy import select
 
     from app.db.models import User
+    from app.services import role_service
+
     rows = (await db.execute(
         select(User).where(User.status == "ACTIVE", User.role.in_(["HANDLER", "ADMIN"]))
         .order_by(User.id)
     )).scalars().all()
-    return ok([{"id": u.id, "name": u.name, "role": u.role, "department": u.dept_name} for u in rows])
+    candidates = [
+        u for u in rows
+        if role_service.user_type_codes(u) is None or typeCode in role_service.parse_type_scope(u.type_scope)
+    ]
+    return ok([{"id": u.id, "name": u.name, "role": u.role, "department": u.dept_name}
+               for u in candidates])

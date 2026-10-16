@@ -20,7 +20,7 @@ from app.db.models import Demand, DemandTransitionLog, StateMachineConfig, User,
 
 ON_HOLD = "ON_HOLD"
 TERMINAL_STATUSES = {"DONE", "CLOSED"}
-VALID_ROLES = {"ADMIN", "EXECUTIVE", "MANAGER", "HANDLER"}
+VALID_ROLES = {"ADMIN", "EXECUTIVE", "MANAGER", "HANDLER", "REPORTER"}
 
 STATUS_LABELS = {
     "DRAFT": "草稿", "SUBMITTED": "待受理", "NEED_INFO": "待补充", "TRIAGE": "待分派/待领取",
@@ -117,7 +117,7 @@ def parse_rules(raw: str) -> tuple[Rule, ...]:
             raise ValueError(f"{prefix}：目标状态[{to}]非法")
         roles = item.get("roles") or []
         if not isinstance(roles, list) or any(r not in VALID_ROLES for r in roles):
-            raise ValueError(f"{prefix}：角色仅允许 ADMIN/EXECUTIVE/MANAGER/HANDLER")
+            raise ValueError(f"{prefix}：角色仅允许 ADMIN/EXECUTIVE/MANAGER/HANDLER/REPORTER")
         result.append(Rule(from_status, event, to, frozenset(roles), item.get("remark") or ""))
     return tuple(result)
 
@@ -150,7 +150,7 @@ def validate_rules(raw: str) -> list[str]:
             errors.append(f"{prefix}：目标状态[{to}]非法")
         roles = item.get("roles") or []
         if not isinstance(roles, list) or any(r not in VALID_ROLES for r in roles):
-            errors.append(f"{prefix}：角色仅允许 ADMIN/EXECUTIVE/MANAGER/HANDLER")
+            errors.append(f"{prefix}：角色仅允许 ADMIN/EXECUTIVE/MANAGER/HANDLER/REPORTER")
     return errors
 
 

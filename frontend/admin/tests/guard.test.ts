@@ -3,8 +3,10 @@ import { guard } from '@/router'
 import { saveTokens, clearTokens } from '@/api/request'
 
 // 路由守卫纯逻辑：不依赖组件渲染，直接断言跳转决策
-function fakeAuth(over: Partial<{ user: unknown; mustChangePwd: boolean; role: string | null }> = {}) {
-  return { user: null, mustChangePwd: false, role: null, ...over } as never
+function fakeAuth(over: Partial<{ user: unknown; mustChangePwd: boolean; role: string | null; roles: string[] }> = {}) {
+  const base = { user: null, mustChangePwd: false, role: null, ...over }
+  // 与 store getter 同口径：roles 缺省退化为仅主角色
+  return { ...base, roles: over.roles ?? (base.role ? [base.role] : []) } as never
 }
 
 describe('路由守卫', () => {
@@ -44,5 +46,17 @@ describe('路由守卫', () => {
     expect(guard({ path: '/triage', meta: boardMeta }, fakeAuth({ role: 'MANAGER' }))).toBe(true)
     expect(guard({ path: '/notify-templates', meta: { roles: ['ADMIN'] } },
       fakeAuth({ role: 'EXECUTIVE' }))).toEqual({ path: '/' })
+  })
+
+  // 多角色：任一有效角色命中即放行（提报人兼任经理可看板；纯提报人弹回）
+  it('多角色：兼任角色命中放行，纯提报人弹回', () => {
+    saveTokens('a', 'r')
+    const boardMeta = { roles: ['ADMIN', 'EXECUTIVE', 'MANAGER'] }
+    expect(guard({ path: '/board/manager', meta: boardMeta },
+      fakeAuth({ role: 'REPORTER', roles: ['MANAGER', 'REPORTER'] }))).toBe(true)
+    expect(guard({ path: '/board/manager', meta: boardMeta },
+      fakeAuth({ role: 'REPORTER', roles: ['REPORTER'] }))).toEqual({ path: '/' })
+    expect(guard({ path: '/users', meta: { roles: ['ADMIN'] } },
+      fakeAuth({ role: 'REPORTER', roles: ['REPORTER', 'HANDLER'] }))).toEqual({ path: '/' })
   })
 })

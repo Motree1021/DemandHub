@@ -13,6 +13,7 @@ def build_router(settings):
         admin_statemachine,
         admin_types,
         admin_users,
+        admin_whitelist,
         agent,
         assist,
         auth,
@@ -38,11 +39,12 @@ def build_router(settings):
     router.include_router(admin_types.router)
     router.include_router(admin_sla.router)
     router.include_router(admin_channels.router)
+    router.include_router(admin_whitelist.router)
     router.include_router(admin_orgs.router)
     if settings.auth_dev_login:
         router.include_router(auth.dev_router)
     if settings.auth_test_login:
         router.include_router(auth.test_router)
-    if settings.app_env == "test" and settings.channel_entry_auth_mode == "trusted_parameters":
+    if settings.channel_entry_auth_mode == "trusted_parameters":
         router.include_router(auth.parameters_router)
     return router

@@ -13,6 +13,8 @@ export const useAuthStore = defineStore('auth', {
     isLoggedIn: () => !!getAccessToken(),
     mustChangePwd: state => state.user?.mustChangePwd ?? false,
     role: state => state.user?.role ?? null,
+    /** 有效角色（主角色 ∪ 兼任授权）；老登录态无 roles 字段时退化为仅主角色 */
+    roles: state => state.user?.roles ?? (state.user ? [state.user.role] : []),
   },
   actions: {
     async login(loginAccount: string, password: string) {

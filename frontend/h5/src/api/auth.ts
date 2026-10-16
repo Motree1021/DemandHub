@@ -20,3 +20,7 @@ export function devLogin(name: string, wecomUserid: string): Promise<LoginRespon
 export function testLogin(name: string, wecomUserid: string): Promise<LoginResponse> {
   return post('/auth/test-login', { name, wecomUserid })
 }
+/** 白名单拦截页联系引导（公开接口：被拦用户无登录态）。 */
+export function whitelistContact(): Promise<{ contact: string | null }> {
+  return get('/auth/whitelist-contact', undefined, { silent: true })
+}

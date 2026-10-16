@@ -32,10 +32,14 @@ SLA_CONTENT = "需求${demand_no}「${title}」在状态「${to_status}」已停
 
 # ---- 基座工具 ----
 
-async def make_user(factory, name, wecom_userid, role="HANDLER"):
+async def make_user(factory, name, wecom_userid, role="HANDLER", type_scope=None):
+    # 业务角色默认配全类型权限（贴合生产「必配」约束），按需用 type_scope 覆盖
+    if type_scope is None and role in ("EXECUTIVE", "MANAGER", "HANDLER"):
+        type_scope = "TECH,MATL,TRAIN"
     async with factory() as db:
         async with db.begin():
-            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role)
+            user = User(name=name, wecom_userid=wecom_userid, channel="CHUANGJIN_LS", role=role,
+                        type_scope=type_scope)
             db.add(user)
             await db.flush()
             db.expunge(user)

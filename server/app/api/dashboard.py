@@ -22,7 +22,7 @@ async def manager(
     to_date: date | None = Query(None, alias="to"),
     user=Depends(require_role("EXECUTIVE", "MANAGER")), db=Depends(get_db),
 ):
-    return ok(await service.manager_board(db, range_kind, from_date, to_date))
+    return ok(await service.manager_board(db, user, range_kind, from_date, to_date))
 
 
 @router.get("/org")
@@ -32,7 +32,7 @@ async def org(
     to_date: date | None = Query(None, alias="to"),
     user=Depends(require_role("EXECUTIVE", "MANAGER")), db=Depends(get_db),
 ):
-    return ok(await service.org_board(db, range_kind, from_date, to_date))
+    return ok(await service.org_board(db, user, range_kind, from_date, to_date))
 
 
 @router.post("/stat-refresh")

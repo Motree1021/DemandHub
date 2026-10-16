@@ -10,12 +10,16 @@ const cleanedStartupUrl = cleanChannelUrl(startupUrl)
 if (cleanedStartupUrl !== window.location.pathname + window.location.search + window.location.hash) {
   history.replaceState(null, '', cleanedStartupUrl)
 }
+function errorCode(error: unknown): number | undefined {
+  return error && typeof error === 'object' && 'code' in error ? (error as { code?: number }).code : undefined
+}
 function entryError(error: unknown, parameters: boolean): string {
-  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+  const code = errorCode(error)
   if (parameters && code === 404) return '参数联调登录尚未开启'
   if (code === 1107) return '登录已失效，请从创金零售重新进入'
   if (code === 1113) return '账号不可用，请联系管理员'
   if (code === 1108) return '该渠道已停用，请联系管理员'
+  if (code === 1123) return '非白名单用户，暂不支持访问'
   // 后端任意message不得进入路由；即使错误原文带宿主token也不会再次泄露。
   return '登录暂时不可用，请从创金零售重新进入或稍后重试'
 }
@@ -80,7 +84,8 @@ router.beforeEach(async to => {
       } catch (error) {
         if (generation !== navigationGeneration) return false
         user.clear()
-        return { path: '/auth', query: { error: entryError(error, entry.kind === 'parameters') }, replace: true }
+        // 1123 白名单拦截：wl 标记驱动 /auth 页展示锁定图标与联系引导卡片
+        return { path: '/auth', query: { error: entryError(error, entry.kind === 'parameters'), ...(errorCode(error) === 1123 ? { wl: '1' } : {}) }, replace: true }
       }
     }
   }

@@ -94,6 +94,11 @@ const router = createRouter({
           meta: { roles: ['ADMIN'], title: '渠道管理' },
         },
         {
+          path: 'channel-whitelist', name: 'channel-whitelist',
+          component: () => import('@/views/admin/ChannelWhitelist.vue'),
+          meta: { roles: ['ADMIN'], title: '渠道白名单' },
+        },
+        {
           path: 'orgs', name: 'orgs',
           component: () => import('@/views/admin/Orgs.vue'),
           meta: { roles: ['ADMIN'], title: '组织管理' },
@@ -110,7 +115,8 @@ export function guard(to: { path: string; meta: Record<string, unknown> }, auth:
   if (!getAccessToken()) return { path: '/login', query: { redirect: to.path } }
   if (auth.mustChangePwd && to.path !== '/change-password') return { path: '/change-password' }
   const roles = to.meta.roles as string[] | undefined
-  if (roles?.length && (!auth.role || !roles.includes(auth.role))) return { path: '/' }
+  // 多角色：任一有效角色命中即放行
+  if (roles?.length && !auth.roles.some(r => roles.includes(r))) return { path: '/' }
   return true
 }
 
