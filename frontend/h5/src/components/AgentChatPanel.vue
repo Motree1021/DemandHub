@@ -54,9 +54,25 @@
     <van-button v-if="pending && !sending" size="small" plain type="primary" @click="retry">重试上一条</van-button>
     <div class="input-row">
       <button class="attach-btn" :disabled="sending || uploading" aria-label="上传附件" @click="attachVisible = true">＋</button>
-      <van-field v-model="input" type="textarea" rows="2" autosize :disabled="sending" placeholder="可以打字输入，也可以用输入法的语音输入，或粘贴大段需求…" />
+      <div class="field-wrap">
+        <!-- autosize 限高约 5 行（2026-10-16 拍板）：粘贴大段文本不再无限撑高挤压消息区，
+             超出部分输入框内手指滑动滚动（滚动条样式隐藏，参考微信）；长文本可进全屏编辑 -->
+        <van-field v-model="input" type="textarea" rows="2" :autosize="{ maxHeight: 120 }" :disabled="sending" placeholder="可以打字输入，也可以用输入法的语音输入，或粘贴大段需求…" @focus="onFieldFocus" @blur="onFieldBlur" />
+        <button v-if="showExpand" class="expand-btn" type="button" aria-label="全屏编辑" @click="openEditor"><van-icon name="expand-o" /></button>
+      </div>
       <van-button type="primary" :loading="sending" :disabled="!input.trim() || unavailable" @click="send">发送</van-button>
     </div>
+    <!-- 全屏编辑（参考微信全屏输入，2026-10-16 拍板）：编辑实时同步输入框、无独立缓冲区——
+         「完成」仅关闭浮层，中途来电/误触返回不丢字，故不需要「取消/放弃」确认 -->
+    <van-popup v-model:show="editorVisible" position="bottom" class="editor-popup" :overlay="false">
+      <div class="editor-full">
+        <div class="editor-bar">
+          <span>编辑需求内容</span>
+          <button type="button" class="editor-done" @click="editorVisible = false">完成</button>
+        </div>
+        <textarea ref="editorArea" v-model="input" class="editor-area" placeholder="可以打字输入，也可以用输入法的语音输入，或粘贴大段需求…"></textarea>
+      </div>
+    </van-popup>
     <van-action-sheet v-model:show="attachVisible" :actions="attachActions" cancel-text="取消" close-on-click-action
       :description="`AI 暂不支持识别附件内容，附件仅作为需求材料随需求一并提交给受理方；单文件不超过 10MB，最多 ${ATTACHMENT_COUNT_LIMIT} 个`"
       @select="onAttachSelect" />
@@ -184,6 +200,24 @@ watch(unavailable, value => emit('unavailable', value))
 // 消息增多自动上提：始终保持最新一条可见（历史载入、逐字输出、卡片落位另有点位调用 scroll）
 watch(() => messages.value.length, () => scroll())
 
+// ---- 输入框长文编辑与键盘贴底（2026-10-16 拍板，参考微信） ----
+// 展开入口按文本量估算（约超 5 行）：≥100 字或 ≥4 个换行；jsdom 无真实布局，不用 scrollHeight 判定
+const editorVisible = ref(false)
+const editorArea = ref<HTMLTextAreaElement>()
+const showExpand = computed(() => input.value.length >= 100 || (input.value.match(/\n/g) || []).length >= 4)
+async function openEditor() {
+  editorVisible.value = true
+  await nextTick(); editorArea.value?.focus()
+}
+// 键盘弹出保持最新消息贴底：focus 后等键盘动画（~300ms）贴一次，弹出/收起过程（视口变化）持续贴；
+// 用 scrollTop 直接赋值（瞬时），不用 smooth 动画——避免键盘动画期间反复触发导致抖动
+const keyboardOpen = ref(false)
+let keyboardTimer: ReturnType<typeof setTimeout> | undefined
+function scrollInstant() { const box = msgBox.value; if (box) box.scrollTop = box.scrollHeight }
+function onFieldFocus() { keyboardOpen.value = true; clearTimeout(keyboardTimer); keyboardTimer = setTimeout(scrollInstant, 300) }
+function onFieldBlur() { keyboardOpen.value = false; clearTimeout(keyboardTimer) }
+function onViewportResize() { if (keyboardOpen.value) scrollInstant() }
+
 // ---- 附件上传（阶段一）：＋面板选择来源，本机文件直传；企微/微信选择待宿主桥接 ----
 const attachVisible = ref(false)
 const uploading = ref(false)
@@ -257,8 +291,8 @@ watch(() => [props.demandId, props.sessionId], () => {
   messages.value = []; latest.value = null; pending.value = null; input.value = ''; failure.value = ''
   restorePending(); loadHistory().catch(() => { failure.value = '历史对话暂未载入，请稍后重试' })
 })
-onMounted(() => { restorePending(); loadHistory().catch(() => { /* 首次进入无会话属正常 */ }) })
-onBeforeUnmount(() => { historyGeneration++; runGeneration++; controller?.abort(); clearTimeout(thinkingTimer); releaseThumbs() })
+onMounted(() => { restorePending(); loadHistory().catch(() => { /* 首次进入无会话属正常 */ }); window.visualViewport?.addEventListener('resize', onViewportResize) })
+onBeforeUnmount(() => { historyGeneration++; runGeneration++; controller?.abort(); clearTimeout(thinkingTimer); clearTimeout(keyboardTimer); releaseThumbs(); window.visualViewport?.removeEventListener('resize', onViewportResize) })
 defineExpose({ scrollToBottom: scroll, refreshHistory: loadHistory })
 </script>
 <style scoped>
@@ -288,6 +322,19 @@ defineExpose({ scrollToBottom: scroll, refreshHistory: loadHistory })
 .input-row { display: flex; align-items: flex-end; gap: 10px; padding: 8px 12px 4px; background: #fff; border-top: 1px solid #ebedf0; }
 .input-row .van-field { border: 1px solid #eee; border-radius: 8px; }
 .input-row .van-button { flex-shrink: 0; }
+.field-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.field-wrap .van-field { flex: 1; min-width: 0; }
+/* 输入框限高后内部滑动滚动但不显示滚动条（参考微信），视觉干净 */
+.field-wrap :deep(textarea) { scrollbar-width: none; }
+.field-wrap :deep(textarea)::-webkit-scrollbar { width: 0; height: 0; }
+/* 全屏编辑入口：长文本时浮现于输入框右上角（微信同款 ⤢） */
+.expand-btn { position: absolute; top: 4px; right: 4px; z-index: 2; width: 26px; height: 26px; padding: 0; border: 1px solid #dbe4f3; border-radius: 6px; background: rgba(255, 255, 255, 0.92); color: #1f3a8a; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+.editor-popup { height: 100%; }
+.editor-full { display: flex; flex-direction: column; height: 100%; background: #fff; }
+.editor-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #ebedf0; font-size: 15px; font-weight: 600; color: #1f2937; }
+.editor-done { border: none; background: none; padding: 4px 8px; font-size: 15px; font-weight: 600; color: #1f3a8a; }
+.editor-area { flex: 1; min-height: 0; border: none; outline: none; resize: none; padding: 14px 16px; font-size: 15px; line-height: 1.7; font-family: inherit; color: #1f2937; scrollbar-width: none; }
+.editor-area::-webkit-scrollbar { width: 0; height: 0; }
 .attach-btn { width: 36px; height: 36px; flex-shrink: 0; margin-bottom: 1px; border: 1px solid #dbe4f3; border-radius: 8px; background: #f7f9ff; color: #1f3a8a; font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center; }
 .attach-btn:disabled { color: #b4bdcc; background: #f3f4f7; }
 .uploading-hint { padding: 0 14px 8px; font-size: 12px; color: #5b6472; }

@@ -8,12 +8,14 @@ vi.mock('@/api/agent', async () => ({ agentSessionMessages: mocks.messages, guid
 // 纯函数（isReplayablePayload/fmtSize 等）走真实实现；附件接口与 toast/图片预览按需覆写
 vi.mock('@/api/demand', async importOriginal => ({ ...await importOriginal<typeof import('@/api/demand')>(), fetchAttachmentThumb: mocks.fetchThumb, downloadAttachment: mocks.downloadAtt, uploadAttachment: mocks.uploadAtt }))
 vi.mock('vant', async importOriginal => ({ ...await importOriginal<typeof import('vant')>(), showToast: mocks.toast, showImagePreview: mocks.preview }))
-const FieldStub = defineComponent({ props: ['modelValue', 'disabled'], emits: ['update:modelValue'], template: '<textarea :value="modelValue" :disabled="disabled" @input="$emit(\'update:modelValue\', $event.target.value)" />' })
+const FieldStub = defineComponent({ props: ['modelValue', 'disabled', 'autosize'], emits: ['update:modelValue', 'focus', 'blur'], template: '<textarea :value="modelValue" :disabled="disabled" @input="$emit(\'update:modelValue\', $event.target.value)" @focus="$emit(\'focus\')" @blur="$emit(\'blur\')" />' })
 const ButtonStub = defineComponent({ props: ['disabled'], template: '<button :disabled="disabled"><slot /></button>' })
+const PopupStub = defineComponent({ props: ['show'], template: '<div v-if="show"><slot /></div>' })
+const PANEL_STUBS = { 'van-field': FieldStub, 'van-button': ButtonStub, 'van-icon': true, 'van-notice-bar': true, 'van-action-sheet': true, 'van-popup': PopupStub }
 const wrappers: VueWrapper[] = []
 function createWrapper(props: Record<string, unknown> = {}) {
   const prepare = vi.fn().mockResolvedValue({ demandId: 1, sessionId: 11, revision: 1 })
-  const wrapper = mount(AgentChatPanel, { props: { demandId: 1, sessionId: 11, revision: 1, prepare, ...props }, global: { stubs: { 'van-field': FieldStub, 'van-button': ButtonStub, 'van-icon': true, 'van-notice-bar': true, 'van-action-sheet': true } } })
+  const wrapper = mount(AgentChatPanel, { props: { demandId: 1, sessionId: 11, revision: 1, prepare, ...props }, global: { stubs: PANEL_STUBS } })
   wrappers.push(wrapper); return { wrapper, prepare }
 }
 function payload(request: GuideRequest): GuidePayload { return { ...request, revision: request.revision + 1, structured: { title: '已保存', demandTypeCode: 'TECH', content: '需求', urgency: 'NORMAL', expectDeliveryAt: null, ext: {} }, fieldSources: {}, missing: [], elements: [], askedTarget: null, canSubmit: true, guidanceComplete: true, qualityComplete: false, ready: true, quickReplies: [] } }
@@ -144,7 +146,7 @@ describe('附件消息卡片与上传（阶段一）', () => {
   })
   function mountPanel() {
     const prepare = vi.fn().mockResolvedValue({ demandId: 1, sessionId: 11, revision: 1 })
-    const wrapper = mount(AgentChatPanel, { props: { demandId: 1, sessionId: 11, revision: 1, prepare }, global: { stubs: { 'van-field': FieldStub, 'van-button': ButtonStub, 'van-icon': true, 'van-notice-bar': true, 'van-action-sheet': SheetStub } } })
+    const wrapper = mount(AgentChatPanel, { props: { demandId: 1, sessionId: 11, revision: 1, prepare }, global: { stubs: { ...PANEL_STUBS, 'van-action-sheet': SheetStub } } })
     wrappers.push(wrapper); return { wrapper, prepare }
   }
   beforeEach(() => { mocks.fetchThumb.mockRejectedValue(new Error('缩略图离线')); mocks.downloadAtt.mockResolvedValue(undefined) })
@@ -212,5 +214,66 @@ describe('附件消息卡片与上传（阶段一）', () => {
     expect(busy[0]).toEqual([true])
     expect(busy[busy.length - 1]).toEqual([false])
     expect(wrapper.find('.uploading-hint').exists()).toBe(false)
+  })
+})
+
+describe('输入框限高、全屏编辑与键盘贴底（2026-10-16 拍板，参考微信）', () => {
+  it('输入框 autosize 限高约 5 行（maxHeight 120），粘贴大段文本不再无限撑高', async () => {
+    const { wrapper } = createWrapper(); await flushPromises()
+    expect(wrapper.findComponent(FieldStub).props('autosize')).toEqual({ maxHeight: 120 })
+  })
+  it('长文本（≥100字或≥4个换行）浮现全屏编辑入口，短文本不显示', async () => {
+    const { wrapper } = createWrapper(); await flushPromises()
+    expect(wrapper.find('.expand-btn').exists()).toBe(false)
+    await wrapper.find('textarea').setValue('一句话需求')
+    expect(wrapper.find('.expand-btn').exists()).toBe(false)
+    await wrapper.find('textarea').setValue('整段需求文本'.repeat(20))
+    expect(wrapper.find('.expand-btn').exists()).toBe(true)
+    await wrapper.find('textarea').setValue('第一行\n第二行\n第三行\n第四行\n第五行')
+    expect(wrapper.find('.expand-btn').exists()).toBe(true)
+  })
+  it('全屏编辑与输入框实时同步（无缓冲区，完成仅关闭），中断不丢字', async () => {
+    const { wrapper } = createWrapper(); await flushPromises()
+    await wrapper.find('textarea').setValue('原始长文本'.repeat(20))
+    await wrapper.find('.expand-btn').trigger('click'); await flushPromises()
+    const area = wrapper.find('.editor-area')
+    expect((area.element as HTMLTextAreaElement).value).toBe('原始长文本'.repeat(20))
+    await area.setValue('编辑后的长文本'.repeat(20))
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('编辑后的长文本'.repeat(20))
+    await wrapper.find('.editor-done').trigger('click'); await flushPromises()
+    expect(wrapper.find('.editor-area').exists()).toBe(false)
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('编辑后的长文本'.repeat(20))
+  })
+  it('输入框聚焦（打开输入法）约 300ms 后把消息区贴底', async () => {
+    const { wrapper } = createWrapper(); await flushPromises()
+    vi.useFakeTimers()
+    try {
+      const box = wrapper.find('.msg-box').element as HTMLElement
+      Object.defineProperty(box, 'scrollHeight', { value: 500, configurable: true })
+      box.scrollTop = 0
+      await wrapper.find('textarea').trigger('focus')
+      vi.advanceTimersByTime(350)
+      expect(box.scrollTop).toBe(500)
+    } finally { vi.useRealTimers() }
+  })
+  it('键盘弹出过程（视口变化）持续贴底，失焦后不再贴', async () => {
+    const viewport = new EventTarget()
+    Object.defineProperty(window, 'visualViewport', { value: viewport, configurable: true })
+    try {
+      const { wrapper } = createWrapper(); await flushPromises()
+      const box = wrapper.find('.msg-box').element as HTMLElement
+      Object.defineProperty(box, 'scrollHeight', { value: 800, configurable: true })
+      box.scrollTop = 0
+      await wrapper.find('textarea').trigger('focus')
+      viewport.dispatchEvent(new Event('resize'))
+      expect(box.scrollTop).toBe(800)
+      box.scrollTop = 0
+      viewport.dispatchEvent(new Event('resize'))
+      expect(box.scrollTop).toBe(800)
+      await wrapper.find('textarea').trigger('blur')
+      box.scrollTop = 0
+      viewport.dispatchEvent(new Event('resize'))
+      expect(box.scrollTop).toBe(0)
+    } finally { delete (window as unknown as Record<string, unknown>).visualViewport }
   })
 })

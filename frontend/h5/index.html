@@ -3,7 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- interactive-widget=resizes-content（2026-10-16）：Android Chrome/新 webview 键盘弹出时
+         直接压缩布局视口，输入行自然贴键盘上沿；iOS 与不支持的浏览器自动忽略，无副作用 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>DemandHub</title>
   </head>
   <body>
