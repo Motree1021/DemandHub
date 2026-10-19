@@ -35,7 +35,7 @@ AUTH_DEV_LOGIN=false
 
 请求JSON固定为 `userid`（必填，最多64字）、`authToken`（必填，最多4096字）、`userName`（必填，最多64字）、`department`（可省略/null，最多128字）。userid、userName去除两侧空格且不得为空；authToken仅检查非空和长度，**完全不验证宿主Token的真实性**。该模式仅用于测试联调，身份直接信任传入userid，不能作为正式宿主认证方案。
 
-userid对应稳定用户身份，重复登录更新姓名/部门；停用账号仍拒绝登录。管理员只按 `ADMIN_WECOM_USERIDS` 中的账号标识判断，姓名、部门和宿主Token不授予权限。登录返回现有 `accessToken/tokenType/expiresIn/user`，其中accessToken为DemandHub自行签发的Bearer JWT。
+userid对应稳定用户身份，重复登录更新姓名/部门；停用账号仍拒绝登录。管理员只按 `dh_user.role = 'ADMIN'` 判断，姓名、部门、宿主Token和渠道账号标识均不授予权限。登录返回现有 `accessToken/tokenType/expiresIn/user`，其中accessToken为DemandHub自行签发的Bearer JWT。
 
 宿主Token不传入持久化或JWT，不存储、不散列、不回显，不写入日志。参数DTO隐藏Token的repr和错误输入，校验/系统错误不回显请求值。测试与文档均使用合成Token，不需读取真实服务配置。
 
@@ -61,7 +61,7 @@ Python3.12、uv版本固定；frozen安装只含生产依赖，启动直接运�
 
 ## 外部发布待验收
 
-生产配置APP_ENV=prod、AUTH_DEV_LOGIN=false、CHANNEL_ENTRY_AUTH_MODE=trusted_parameters（创金零售正式对接为URL明文直登，2026-10双方协商确认，全环境适用）；平台注入DEMANDHUB_DATABASE_URL、JWT_SECRET、LLM_API_KEY/ARK_BASE_URL/LLM_CHAT_MODEL、ADMIN_WECOM_USERIDS。ticket回源模式保留备用，切回时须补注CHANNEL_LS_BASE_URL/CHANNEL_LS_APP_KEY/CHANNEL_LS_APP_SECRET（仅ticket模式强制）。白名单为空则管理员接口全部拒绝。LLM_THINKING及超时/冷却配置按.env.example变量名注入。
+生产配置APP_ENV=prod、AUTH_DEV_LOGIN=false、CHANNEL_ENTRY_AUTH_MODE=trusted_parameters（创金零售正式对接为URL明文直登，2026-10双方协商确认，全环境适用）；平台注入DEMANDHUB_DATABASE_URL、JWT_SECRET、LLM_API_KEY/ARK_BASE_URL/LLM_CHAT_MODEL、ADMIN_INITIAL_PASSWORD。ticket回源模式保留备用，切回时须补注CHANNEL_LS_BASE_URL/CHANNEL_LS_APP_KEY/CHANNEL_LS_APP_SECRET（仅ticket模式强制）。管理员只按 dh_user.role 判断，无 role='ADMIN' 账号则管理员接口全部拒绝。LLM_THINKING及超时/冷却配置按.env.example变量名注入。
 
 上线前验证：生产dev-login404；**`CHANNEL_ENTRY_AUTH_MODE=trusted_parameters` 且真实URL参数（userid/X-Auth-Token/userName/department）经 `/demandhub-api/auth/channel-parameters` 换JWT成功**；health；Kong前缀与SSE；H5域名配置；真实endpoint评测与延迟；创金零售真实入口跳转；iOS/Android真机。当前本地验收不能替代平台上线。
 

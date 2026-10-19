@@ -72,8 +72,7 @@ async def test_unmapped_list_filter_and_delete(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_api_guards_and_crud(client, session_factory):
-    admin_headers = await _login(client, "超管", "mvp-admin")
+async def test_api_guards_and_crud(client, session_factory, admin_headers):
     user_headers = await _login(client, "小权", "p5-ch-u1")
     async with session_factory() as db:
         async with db.begin():

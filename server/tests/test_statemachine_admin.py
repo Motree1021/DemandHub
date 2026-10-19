@@ -103,8 +103,7 @@ async def test_default_json_is_valid_and_parseable():
 
 
 @pytest.mark.asyncio
-async def test_api_guards_and_crud(client):
-    admin_headers = await _login(client, "超管", "mvp-admin")
+async def test_api_guards_and_crud(client, admin_headers):
     user_headers = await _login(client, "小权", "p5-sm-u1")
 
     assert (await client.get("/demandhub-api/admin/state-machines", headers=user_headers)).json()["code"] == 403

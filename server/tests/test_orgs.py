@@ -55,9 +55,9 @@ async def test_create_path_backfill_and_tree(session_factory):
                                                parent_id=110, org_kind="ASSIGNER",
                                                external_dept_id="DEPT-TECH-2")
             assert row.path == f"/100/110/{row.id}/"  # 占位插入→回填
-            with pytest.raises(BizError):  # 父不存在
+            with pytest.raises(BizError):  # 父不存在（远离自增域，计数器上涨也不会撞）
                 await org_service.create_org(db, name="无根", level="GROUP",
-                                             parent_id=999, org_kind="ASSIGNER")
+                                             parent_id=900000000, org_kind="ASSIGNER")
             with pytest.raises(BizError):  # 层级枚举
                 await org_service.create_org(db, name="坏", level="BAD",
                                              parent_id=110, org_kind="ASSIGNER")
@@ -163,7 +163,7 @@ async def test_change_type_reroutes_and_split_inherits(session_factory):
                 DemandOrg(id=121, name="客户陪伴一组", level="GROUP", parent_id=120,
                           path="/100/120/121/", org_kind="ASSIGNER", status="ACTIVE"),
             ])
-            admin = _user(wecom_userid="mvp-admin", name="超管")
+            admin = _user(wecom_userid="mvp-admin", name="超管", role="ADMIN")
             db.add(admin)
             await db.flush()
             TECH_FORM["clientRequestId"] = "org-key-ct"
@@ -190,9 +190,8 @@ async def _login(client, name, wecom_userid):
 
 
 @pytest.mark.asyncio
-async def test_api_guards_and_crud(client, session_factory):
+async def test_api_guards_and_crud(client, session_factory, admin_headers):
     await _seed_tree(session_factory)
-    admin_headers = await _login(client, "超管", "mvp-admin")
     user_headers = await _login(client, "小权", "p5-org-u9")
 
     assert (await client.get("/demandhub-api/admin/orgs", headers=user_headers)).json()["code"] == 403

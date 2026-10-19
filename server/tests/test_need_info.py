@@ -191,7 +191,7 @@ async def test_need_info_can_close(session_factory, user, admin):
 
 
 @pytest.mark.asyncio
-async def test_return_api_admin_gate_and_flow(client, session_factory, user):
+async def test_return_api_admin_gate_and_flow(client, session_factory, user, admin_headers):
     """API 层：普通用户 403，管理员 200；列表状态筛选含 NEED_INFO。"""
     did, rev, _ = await make_submitted(session_factory, user, session=True)
     user_token = (await client.post("/demandhub-api/auth/dev-login",
@@ -200,10 +200,8 @@ async def test_return_api_admin_gate_and_flow(client, session_factory, user):
         json={"reason": RETURN_REASON}, headers={"Authorization": f"Bearer {user_token}"})
     # 统一响应体：BizError 走 HTTP 200 + body 业务码（403 无权限）
     assert response.json()["code"] == 403
-    admin_token = (await client.post("/demandhub-api/auth/dev-login",
-        json={"name": "管理员", "wecomUserid": "mvp-admin"})).json()["data"]["accessToken"]
     response = await client.post(f"/demandhub-api/admin/demand/{did}/return",
-        json={"reason": RETURN_REASON}, headers={"Authorization": f"Bearer {admin_token}"})
+        json={"reason": RETURN_REASON}, headers=admin_headers)
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["status"] == "NEED_INFO" and data["ext"]["returnReason"]["reason"] == RETURN_REASON

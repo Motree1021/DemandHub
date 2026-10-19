@@ -428,9 +428,8 @@ async def test_api_preferences(client, session_factory, submitter):
 
 
 @pytest.mark.asyncio
-async def test_api_template_admin(client, session_factory):
+async def test_api_template_admin(client, session_factory, admin_headers):
     await make_user(session_factory, "处理人", "p4n-ahdl")
-    admin_headers = await _login(client, "超管", "mvp-admin")
     user_headers = await _login(client, "处理人", "p4n-ahdl")
 
     assert (await client.get("/demandhub-api/admin/notification-templates",

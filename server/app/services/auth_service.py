@@ -18,9 +18,14 @@ LOCK_MINUTES = 15
 
 
 async def login_with_password(db, login_account: str, password: str) -> User:
-    """账密登录：账号不存在与密码错误同一文案（防探测）；连续 5 次失败锁 15 分钟。"""
+    """账密登录：账号不存在与密码错误同一文案（防探测）；连续 5 次失败锁 15 分钟。
+    登录账号未命中时按手机号查（uk_user_phone 全表唯一保证至多一条；
+    账号优先——手机号与他人登录账号撞串时进入登录账号的主人，无歧义）。"""
     user = (await db.execute(select(User).where(User.login_account == login_account)
                              .with_for_update())).scalar_one_or_none()
+    if user is None:
+        user = (await db.execute(select(User).where(User.phone == login_account)
+                                 .with_for_update())).scalar_one_or_none()
     if user is None or user.password_hash is None:
         raise BizError(ErrorCode.AUTH_LOGIN_FAILED)
     if user.status != "ACTIVE":

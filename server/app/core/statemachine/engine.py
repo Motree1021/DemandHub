@@ -202,7 +202,7 @@ def check_role(
     """角色校验：operator_roles 为有效角色（静态 ∪ 授权，由 role_service 解析）；缺省只看静态 role。"""
     if not rule.roles:
         return
-    # ADMIN 直通（蓝本口径，含授权 ADMIN）；is_admin 兼容企微白名单过渡期
+    # ADMIN 直通（蓝本口径，含授权 ADMIN）
     from app.core.deps import is_admin
 
     roles = set(operator_roles) if operator_roles is not None else {operator.role}

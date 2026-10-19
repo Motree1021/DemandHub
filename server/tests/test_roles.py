@@ -331,11 +331,10 @@ async def test_api_role_guards(client, session_factory, submitter):
 
 
 @pytest.mark.asyncio
-async def test_api_grant_admin_crud_and_elevation(client, session_factory, submitter):
+async def test_api_grant_admin_crud_and_elevation(client, session_factory, submitter, admin_headers):
     """授权管理 API（仅 ADMIN）；API 级授权升权：HANDLER + MANAGER 授权可调受理接口。"""
     await make_user(session_factory, "小权", "p4-api-u6")
     did = await make_submitted(session_factory, submitter)
-    admin_headers = await _login(client, "超管", "mvp-admin")  # 企微白名单 ADMIN（过渡期）
     user_headers = await _login(client, "小权", "p4-api-u6")
 
     # 非 ADMIN 访问授权管理 → 403（body 业务码）
@@ -368,10 +367,9 @@ async def test_api_grant_admin_crud_and_elevation(client, session_factory, submi
 
 
 @pytest.mark.asyncio
-async def test_api_update_user_role(client, session_factory):
+async def test_api_update_user_role(client, session_factory, admin_headers):
     """ADMIN 多角色保存：主角色切换即时生效（逐请求读库）；非法角色值 400。"""
     await make_user(session_factory, "小调", "p4-api-u7")
-    admin_headers = await _login(client, "超管", "mvp-admin")
     user_headers = await _login(client, "小调", "p4-api-u7")
     me = await client.get("/demandhub-api/auth/me", headers=user_headers)
     uid = me.json()["data"]["id"]
@@ -431,10 +429,9 @@ async def test_sync_user_roles_admin_forced_primary(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_api_update_user_roles_multi(client, session_factory):
+async def test_api_update_user_roles_multi(client, session_factory, admin_headers):
     """API 级多角色：兼任即时生效；me/login 响应带 roles 并集；本人不可调。"""
     await make_user(session_factory, "小兼", "p4-api-u8", role="REPORTER")
-    admin_headers = await _login(client, "超管", "mvp-admin")
     user_headers = await _login(client, "小兼", "p4-api-u8")
     me = await client.get("/demandhub-api/auth/me", headers=user_headers)
     uid = me.json()["data"]["id"]

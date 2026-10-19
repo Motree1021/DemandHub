@@ -7,14 +7,16 @@
 - 详情可见性：get_viewable 越类型按「不存在」（1002，不暴露单存在性）；提报人看本人单不受限
 - 看板过滤：manager_board/org_board 只统计 scope 内类型
 - assignees 接口：typeCode 必传；候选人按 scope 过滤（ADMIN 候选直通）；非经理族 403
-- 用户管理联动：sync_user_roles / create / update_roles 的 types 必填、非法码 400、非业务角色清空
+- 用户管理联动：sync_user_roles / create / update_roles 的 types 必填、非法码 400、非业务角色清空；
+  create 多角色建号（主角色+兼任授权行一次落位，含 ADMIN 强制主角色）
 """
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.core.errors import BizError
-from app.db.models import Demand, User, now
+from app.db.models import Demand, DemandRoleGrant, User, now
 from app.services import flow_service, role_service, stat_service, triage_service
 
 BASE = "/demandhub-api"
@@ -286,25 +288,26 @@ async def test_sync_user_roles_type_rules(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_create_and_update_user_api_type_rules(client, session_factory):
-    admin_headers = await _login(client, "超管", "mvp-admin")  # 企微白名单 ADMIN（过渡期）
+async def test_create_and_update_user_api_type_rules(client, session_factory, admin_headers):
     # 业务角色缺 types → 400
     lacking = await client.post(BASE + "/admin/users", headers=admin_headers,
                                 json={"loginAccount": "tsu1", "name": "缺类型",
-                                      "initialPassword": "Abcd1234", "role": "MANAGER"})
+                                      "initialPassword": "Abcd1234", "role": "MANAGER",
+                                      "phone": "13900001001"})
     assert lacking.json()["code"] == 400
     # 配上 types → 出参 typeScope 有序
     created = await client.post(BASE + "/admin/users", headers=admin_headers,
                                 json={"loginAccount": "tsu1", "name": "科技经理",
                                       "initialPassword": "Abcd1234", "role": "MANAGER",
-                                      "types": ["MATL", "TECH"]})
+                                      "types": ["MATL", "TECH"], "phone": "13900001001"})
     assert created.json()["code"] == 0
     assert created.json()["data"]["typeScope"] == ["TECH", "MATL"]
     uid = created.json()["data"]["id"]
     # 管理员/提报人不需要 types
     admin_user = await client.post(BASE + "/admin/users", headers=admin_headers,
                                    json={"loginAccount": "tsu2", "name": "二号管理",
-                                         "initialPassword": "Abcd1234", "role": "ADMIN"})
+                                         "initialPassword": "Abcd1234", "role": "ADMIN",
+                                         "phone": "13900001002"})
     assert admin_user.json()["code"] == 0 and admin_user.json()["data"]["typeScope"] is None
     # 改角色缺 types → 400；配上 → 联动更新
     bad = await client.put(f"{BASE}/admin/users/{uid}/roles", headers=admin_headers,
@@ -319,3 +322,38 @@ async def test_create_and_update_user_api_type_rules(client, session_factory):
     # 列表带出 typeScope
     listing = await client.get(BASE + "/admin/users?keyword=tsu2", headers=admin_headers)
     assert listing.json()["data"]["list"][0]["typeScope"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_user_multi_roles(client, session_factory, admin_headers):
+    """多角色建号（2026-10-18，与改角色同口径）：主角色+兼任一次落位；兼任落空白授权行；含 ADMIN 强制主角色。"""
+    # 经理 + 处理人：主角色 MANAGER（首个），HANDLER 落兼任授权行；types 有序落 type_scope
+    created = await client.post(BASE + "/admin/users", headers=admin_headers,
+                                json={"loginAccount": "tsm1", "name": "经理兼处理",
+                                      "initialPassword": "Abcd1234", "phone": "13900002001",
+                                      "roles": ["MANAGER", "HANDLER"], "types": ["MATL", "TECH"]})
+    assert created.json()["code"] == 0
+    data = created.json()["data"]
+    assert data["role"] == "MANAGER" and data["roles"] == ["MANAGER", "HANDLER"]
+    assert data["typeScope"] == ["TECH", "MATL"]
+    async with session_factory() as db:
+        async with db.begin():
+            grants = (await db.execute(select(DemandRoleGrant).where(
+                DemandRoleGrant.user_id == data["id"], DemandRoleGrant.is_deleted == 0))).scalars().all()
+            assert {row.role_code for row in grants} == {"HANDLER"}
+            user = (await db.execute(select(User).where(User.login_account == "tsm1"))).scalar_one()
+            assert await role_service.effective_roles(db, user) == frozenset({"MANAGER", "HANDLER"})
+    # 含 ADMIN：强制主角色 ADMIN；有效角色仍含业务角色 → types 必填
+    lacking = await client.post(BASE + "/admin/users", headers=admin_headers,
+                                json={"loginAccount": "tsm2", "name": "管理兼经理",
+                                      "initialPassword": "Abcd1234", "phone": "13900002002",
+                                      "roles": ["MANAGER", "ADMIN"]})
+    assert lacking.json()["code"] == 400
+    admin_user = await client.post(BASE + "/admin/users", headers=admin_headers,
+                                   json={"loginAccount": "tsm2", "name": "管理兼经理",
+                                         "initialPassword": "Abcd1234", "phone": "13900002002",
+                                         "roles": ["MANAGER", "ADMIN"], "types": ["TECH"]})
+    assert admin_user.json()["code"] == 0
+    data2 = admin_user.json()["data"]
+    assert data2["role"] == "ADMIN" and data2["roles"] == ["ADMIN", "MANAGER"]
+    assert data2["typeScope"] == ["TECH"]

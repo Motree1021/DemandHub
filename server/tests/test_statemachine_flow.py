@@ -871,10 +871,9 @@ async def login(client, name, wecom_userid):
 
 
 @pytest.mark.asyncio
-async def test_api_role_gates(client, session_factory, user, admin):
+async def test_api_role_gates(client, session_factory, user, admin, admin_headers):
     did = await make_submitted(session_factory, user)
     user_headers = await login(client, "测试用户", "test-user")
-    admin_headers = await login(client, "管理员", "mvp-admin")
     # 受理队列限 ADMIN
     assert (await client.get(BASE + "/triage/queue", headers=user_headers)).json()["code"] == 403
     assert (await client.get(BASE + "/triage/queue", headers=admin_headers)).json()["code"] == 0

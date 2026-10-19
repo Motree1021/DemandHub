@@ -162,7 +162,8 @@ async def test_disabled_user_cannot_be_reenabled(parameters_client, session_fact
         headers={"Authorization": "Bearer " + issued})).status_code == 401
 
 
-async def test_only_userid_whitelist_grants_admin(parameters_client):
+async def test_channel_login_never_grants_admin(parameters_client):
+    # 企微白名单兼容已退役（is_admin 只认 role）：渠道登录建档一律 REPORTER，任何字段都不授予管理员
     ordinary = await parameters_client.post(PATH, json={**PAYLOAD, "userName": "管理员",
         "department": "ADMIN", "authToken": "mvp-admin"})
     ordinary_data = ordinary.json()["data"]
@@ -170,9 +171,9 @@ async def test_only_userid_whitelist_grants_admin(parameters_client):
     denied = await parameters_client.get("/demandhub-api/admin/demand/list",
         headers={"Authorization": "Bearer " + ordinary_data["accessToken"]})
     assert denied.json()["code"] == 403
-    admin = await parameters_client.post(PATH, json={**PAYLOAD, "userid": "mvp-admin", "department": None})
-    assert admin.json()["data"]["user"]["isAdmin"] is True
-    assert admin.json()["data"]["user"]["deptName"] is None
+    same_userid = await parameters_client.post(PATH, json={**PAYLOAD, "userid": "mvp-admin", "department": None})
+    assert same_userid.json()["data"]["user"]["isAdmin"] is False
+    assert same_userid.json()["data"]["user"]["deptName"] is None
 
 
 async def test_known_max_lengths_and_optional_department(parameters_client):

@@ -17,7 +17,6 @@ os.environ["AUTH_DEV_LOGIN"] = "true"
 os.environ["AUTH_TEST_LOGIN"] = "true"
 # 测试默认 ticket 模式（与 dev 的 .env 明文直登隔离，避免互斥校验冲突）；明文模式用例自行 monkeypatch
 os.environ["CHANNEL_ENTRY_AUTH_MODE"] = "ticket"
-os.environ["ADMIN_WECOM_USERIDS"] = "mvp-admin"
 os.environ["CHANNEL_LS_BASE_URL"] = "http://127.0.0.1:8199"
 os.environ["CHANNEL_LS_APP_KEY"] = "demandhub-dev"
 os.environ["CHANNEL_LS_APP_SECRET"] = "local-mock-only-secret"
@@ -97,4 +96,17 @@ async def auth_headers(client, session_factory):
         async with db.begin():
             await db.execute(update(User).where(User.wecom_userid == "test-user")
                              .values(role="HANDLER", type_scope="TECH,MATL,TRAIN"))
+    return {"Authorization": "Bearer " + response.json()["data"]["accessToken"]}
+
+
+@pytest_asyncio.fixture
+async def admin_headers(client, session_factory):
+    """超管登录态：dev-login 建档后显式提为 ADMIN（企微白名单兼容已退役，is_admin 只认 role）。"""
+    response = await client.post("/demandhub-api/auth/dev-login", json={"name": "超管", "wecomUserid": "mvp-admin"})
+    from sqlalchemy import update
+
+    from app.db.models import User
+    async with session_factory() as db:
+        async with db.begin():
+            await db.execute(update(User).where(User.wecom_userid == "mvp-admin").values(role="ADMIN"))
     return {"Authorization": "Bearer " + response.json()["data"]["accessToken"]}

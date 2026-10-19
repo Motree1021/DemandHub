@@ -334,18 +334,17 @@ async def test_api_boards_role_guard(client, session_factory):
 
 
 @pytest.mark.asyncio
-async def test_api_stat_refresh_guard_and_run(client, session_factory, submitter):
+async def test_api_stat_refresh_guard_and_run(client, session_factory, submitter, admin_headers):
     await make_user(session_factory, "经理", "p4t-mgr2", role="MANAGER")
     await make_user(session_factory, "管理者", "p4t-exec2", role="EXECUTIVE")
     manager = await _login(client, "经理", "p4t-mgr2")
     executive = await _login(client, "管理者", "p4t-exec2")
-    admin = await _login(client, "超管", "mvp-admin")  # 企微白名单 ADMIN（过渡期）
     await insert_demand(session_factory, submitter)
     path = "/demandhub-api/dashboard/stat-refresh"
     assert (await client.post(path, headers=manager)).json()["code"] == 403
     result = (await client.post(path, headers=executive)).json()
     assert result["code"] == 0 and result["data"]["rows"] == 1
-    assert (await client.post(path, headers=admin)).json()["code"] == 0  # ADMIN 直通
+    assert (await client.post(path, headers=admin_headers)).json()["code"] == 0  # ADMIN 直通
 
 
 @pytest.mark.asyncio

@@ -48,13 +48,69 @@ export interface UserRow {
   mustChangePwd: boolean
   lastLoginAt: string | null
   createdAt: string
+  /** OneID 一期：已挂接的渠道身份（仅列表出参带；空=未挂接） */
+  channelIdentities: ChannelIdentityBrief[] | null
 }
 export interface UserListResult { list: UserRow[]; total: number; page: number; size: number }
 
+/** OneID 一期：渠道身份（一把渠道钥匙）。channelUserName 为渠道侧姓名快照 */
+export interface ChannelIdentityBrief { channel: string; channelUserId: string; channelUserName: string }
+export interface ChannelIdentityRow extends ChannelIdentityBrief {
+  id: number
+  /** 归属人：待归一=渠道临时人；已归一=PC 用户（OneID 用户） */
+  ownerId: number
+  ownerName: string
+  ownerAccount: string | null
+  /** 最近活跃（待归一排序键）；已归一列表按挂接/改挂时间倒序 */
+  lastSeenAt: string | null
+  /** 同名线索（仅待归一附带）：姓名完全一致的 ACTIVE 正式用户，至多3个——同名≠同一人，仅供核对 */
+  suspects?: { id: number; name: string; loginAccount: string | null }[]
+}
+export interface UserIdentity extends ChannelIdentityBrief { id: number; createdAt: string | null }
+export interface LinkResult {
+  identityId: number
+  channel: string
+  channelUserId: string
+  sourceUser: { id: number; name: string }
+  targetUser: { id: number; name: string }
+  movedCounts: Record<string, number>
+}
+export interface IdentityLinkLogRow {
+  id: number
+  action: 'LINK' | 'REBIND'
+  channel: string
+  channelUserId: string
+  fromUserId: number
+  fromUserName: string
+  toUserId: number
+  toUserName: string
+  /** 过户明细（改挂不搬数据为 null） */
+  movedCounts: Record<string, number> | null
+  operatorName: string
+  createdAt: string | null
+}
+
+export const identitiesApi = {
+  /** 渠道身份列表：linked=false 待归一（归属人仍是临时人，附同名线索），linked=true 已归一 */
+  list: (params: { linked: boolean; keyword?: string; page?: number; size?: number }) =>
+    get<{ list: ChannelIdentityRow[]; total: number }>('/admin/channel-identities', params),
+  /** 挂接/改挂审计记录（「挂接记录」Tab） */
+  linkLogs: (params: { page?: number; size?: number }) =>
+    get<{ list: IdentityLinkLogRow[]; total: number }>('/admin/identity-link-logs', params),
+  /** 某 PC 用户已挂接的渠道身份 */
+  ofUser: (userId: number) => get<UserIdentity[]>(`/admin/users/${userId}/channel-identities`),
+  /** 挂接：身份改指 PC 用户 + 临时人数据全量过户 + 停用；返回过户数据量供确认 */
+  link: (userId: number, identityId: number) =>
+    post<LinkResult>(`/admin/users/${userId}/channel-identities`, { identityId }),
+  /** 改挂：已归属身份 A→B，只移钥匙不搬历史数据 */
+  rebind: (identityId: number, userId: number) =>
+    post<Omit<LinkResult, 'movedCounts'>>(`/admin/channel-identities/${identityId}/rebind`, { userId }),
+}
+
 export const usersApi = {
-  list: (params: { page: number; size: number; keyword?: string; role?: string; status?: string }) =>
+  list: (params: { page: number; size: number; keyword?: string; role?: string; status?: string; channel?: string }) =>
     get<UserListResult>('/admin/users', params),
-  create: (data: { loginAccount: string; name: string; initialPassword: string; role: RoleCode; types?: TypeCode[] }) =>
+  create: (data: { loginAccount: string; name: string; phone: string; email?: string; initialPassword: string; role?: RoleCode; roles?: RoleCode[]; types?: TypeCode[] }) =>
     post<UserRow>('/admin/users', data),
   updateRoles: (id: number, roles: RoleCode[], types?: TypeCode[]) =>
     put<UserRow>(`/admin/users/${id}/roles`, { roles, types }),

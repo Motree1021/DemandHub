@@ -62,8 +62,7 @@ async def test_non_admin_forbidden_on_all_p5_endpoints(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_allowed_on_all_get_endpoints(client):
-    headers = await _login(client, "超管", "mvp-admin")
+async def test_admin_allowed_on_all_get_endpoints(client, admin_headers):
     for method, path in ADMIN_GET_CASES:
-        response = await client.request(method, f"/demandhub-api{path}", headers=headers)
+        response = await client.request(method, f"/demandhub-api{path}", headers=admin_headers)
         assert response.json()["code"] == 0, f"{method} {path} 应放行，实际 {response.json()}"

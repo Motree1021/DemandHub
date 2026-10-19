@@ -221,7 +221,7 @@ async def delete_grant(db: AsyncSession, grant_id: int) -> None:
 # 口径约定（2026-10-16 拍板，方案A：界面多选、底层复用）：
 # - 主角色写 dh_user.role；兼任角色写「无范围无期限」授权行（org_id/scope/有效期全空）
 # - 差量同步只管理这类空白授权行；授权管理里手工配的带范围/期限行不参与、绝不动
-# - ADMIN 只能作主角色（is_admin 只认静态 role 与白名单，授权 ADMIN 进不了管理端）
+# - ADMIN 只能作主角色（is_admin 只认静态 role，授权 ADMIN 进不了管理端）
 
 
 def _blank_scope_grants(user_id: int):

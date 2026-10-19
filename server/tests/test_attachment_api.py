@@ -112,7 +112,7 @@ async def test_submitted_demand_upload_and_delete_blocked(client, auth_headers, 
     assert download.status_code == 200 and download.content == PNG
 
 
-async def test_download_auth_and_admin_visibility(client, auth_headers, attachment_dir):
+async def test_download_auth_and_admin_visibility(client, auth_headers, attachment_dir, admin_headers):
     draft = await create(client, auth_headers)
     uploaded = await upload(client, auth_headers, draft["id"], "参考.pdf", PDF)
     attachment_id = uploaded.json()["data"]["id"]
@@ -127,11 +127,9 @@ async def test_download_auth_and_admin_visibility(client, auth_headers, attachme
     assert (await client.get(f"{BASE}/demand/{draft['id']}/attachments", headers=other)).json()["code"] == 1002
     assert (await client.get(f"{BASE}/demand/{draft['id']}/attachments/{attachment_id}/download", headers=other)).json()["code"] == 1002
     # ADMIN 可见可下载（受理方视角）
-    admin_login = await client.post(BASE + "/auth/dev-login", json={"name": "管理员", "wecomUserid": "mvp-admin"})
-    admin = {"Authorization": "Bearer " + admin_login.json()["data"]["accessToken"]}
-    listed = (await client.get(f"{BASE}/demand/{draft['id']}/attachments", headers=admin)).json()
+    listed = (await client.get(f"{BASE}/demand/{draft['id']}/attachments", headers=admin_headers)).json()
     assert listed["code"] == 0 and listed["data"][0]["fileName"] == "参考.pdf"
-    assert (await client.get(f"{BASE}/demand/{draft['id']}/attachments/{attachment_id}/download", headers=admin)).status_code == 200
+    assert (await client.get(f"{BASE}/demand/{draft['id']}/attachments/{attachment_id}/download", headers=admin_headers)).status_code == 200
 
 
 async def test_detail_and_export_include_attachments(client, auth_headers, attachment_dir):

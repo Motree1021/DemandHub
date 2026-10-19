@@ -9,12 +9,13 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import Field
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.deps import get_db, require_admin
 from app.core.errors import BizError, ErrorCode
 from app.core.result import ApiModel, ok
 from app.core.security import hash_password
-from app.db.models import User
+from app.db.models import ChannelIdentity, User
 from app.services import auth_service, role_service
 
 router = APIRouter(prefix="/admin/users", dependencies=[Depends(require_admin)])
@@ -38,8 +39,10 @@ def mask_email(email: str | None) -> str | None:
     return local[:1] + "***@" + domain
 
 
-def user_out(user: User, roles: list[str] | None = None) -> dict:
-    """用户出参统一收口：脱敏 + 绝不带 password_hash；roles=主角色+兼任（缺省仅主角色）。"""
+def user_out(user: User, roles: list[str] | None = None,
+             identities: list[dict] | None = None) -> dict:
+    """用户出参统一收口：脱敏 + 绝不带 password_hash；roles=主角色+兼任（缺省仅主角色）；
+    identities=已挂接渠道身份（OneID 一期，仅列表出参带）。"""
     return {"id": user.id, "loginAccount": user.login_account, "name": user.name,
             "wecomUserid": user.wecom_userid,
             "role": user.role, "roles": roles if roles is not None else [user.role],
@@ -47,7 +50,8 @@ def user_out(user: User, roles: list[str] | None = None) -> dict:
             "status": user.status, "channel": user.channel,
             "phone": mask_phone(user.phone), "email": mask_email(user.email),
             "mustChangePwd": user.must_change_pwd, "lastLoginAt": user.last_login_at,
-            "createdAt": user.created_at}
+            "createdAt": user.created_at,
+            "channelIdentities": identities}
 
 
 async def get_user_or_404(db, user_id: int) -> User:
@@ -63,6 +67,7 @@ async def list_users(page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=
                      keyword: str | None = Query(None, max_length=64),
                      role: RoleCode | None = None,
                      status: Literal["ACTIVE", "DISABLED"] | None = None,
+                     channel: str | None = Query(None, max_length=32),
                      db=Depends(get_db)):
     statement = select(User)
     if keyword:
@@ -72,11 +77,23 @@ async def list_users(page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=
         statement = statement.where(User.role == role)
     if status:
         statement = statement.where(User.status == status)
+    # OneID：用户管理只管网内正式用户（传 channel=ACCOUNT）；渠道临时人的可见性由「渠道身份」页承载
+    if channel:
+        statement = statement.where(User.channel == channel)
     total = (await db.execute(select(func.count()).select_from(statement.subquery()))).scalar_one()
     users = (await db.execute(statement.order_by(User.id).offset((page - 1) * size)
                               .limit(size))).scalars().all()
     roles_map = await role_service.user_roles_map(db, [u.id for u in users])
-    return ok({"list": [user_out(u, roles_map[u.id]) for u in users],
+    # OneID：批量取本页用户已挂接的渠道身份（列表灰字展示「渠道：XX·编号」）
+    identity_rows = (await db.execute(
+        select(ChannelIdentity).where(ChannelIdentity.user_id.in_([u.id for u in users])))
+    ).scalars().all() if users else []
+    identity_map: dict[int, list[dict]] = {}
+    for item in identity_rows:
+        identity_map.setdefault(item.user_id, []).append(
+            {"channel": item.channel, "channelUserId": item.channel_user_id,
+             "channelUserName": item.channel_user_name})
+    return ok({"list": [user_out(u, roles_map[u.id], identity_map.get(u.id, [])) for u in users],
                "total": total, "page": page, "size": size})
 
 
@@ -84,31 +101,42 @@ class CreateUser(ApiModel):
     login_account: str = Field(min_length=2, max_length=64, pattern=r"^[a-zA-Z0-9_.-]+$")
     name: str = Field(min_length=1, max_length=64)
     initial_password: str = Field(min_length=8, max_length=64, repr=False)
+    # 手机号必填：联系方式 + 可作登录账号（uk_user_phone 全表唯一）
+    phone: str = Field(pattern=r"^1\d{10}$")
+    email: str | None = Field(default=None, max_length=128,
+                              pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     role: RoleCode = "HANDLER"
+    # 多角色（2026-10-18）：与改角色同口径，主角色+兼任一次落位；缺省回退单 role（向后兼容）
+    roles: list[RoleCode] | None = Field(default=None, min_length=1)
     types: list[TypeCode] | None = None
 
 
 @router.post("")
-async def create_user(payload: CreateUser, db=Depends(get_db)):
+async def create_user(payload: CreateUser, admin=Depends(require_admin), db=Depends(get_db)):
     async with db.begin():
         exists = (await db.execute(select(User.id).where(User.login_account == payload.login_account))).scalar_one_or_none()
         if exists is not None:
             raise BizError(ErrorCode.LOGIN_ACCOUNT_EXISTS)
-        # 业务角色需配需求类型权限（按人统一配，拍板口径）；管理员/提报人不需要
-        type_scope = None
-        if payload.role in role_service.TYPE_SCOPED_ROLES:
-            ordered = [code for code in role_service.TYPE_CODES if code in set(payload.types or [])]
-            if not ordered:
-                raise BizError(ErrorCode.PARAM_INVALID, "业务角色需选择至少一个需求类型权限")
-            type_scope = ",".join(ordered)
+        phone_taken = (await db.execute(select(User.id).where(User.phone == payload.phone))).scalar_one_or_none()
+        if phone_taken is not None:
+            raise BizError(ErrorCode.PHONE_EXISTS)
+        roles = payload.roles or [payload.role]
         # 账密用户无企微身份，wecom_userid 落占位值 acct:<login_account>（方案A）
+        # 主角色/兼任/类型权限由 sync_user_roles 统一校验落位（与改角色同一口径）
         user = User(name=payload.name, wecom_userid=f"acct:{payload.login_account}",
-                    channel="ACCOUNT", role=payload.role, login_account=payload.login_account,
+                    channel="ACCOUNT", role=roles[0], login_account=payload.login_account,
                     password_hash=hash_password(payload.initial_password), must_change_pwd=True,
-                    type_scope=type_scope)
+                    phone=payload.phone, email=payload.email)
         db.add(user)
-        await db.flush()
-    return ok(user_out(user))
+        try:
+            await db.flush()
+        except IntegrityError as exc:
+            # 并发撞唯一键兜底：解析索引名区分手机号 / 登录账号（预查挡不住并发窗口）
+            if "uk_user_phone" in str(exc.orig):
+                raise BizError(ErrorCode.PHONE_EXISTS) from exc
+            raise BizError(ErrorCode.LOGIN_ACCOUNT_EXISTS) from exc
+        roles = await role_service.sync_user_roles(db, user, roles, payload.types, granted_by=admin.id)
+    return ok(user_out(user, roles))
 
 
 @router.put("/{user_id}/activate")

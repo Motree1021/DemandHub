@@ -11,7 +11,7 @@ from app.core.result import ApiModel, ok
 from app.core.security import issue_token
 from app.db.models import User
 from app.services import auth_service, role_service, whitelist_service
-from app.services.user_service import login_existing, upsert_from_sso
+from app.services.user_service import login_existing, sso_transaction, upsert_from_sso
 from app.sso.chuangjin_ls import ChuangjinLsSsoClient
 from app.sso.schemas import ChannelSsoConfig, SsoProfile
 
@@ -80,9 +80,11 @@ async def channel_parameters(payload: ChannelParameters, db: AsyncSession = Depe
     # auth_token 只完成 DTO 非空/长度检查，绝不传给持久化、JWT或日志。
     profile = SsoProfile(user_id=payload.userid, name=payload.user_name,
                          dept_name=payload.department)
-    async with db.begin():
+
+    async def work():
         await whitelist_service.assert_allowed(db, "CHUANGJIN_LS", profile.user_id)
-        user = await upsert_from_sso(db, profile)
+        return await upsert_from_sso(db, profile)
+    user = await sso_transaction(db, work)
     return await login_response(db, user)
 
 
@@ -92,9 +94,11 @@ async def channel_sso(channel: str = Query(...), ticket: str = Query(..., max_le
     if channel not in {"chuangjinls", "CHUANGJIN_LS"}:
         raise BizError(ErrorCode.CHANNEL_DISABLED)
     profile = await get_sso_client().verify(ticket)
-    async with db.begin():
+
+    async def work():
         await whitelist_service.assert_allowed(db, "CHUANGJIN_LS", profile.user_id)
-        user = await upsert_from_sso(db, profile)
+        return await upsert_from_sso(db, profile)
+    user = await sso_transaction(db, work)
     return await login_response(db, user)
 
 
@@ -111,8 +115,9 @@ class DevLogin(ApiModel):
 
 @dev_router.post("/dev-login")
 async def dev_login(payload: DevLogin, db: AsyncSession = Depends(get_db)):
-    async with db.begin():
-        user = await upsert_from_sso(db, SsoProfile(user_id=payload.wecom_userid, name=payload.name))
+    async def work():
+        return await upsert_from_sso(db, SsoProfile(user_id=payload.wecom_userid, name=payload.name))
+    user = await sso_transaction(db, work)
     return await login_response(db, user)
 
 

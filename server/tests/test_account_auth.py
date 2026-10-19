@@ -164,13 +164,14 @@ async def test_create_user_and_masked_list(client, admin, session_factory):
     created = await client.post(f"{BASE}/admin/users", headers=headers,
                                 json={"loginAccount": "new1", "name": "新人",
                                       "initialPassword": "Abcd1234", "role": "HANDLER",
-                                      "types": ["TECH"]})
+                                      "types": ["TECH"], "phone": "13900002001"})
     body = created.json()
     assert body["code"] == 0
     assert body["data"]["mustChangePwd"] is True
     assert "passwordHash" not in body["data"] and "password_hash" not in body["data"]
     dup = await client.post(f"{BASE}/admin/users", headers=headers,
-                            json={"loginAccount": "new1", "name": "新人", "initialPassword": "Abcd1234"})
+                            json={"loginAccount": "new1", "name": "新人", "initialPassword": "Abcd1234",
+                                  "phone": "13900002002"})
     assert dup.json()["code"] == 1120
     listing = await client.get(f"{BASE}/admin/users?keyword=u1", headers=headers)
     row = listing.json()["data"]["list"][0]
@@ -179,10 +180,56 @@ async def test_create_user_and_masked_list(client, admin, session_factory):
     assert listing.json()["data"]["total"] == 1
 
 
+async def test_phone_required_unique_and_login_by_phone(client, admin):
+    """手机号：新建必填、格式校验、全表判重（1129）、可作登录账号；登录账号优先于手机号。"""
+    headers = await admin_headers(client)
+    # 必填：缺 phone → 400
+    missing = await client.post(f"{BASE}/admin/users", headers=headers,
+                                json={"loginAccount": "p1", "name": "缺手机",
+                                      "initialPassword": "Abcd1234", "types": ["TECH"]})
+    assert missing.json()["code"] == 400
+    # 格式：非 11 位手机号 → 400
+    bad_fmt = await client.post(f"{BASE}/admin/users", headers=headers,
+                                json={"loginAccount": "p1", "name": "错格式",
+                                      "initialPassword": "Abcd1234", "types": ["TECH"],
+                                      "phone": "12345"})
+    assert bad_fmt.json()["code"] == 400
+    # 邮箱选填，但填了须合法
+    bad_mail = await client.post(f"{BASE}/admin/users", headers=headers,
+                                 json={"loginAccount": "p1", "name": "错邮箱",
+                                       "initialPassword": "Abcd1234", "types": ["TECH"],
+                                       "phone": "13900003001", "email": "not-an-email"})
+    assert bad_mail.json()["code"] == 400
+    created = await client.post(f"{BASE}/admin/users", headers=headers,
+                                json={"loginAccount": "p1", "name": "手机用户",
+                                      "initialPassword": "Abcd1234", "types": ["TECH"],
+                                      "phone": "13900003001", "email": "phone.user@example.com"})
+    assert created.json()["code"] == 0
+    assert created.json()["data"]["phone"] == "139****3001"  # 出参脱敏
+    # 手机号判重 → 1129
+    dup_phone = await client.post(f"{BASE}/admin/users", headers=headers,
+                                  json={"loginAccount": "p2", "name": "撞手机",
+                                        "initialPassword": "Abcd1234", "types": ["TECH"],
+                                        "phone": "13900003001"})
+    assert dup_phone.json()["code"] == 1129
+    # 手机号可作登录账号（must_change_pwd 用户先走改密链路也能拿到 token）
+    by_phone = await login(client, "13900003001", "Abcd1234")
+    assert by_phone.json()["code"] == 0
+    assert by_phone.json()["data"]["user"]["id"] == created.json()["data"]["id"]
+    # 登录账号优先：手机号与他人登录账号撞串时，进入登录账号的主人
+    clash = await client.post(f"{BASE}/admin/users", headers=headers,
+                              json={"loginAccount": "13900003002", "name": "账号撞号",
+                                    "initialPassword": "Abcd1234", "types": ["TECH"],
+                                    "phone": "13900003003"})
+    assert clash.json()["code"] == 0
+    by_login = await login(client, "13900003002", "Abcd1234")
+    assert by_login.json()["data"]["user"]["id"] == clash.json()["data"]["id"]
+
+
 async def test_disable_blocks_login_and_revokes_refresh(client, admin):
     await client.post(f"{BASE}/admin/users", headers=await admin_headers(client),
                       json={"loginAccount": "v1", "name": "v", "initialPassword": "Abcd1234",
-                            "types": ["TECH"]})
+                            "types": ["TECH"], "phone": "13900002003"})
     data = (await login(client, "v1", "Abcd1234")).json()["data"]
     target = (await client.get(f"{BASE}/admin/users?keyword=v1",
                                headers=await admin_headers(client))).json()["data"]["list"][0]
@@ -207,7 +254,7 @@ async def test_cannot_disable_or_reset_self(client, admin):
 async def test_reset_password_forces_change_and_revokes(client, admin):
     await client.post(f"{BASE}/admin/users", headers=await admin_headers(client),
                       json={"loginAccount": "w1", "name": "w", "initialPassword": "Abcd1234",
-                            "types": ["TECH"]})
+                            "types": ["TECH"], "phone": "13900002004"})
     old = (await login(client, "w1", "Abcd1234")).json()["data"]
     target = (await client.get(f"{BASE}/admin/users?keyword=w1",
                                headers=await admin_headers(client))).json()["data"]["list"][0]
@@ -219,12 +266,3 @@ async def test_reset_password_forces_change_and_revokes(client, admin):
     relogin = (await login(client, "w1", "Reset1234")).json()["data"]
     assert relogin["mustChangePwd"] is True
 
-
-# ---------- require_admin 过渡兼容 ----------
-
-async def test_whitelist_wecom_user_still_admin(client):
-    # mvp-admin 在白名单但 role 是 HANDLER（老 SSO 用户），兼容期仍可访问管理接口
-    resp = await client.post(f"{BASE}/auth/dev-login", json={"name": "管理员", "wecomUserid": "mvp-admin"})
-    headers = bearer(resp.json()["data"]["accessToken"])
-    listing = await client.get(f"{BASE}/admin/users", headers=headers)
-    assert listing.json()["code"] == 0

@@ -16,8 +16,15 @@
 
     <el-table :data="rows" v-loading="loading" stripe>
       <el-table-column prop="id" label="ID" width="70" />
-      <el-table-column prop="loginAccount" label="登录账号" min-width="120">
-        <template #default="{ row }">{{ row.loginAccount || '—（渠道用户）' }}</template>
+      <el-table-column prop="loginAccount" label="登录账号" min-width="150">
+        <template #default="{ row }">
+          {{ row.loginAccount || '—' }}
+          <!-- OneID：该 PC 用户已挂接的渠道身份（渠道钥匙） -->
+          <div v-for="item in row.channelIdentities ?? []" :key="`${item.channel}:${item.channelUserId}`"
+               class="scope-text">
+            渠道：{{ channelLabel(item.channel) }} {{ item.channelUserName }}
+          </div>
+        </template>
       </el-table-column>
       <el-table-column prop="name" label="姓名" min-width="100" />
       <el-table-column prop="wecomUserid" label="企业微信ID" min-width="130">
@@ -66,52 +73,52 @@
                    :page-sizes="[10, 20, 50, 100]" :page-size="query.size" :current-page="query.page"
                    @current-change="load" @size-change="onSizeChange" />
 
-    <el-dialog v-model="createVisible" title="新建用户" width="440px" @closed="resetCreate">
+    <el-dialog v-model="createVisible" title="新建用户" width="460px" @closed="resetCreate">
       <el-form ref="createRef" :model="createForm" :rules="createRules" label-width="90px">
         <el-form-item label="登录账号" prop="loginAccount">
-          <el-input v-model="createForm.loginAccount" placeholder="字母/数字/._-" />
+          <el-input v-model="createForm.loginAccount" placeholder="比如姓名拼音" />
         </el-form-item>
         <el-form-item label="姓名" prop="name">
           <el-input v-model="createForm.name" />
         </el-form-item>
+        <el-form-item label="手机号" prop="phone">
+          <el-input v-model="createForm.phone" placeholder="11 位手机号，也可作登录账号" />
+        </el-form-item>
+        <el-form-item label="邮箱" prop="email">
+          <el-input v-model="createForm.email" placeholder="选填" />
+        </el-form-item>
         <el-form-item label="初始密码" prop="initialPassword">
           <el-input v-model="createForm.initialPassword" type="password" show-password placeholder="至少 8 位" />
         </el-form-item>
-        <el-form-item label="角色" prop="role">
-          <el-radio-group v-model="createForm.role">
-            <el-radio v-for="r in roleOptions" :key="r.value" :value="r.value">{{ r.label }}</el-radio>
-          </el-radio-group>
+        <el-form-item label="角色" required>
+          <div class="role-picker">
+            <!-- 嵌套层级卡片：业务角色 ⊃ 需求类型权限（下一级配置）；其他角色在卡片外，不受卡片规则约束 -->
+            <ScopedRoleCard v-model:roles="createForm.roles" v-model:types="createForm.types" />
+            <div class="role-section other">
+              <div class="section-title">其他角色（不受类型权限限制）</div>
+              <el-checkbox-group v-model="createForm.roles">
+                <el-checkbox v-for="r in otherRoleOptions" :key="r.value" :value="r.value">{{ r.label }}</el-checkbox>
+              </el-checkbox-group>
+            </div>
+          </div>
         </el-form-item>
-        <el-form-item v-if="isScopedRole(createForm.role)" label="类型权限" required>
-          <el-checkbox-group v-model="createForm.types">
-            <el-checkbox v-for="t in typeOptions" :key="t.value" :value="t.value">{{ t.label }}</el-checkbox>
-          </el-checkbox-group>
-        </el-form-item>
-        <el-alert type="info" :closable="false" title="新用户首次登录时会被要求修改初始密码" />
+        <el-alert type="info" :closable="false" class="role-alert"
+                  title="可多选：首个角色为主角色，其余为兼任角色，权限取并集；勾选管理员时将以管理员为主角色" />
+        <el-alert type="info" :closable="false" class="role-alert"
+                  title="新用户首次登录时会被要求修改初始密码" />
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitCreate">创建</el-button>
+        <el-button type="primary" :loading="submitting"
+                   :disabled="!createForm.roles.length || (createHasScopedRole && !createForm.types.length)"
+                   @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="roleVisible" :title="`调整角色：${roleTarget?.name}`" width="460px">
-      <!-- 分区布局（拍板口径）：业务角色在上半区并联动类型权限；提报人/管理员沉底，避免误解类型权限作用于它们 -->
-      <div class="role-section">
-        <div class="section-title">业务角色（可多选）</div>
-        <el-checkbox-group v-model="roleForm.roles">
-          <el-checkbox v-for="r in scopedRoleOptions" :key="r.value" :value="r.value">{{ r.label }}</el-checkbox>
-        </el-checkbox-group>
-      </div>
-      <div v-if="hasScopedRole" class="role-section">
-        <div class="section-title">需求类型权限（多选）</div>
-        <el-checkbox-group v-model="roleForm.types">
-          <el-checkbox v-for="t in typeOptions" :key="t.value" :value="t.value">{{ t.label }}</el-checkbox>
-        </el-checkbox-group>
-        <div class="section-tip">未选择的类型，该用户将看不到也操作不了</div>
-      </div>
-      <el-divider class="role-divider" />
-      <div class="role-section">
+      <!-- 嵌套层级卡片：业务角色 ⊃ 需求类型权限（下一级配置）；其他角色在卡片外，不受卡片规则约束 -->
+      <ScopedRoleCard v-model:roles="roleForm.roles" v-model:types="roleForm.types" />
+      <div class="role-section other">
         <div class="section-title">其他角色（不受类型权限限制）</div>
         <el-checkbox-group v-model="roleForm.roles">
           <el-checkbox v-for="r in otherRoleOptions" :key="r.value" :value="r.value">{{ r.label }}</el-checkbox>
@@ -146,9 +153,10 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { usersApi } from '@/api'
+import { channelApi, usersApi } from '@/api'
 import type { RoleCode, TypeCode, UserRow } from '@/api'
 import { ApiError } from '@/api/request'
+import ScopedRoleCard, { isScopedRole, typeOptions } from '@/components/ScopedRoleCard.vue'
 import { useAuthStore } from '@/stores/auth'
 
 /** P4 五角色：标签/配色统一出处，筛选、新建、改角色共用（REPORTER=渠道默认提报人） */
@@ -162,16 +170,7 @@ const roleOptions: { value: RoleCode; label: string; tag: 'danger' | 'warning' |
 const roleLabel = (role: RoleCode) => roleOptions.find((r) => r.value === role)?.label ?? role
 const roleTagType = (role: RoleCode) => roleOptions.find((r) => r.value === role)?.tag ?? 'info'
 
-/** 需求类型权限（2026-10-16 拍板）：仅业务角色（管理者/经理/处理人）需要配，按人统一配；
- * 空 = 无权限；管理员/提报人不受限（弹窗内沉底分区，避免误解） */
-const typeOptions: { value: TypeCode; label: string }[] = [
-  { value: 'TECH', label: '科技需求' },
-  { value: 'MATL', label: '物料需求' },
-  { value: 'TRAIN', label: '培训需求' },
-]
-const SCOPED_ROLES: RoleCode[] = ['EXECUTIVE', 'MANAGER', 'HANDLER']
-const isScopedRole = (role: RoleCode) => SCOPED_ROLES.includes(role)
-const scopedRoleOptions = roleOptions.filter((r) => isScopedRole(r.value))
+/** 其他角色沉底区（提报人/管理员）：在业务角色卡片外，不受类型权限约束（isScopedRole/typeOptions 由 ScopedRoleCard 统一出口） */
 const otherRoleOptions = roleOptions.filter((r) => !isScopedRole(r.value))
 /** 列表灰字短名：科技 / 物料 / 培训 */
 const scopeText = (scope: TypeCode[]) =>
@@ -195,7 +194,7 @@ async function load(page = query.page) {
   loading.value = true
   try {
     const data = await usersApi.list({
-      page: query.page, size: query.size,
+      page: query.page, size: query.size, channel: 'ACCOUNT',  // 只管网内正式用户；渠道用户见「渠道身份」页
       keyword: query.keyword || undefined, role: query.role || undefined, status: query.status || undefined,
     })
     rows.value = data.list
@@ -220,24 +219,33 @@ async function toggle(row: UserRow, target: 'ACTIVE' | 'DISABLED') {
 
 const createVisible = ref(false)
 const createRef = ref<FormInstance>()
-const createForm = reactive({ loginAccount: '', name: '', initialPassword: '', role: 'HANDLER' as RoleCode, types: [] as TypeCode[] })
+/** 新建默认角色：处理人 + 提报人（2026-10-18 拍板：新账号默认兼具提报能力，与渠道建号默认 REPORTER 同口径） */
+const createForm = reactive({ loginAccount: '', name: '', phone: '', email: '', initialPassword: '', roles: ['HANDLER', 'REPORTER'] as RoleCode[], types: [] as TypeCode[] })
+/** 勾了业务角色才需要（且必须）配类型权限（与改角色同口径） */
+const createHasScopedRole = computed(() => createForm.roles.some(isScopedRole))
 const createRules: FormRules = {
   loginAccount: [
     { required: true, message: '请输入登录账号', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_.-]{2,64}$/, message: '2-64 位字母/数字/._-', trigger: 'blur' },
+    { pattern: /^[a-zA-Z0-9_.-]{2,64}$/, message: '2-64 位字母/数字/._-（建议姓名拼音）', trigger: 'blur' },
   ],
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
+  phone: [
+    { required: true, message: '请输入手机号', trigger: 'blur' },
+    { pattern: /^1\d{10}$/, message: '请输入 11 位手机号', trigger: 'blur' },
+  ],
+  email: [{ pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, message: '邮箱格式不正确', trigger: 'blur' }],
   initialPassword: [
     { required: true, message: '请输入初始密码', trigger: 'blur' },
     { min: 8, max: 64, message: '密码长度 8-64 位', trigger: 'blur' },
   ],
 }
 function resetCreate() {
-  Object.assign(createForm, { loginAccount: '', name: '', initialPassword: '', role: 'HANDLER', types: [] })
+  Object.assign(createForm, { loginAccount: '', name: '', phone: '', email: '', initialPassword: '', roles: ['HANDLER', 'REPORTER'], types: [] })
 }
 async function submitCreate() {
   await createRef.value?.validate().catch(() => Promise.reject())
-  if (isScopedRole(createForm.role) && !createForm.types.length) {
+  if (!createForm.roles.length) return  // 按钮已置灰，双保险
+  if (createHasScopedRole.value && !createForm.types.length) {
     ElMessage.warning('请为业务角色选择至少一个需求类型权限')
     return
   }
@@ -245,8 +253,9 @@ async function submitCreate() {
   try {
     await usersApi.create({
       loginAccount: createForm.loginAccount, name: createForm.name,
-      initialPassword: createForm.initialPassword, role: createForm.role,
-      types: isScopedRole(createForm.role) ? createForm.types : undefined,
+      phone: createForm.phone, email: createForm.email || undefined,
+      initialPassword: createForm.initialPassword, roles: createForm.roles,
+      types: createHasScopedRole.value ? createForm.types : undefined,
     })
     ElMessage.success('已创建')
     createVisible.value = false
@@ -318,6 +327,15 @@ async function submitReset() {
 }
 
 onMounted(() => load(1))
+
+// ---- OneID：列表渠道灰字展示（挂接/改挂操作在「渠道身份」页，人归人管、钥匙归钥匙管） ----
+
+/** 渠道代码 → 渠道名映射（列表灰字展示用；加载失败降级显示代码） */
+const channelMap = ref<Record<string, string>>({})
+const channelLabel = (code: string) => channelMap.value[code] ?? code
+channelApi.list()
+  .then((channels) => { channelMap.value = Object.fromEntries(channels.map((c) => [c.channelCode, c.channelName])) })
+  .catch(() => { /* 渠道名加载失败不阻塞主流程 */ })
 </script>
 
 <style scoped>
@@ -328,9 +346,9 @@ onMounted(() => load(1))
 .pager { margin-top: 16px; justify-content: flex-end; }
 .role-tag { margin-right: 4px; }
 .scope-text { color: #909399; font-size: 12px; margin-top: 4px; }
-.role-section { margin-bottom: 4px; }
+.role-picker { width: 100%; }
+/* 其他角色区：位于业务角色卡片之外，与卡片拉开间距 */
+.role-section.other { margin-top: 12px; }
 .section-title { font-weight: 600; color: #303133; margin-bottom: 8px; }
-.section-tip { color: #e6a23c; font-size: 12px; margin-top: 6px; }
-.role-divider { margin: 12px 0; }
 .role-alert { margin-top: 12px; }
 </style>

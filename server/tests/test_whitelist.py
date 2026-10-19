@@ -186,8 +186,7 @@ async def test_dev_login_not_gated(client, session_factory):
 
 # ---------- 管理 API ----------
 
-async def test_admin_api_flow(client, session_factory):
-    admin_headers = await _login(client, "超管", "mvp-admin")
+async def test_admin_api_flow(client, session_factory, admin_headers):
     user_headers = await _login(client, "普通用户", "wl-normal-user")
     async with session_factory() as db:
         async with db.begin():

@@ -64,23 +64,7 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <!-- 渠道接入 -->
-        <el-sub-menu v-if="isAdmin" index="group-channel">
-          <template #title>
-            <el-icon><Link /></el-icon>
-            <span>渠道接入</span>
-          </template>
-          <el-menu-item index="/channels">
-            <el-icon><Share /></el-icon>
-            <span>渠道管理</span>
-          </el-menu-item>
-          <el-menu-item index="/channel-whitelist">
-            <el-icon><Lock /></el-icon>
-            <span>渠道白名单</span>
-          </el-menu-item>
-        </el-sub-menu>
-
-        <!-- 组织权限 -->
+        <!-- 组织权限（含渠道接入配置与渠道身份治理） -->
         <el-sub-menu v-if="isAdmin" index="group-org">
           <template #title>
             <el-icon><Avatar /></el-icon>
@@ -90,9 +74,21 @@
             <el-icon><User /></el-icon>
             <span>用户管理</span>
           </el-menu-item>
+          <el-menu-item index="/channel-identities">
+            <el-icon><Key /></el-icon>
+            <span>渠道身份</span>
+          </el-menu-item>
           <el-menu-item index="/orgs">
-            <el-icon><SetUp /></el-icon>
+            <el-icon><OfficeBuilding /></el-icon>
             <span>组织管理</span>
+          </el-menu-item>
+          <el-menu-item index="/channels">
+            <el-icon><Share /></el-icon>
+            <span>渠道管理</span>
+          </el-menu-item>
+          <el-menu-item index="/channel-whitelist">
+            <el-icon><Lock /></el-icon>
+            <span>渠道白名单</span>
           </el-menu-item>
         </el-sub-menu>
 
@@ -146,7 +142,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  AlarmClock, Avatar, Bell, BellFilled, Collection, Connection, DataAnalysis, Download, Files, Link, List, Lock, Monitor, OfficeBuilding, Setting, SetUp, Share, Stamp, Tools, TrendCharts, User,
+  AlarmClock, Avatar, Bell, BellFilled, Collection, Connection, DataAnalysis, Download, Files, Key, List, Lock, Monitor, OfficeBuilding, Setting, SetUp, Share, Stamp, Tools, TrendCharts, User,
 } from '@element-plus/icons-vue'
 import { notificationApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -175,8 +171,7 @@ const defaultOpeneds = computed(() => {
   if (['/my-tasks', '/triage', '/demands'].some(x => p.startsWith(x))) return ['group-workspace']
   if (['/board', '/report'].some(x => p.startsWith(x))) return ['group-board']
   if (['/demand-types', '/state-machines', '/sla-configs'].some(x => p.startsWith(x))) return ['group-demand-conf']
-  if (['/channels', '/channel-whitelist'].some(x => p.startsWith(x))) return ['group-channel']
-  if (['/users', '/orgs'].some(x => p.startsWith(x))) return ['group-org']
+  if (['/users', '/orgs', '/channels', '/channel-whitelist', '/channel-identities'].some(x => p.startsWith(x))) return ['group-org']
   if (['/notify-templates', '/sys-dicts'].some(x => p.startsWith(x))) return ['group-sys']
   return []
 })

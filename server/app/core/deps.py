@@ -1,7 +1,6 @@
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.config import get_settings
 from app.core.errors import BizError, ErrorCode
 from app.core.security import decode_token
 from app.db.models import User
@@ -24,8 +23,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
 
 
 def is_admin(user: User) -> bool:
-    """过渡兼容：role=='ADMIN' 或命中企微白名单，满足其一即管理员（P4 白名单退役）。"""
-    return user.role == "ADMIN" or user.wecom_userid in get_settings().admin_ids
+    """以 dh_user.role 为唯一口径；授权表只用于需求级角色判断，不参与管理端身份。"""
+    return user.role == "ADMIN"
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
@@ -38,7 +37,7 @@ def require_role(*roles: str):
     """角色守卫工厂：require_role("MANAGER") 返回 Depends。
 
     有效角色 = 静态 role ∪ 生效授权（demand_role_grant）；任一命中即放行，否则 403。
-    ADMIN 直通（is_admin 兼容企微白名单过渡期）。
+    ADMIN 直通。
     """
     allowed = set(roles)
 

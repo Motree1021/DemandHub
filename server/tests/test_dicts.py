@@ -71,8 +71,7 @@ async def test_list_order_and_active_filter(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_api_guards_and_crud(client, session_factory):
-    admin_headers = await _login(client, "超管", "mvp-admin")
+async def test_api_guards_and_crud(client, session_factory, admin_headers):
     user_headers = await _login(client, "小权", "p5-dict-u1")
 
     # 非 ADMIN 全 403（body 业务码）

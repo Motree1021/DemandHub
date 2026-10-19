@@ -68,7 +68,7 @@ async def test_create_replay_and_conflict(client, auth_headers):
     assert changed.json()["code"] == 409
 
 
-async def test_revision_owner_and_admin_export(client, auth_headers):
+async def test_revision_owner_and_admin_export(client, auth_headers, admin_headers):
     draft = await create(client, auth_headers, demandTypeCode="TECH", title="=FORMULA", content="业务描述", elements={"C": {"useScenario": "=SUM(1,2)"}})
     a = await client.put(f"{BASE}/demand/{draft['id']}", headers=auth_headers, json={"expectedRevision": 0, "title": "手动修改"})
     assert a.json()["code"] == 0
@@ -78,15 +78,12 @@ async def test_revision_owner_and_admin_export(client, auth_headers):
     other = {"Authorization": "Bearer " + login.json()["data"]["accessToken"]}
     assert (await client.get(f"{BASE}/demand/{draft['id']}", headers=other)).json()["code"] == 1002
     assert (await client.get(BASE + "/admin/demand/list", headers=other)).json()["code"] == 403
-    admin_login = await client.post(BASE + "/auth/dev-login", json={"name": "管理员", "wecomUserid": "mvp-admin"})
-    admin = {"Authorization": "Bearer " + admin_login.json()["data"]["accessToken"]}
-    assert admin_login.json()["data"]["user"]["isAdmin"]
-    assert (await client.get(BASE + "/admin/demand/list?type=TECH", headers=admin)).json()["data"]["total"] == 1
-    file = await client.get(BASE + "/admin/demand/export.xlsx?type=TECH", headers=admin)
+    assert (await client.get(BASE + "/admin/demand/list?type=TECH", headers=admin_headers)).json()["data"]["total"] == 1
+    file = await client.get(BASE + "/admin/demand/export.xlsx?type=TECH", headers=admin_headers)
     sheet = load_workbook(BytesIO(file.content)).active
     assert sheet.title == "TECH" and any(c.value == "=SUM(1,2)" and c.data_type == "s" for row in sheet for c in row)
     assert (await client.get(BASE + "/admin/demand/export.xlsx")).status_code == 401
-    assert (await client.put(f"{BASE}/demand/{draft['id']}", headers=admin, json={"expectedRevision": 1, "title": "管理员覆盖"})).json()["code"] == 1002
+    assert (await client.put(f"{BASE}/demand/{draft['id']}", headers=admin_headers, json={"expectedRevision": 1, "title": "管理员覆盖"})).json()["code"] == 1002
 
 
 async def test_invalid_fields_and_clear_protected(client, auth_headers):

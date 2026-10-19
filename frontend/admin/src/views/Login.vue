@@ -4,7 +4,7 @@
       <h2 class="title">DemandHub 管理后台</h2>
       <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="submit">
         <el-form-item prop="loginAccount">
-          <el-input v-model="form.loginAccount" placeholder="登录账号" size="large" autofocus />
+          <el-input v-model="form.loginAccount" placeholder="登录账号 / 手机号" size="large" autofocus />
         </el-form-item>
         <el-form-item prop="password">
           <el-input v-model="form.password" type="password" placeholder="密码" size="large"

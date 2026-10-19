@@ -99,6 +99,11 @@ const router = createRouter({
           meta: { roles: ['ADMIN'], title: '渠道白名单' },
         },
         {
+          path: 'channel-identities', name: 'channel-identities',
+          component: () => import('@/views/admin/ChannelIdentities.vue'),
+          meta: { roles: ['ADMIN'], title: '渠道身份' },
+        },
+        {
           path: 'orgs', name: 'orgs',
           component: () => import('@/views/admin/Orgs.vue'),
           meta: { roles: ['ADMIN'], title: '组织管理' },

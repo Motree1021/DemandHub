@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     auth_dev_login: bool = False
     auth_test_login: bool = False
     channel_entry_auth_mode: Literal["ticket", "trusted_parameters"] = "ticket"
-    admin_wecom_userids: str = ""
     api_root_path: str = "/demandhub-api"
     cors_origins: str = "http://localhost:5174,http://127.0.0.1:5174"
     channel_ls_base_url: str = ""
@@ -86,10 +85,6 @@ class Settings(BaseSettings):
     @property
     def sync_database_url(self) -> URL:
         return parse_database_url(self.demandhub_database_url, "mysql+pymysql")
-
-    @property
-    def admin_ids(self) -> set[str]:
-        return {v.strip() for v in self.admin_wecom_userids.split(",") if v.strip()}
 
 
 @lru_cache

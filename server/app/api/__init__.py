@@ -7,6 +7,7 @@ def build_router(settings):
         admin_channels,
         admin_dicts,
         admin_grants,
+        admin_identities,
         admin_notify_templates,
         admin_orgs,
         admin_sla,
@@ -41,6 +42,7 @@ def build_router(settings):
     router.include_router(admin_channels.router)
     router.include_router(admin_whitelist.router)
     router.include_router(admin_orgs.router)
+    router.include_router(admin_identities.router)
     if settings.auth_dev_login:
         router.include_router(auth.dev_router)
     if settings.auth_test_login:

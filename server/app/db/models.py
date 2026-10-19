@@ -679,3 +679,46 @@ class ChannelDeptUnmapped(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=3), default=now, onupdate=now, server_default=text("CURRENT_TIMESTAMP(3)")
     )
+
+
+class ChannelIdentity(Timestamps, Base):
+    """渠道身份（OneID 一期）：一行=一把渠道钥匙，UNIQUE(channel, channel_user_id) 只属于一个人。
+
+    未归并时归属渠道自动建档的临时人（dh_user.channel != 'ACCOUNT'）；
+    管理员挂接后归属 PC 用户（channel='ACCOUNT' 的 OneID 用户），渠道免登进入的即该 PC 用户。
+    """
+    __tablename__ = "dh_channel_identity"
+    __table_args__ = (
+        UniqueConstraint("channel", "channel_user_id", name="uk_channel_identity"),
+        Index("ix_channel_identity_user", "user_id"),
+        {"comment": "渠道身份（OneID：一把渠道钥匙只属于一个人）"},
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("dh_user.id"))
+    channel: Mapped[str] = mapped_column(String(32))
+    channel_user_id: Mapped[str] = mapped_column(String(64))
+    channel_user_name: Mapped[str | None] = mapped_column(String(64))
+
+
+class IdentityLinkLog(Base):
+    """OneID 挂接/改挂审计（行只增不改；moved_counts 仅挂接有过户明细，改挂不搬数据为 NULL）。"""
+    __tablename__ = "dh_identity_link_log"
+    __table_args__ = (
+        Index("ix_link_log_identity", "identity_id", "created_at"),
+        {"comment": "OneID 挂接/改挂审计"},
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    action: Mapped[str] = mapped_column(String(16))  # LINK / REBIND
+    identity_id: Mapped[int] = mapped_column(BigInteger)
+    channel: Mapped[str] = mapped_column(String(32))
+    channel_user_id: Mapped[str] = mapped_column(String(64))
+    from_user_id: Mapped[int] = mapped_column(BigInteger)
+    from_user_name: Mapped[str] = mapped_column(String(64))
+    to_user_id: Mapped[int] = mapped_column(BigInteger)
+    to_user_name: Mapped[str] = mapped_column(String(64))
+    moved_counts: Mapped[str | None] = mapped_column(String(512))
+    operator_id: Mapped[int] = mapped_column(BigInteger)
+    operator_name: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=3), default=now, server_default=text("CURRENT_TIMESTAMP(3)")
+    )
