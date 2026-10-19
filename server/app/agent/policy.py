@@ -16,6 +16,13 @@ from app.standards.rules import (
 )
 from app.standards.schema import Standard
 
+# 纯闲聊引导话术（2026-10-19 拍板）：识别寒暄/无关内容时不判型、不抽取，温和引导回正题
+CHITCHAT_GUIDE = "我是需求收集助手，专门帮你把需求记清楚、提给受理方。直接说说你想提的需求就行，比如「报表想加个按机构导出」。"
+
+# 无描述白话邀请（2026-10-19 拍板）：底稿（content）为空且未达提交门槛时的对话开场白——
+# 一句话同时喂饱底稿回填、要素抽取与轻重判定；替代此前「请补充原始提报文本」的术语追问
+DESC_INVITE = "请先用一句话描述一下你的需求，比如「报表想加个按机构导出」。"
+
 
 def _numbers(text) -> set:
     """文本中的全部数字（含小数），用于 FR-08 量化事实溯源。"""
@@ -188,7 +195,7 @@ def schema_errors_for_key(standard, form, key):
     return field_error(element, get_value(form, element.field_path))
 
 
-def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_form, form):
+def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_form, form, count_keys=None):
     previous = {e.key: e for e in prev}
     fields = {e.key: e for e in standard.elements}
     output = []
@@ -202,6 +209,10 @@ def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_
         elif said_skip and element.key == prev_target and not fields[element.key].required and status != "OK":
             status, note = "SKIP", "用户选择后续补充"
         elif element.key == prev_target and status != "OK":
+            attempts = min(standard.max_attempts, attempts + 1)
+        elif count_keys and element.key in count_keys and changed and status != "OK":
+            # 手改接续计数（2026-10-19 拍板）：本轮手改过的要素仍不达标记 1 次（没碰的不记），
+            # 与对话路径「问满两次放过」同口径——消灭手改反复重问无终点的漏洞
             attempts = min(standard.max_attempts, attempts + 1)
         if status == "OK":
             attempts = 0
@@ -361,7 +372,83 @@ def reply_for(standard, target, form, *, light: bool = False, business: bool = F
     return reply
 
 
-def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementStatus], prev_target: str | None, previous_form: dict, text: str, *, standards=None):
+def _quoted_reask(standard: Standard, target: ElementStatus, form: dict) -> str:
+    """手改后仍不达标的引述式重问（2026-10-19 拍板）：引述用户刚填的原话+说明差距+追问模板，
+    避免「我不是填了吗」的观感；手填值本身是用户权威，只提示不擅改。"""
+    field = next(e for e in standard.elements if e.key == target.key)
+    value = str(get_value(form, field.field_path) or "").replace("\n", " ").strip()
+    snippet = value[:20] + ("…" if len(value) > 20 else "")
+    template = field.ask_l2 or field.ask_l1 or field.ask_missing or f"请补充{field.label}，以便把需求记录清楚。"
+    hint = target.note or field.vague_hint or "还不够具体"
+    return f"你填的「{field.label}」『{snippet}』我记下了，不过{hint}——" + template
+
+
+def _supplement_confirm(standard: Standard, previous_form: dict, merged: dict, prev_target: str | None, *, skip_keys=None) -> str:
+    """补充/纠正的引述式确认（2026-10-19 拍板）：列出本轮值发生变化的非当前问题要素并引述
+    新值片段请用户确认——与 C3 双锚定话术同风格，AI 听错/抽错时用户能当场发现并纠正。
+    系统字段/底稿/标题/类型不做确认（content 为首轮回填、title/类型由系统判定）；
+    skip_keys（手改场景=用户手填的要素）已由手改播报告知，不再重复确认。"""
+    parts = []
+    for field in standard.elements:
+        if field.system or field.key in ("title", "demandTypeCode", "content") or field.key == prev_target or (skip_keys and field.key in skip_keys):
+            continue
+        new_v = get_value(merged, field.field_path)
+        old_v = get_value(previous_form, field.field_path)
+        if not blank(new_v) and old_v != new_v:
+            text = str(new_v).replace("\n", " ").strip()
+            snippet = text if len(text) <= 20 else text[:20] + "…"
+            parts.append(f"「{field.label}」已按你补充的更新：{snippet}")
+    if not parts:
+        return "好的，补充的我记下了。"
+    return "；".join(parts) + "。"
+
+
+def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], previous_form: dict, text: str, *, standards=None) -> dict:
+    """纯闲聊分流（2026-10-19 拍板，问题③）：不抽取、不判型/轻重、不计 attempts，
+    回复引导话术并（对话进行中时）重问当前问题；
+    prepare 已把本轮闲聊原文回填为 A8 底稿（content==本轮消息即误回填），清掉防脏数据留草稿。"""
+    merged = deepcopy(form)
+    field_sources = dict(sources)
+    if text.strip() and (merged.get("content") or "") == text:
+        merged.pop("content", None)
+        field_sources.pop("content", None)
+    type_code = merged.get("demandTypeCode")
+    selected = (standards[type_code] if standards else standard_loader.get(type_code)) if type_code else None
+    standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
+    recognition = (merged.get("ext") or {}).get("typeRecognition")
+    mode = (merged.get("ext") or {}).get("mode")
+    light = (mode or {}).get("level") == "light"
+    curr = [e for e in assess(standard, merged, light=light)]
+    # prev_target 传 None：attempts/SKIP 只继承不计数——用户没作答当前问题，不能按答错惩罚
+    curr = inherit_and_count(prev, curr, None, False, standard=standard, previous_form=previous_form, form=merged)
+    is_business = business_confirmed(recognition)
+    if light:
+        can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
+    else:
+        active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
+        can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
+    target = pick_follow_up(standard, curr, business=is_business, light=light, form=merged, can_submit=can_submit)
+    reply = CHITCHAT_GUIDE
+    if target is not None:
+        reply += " " + reply_for(standard, target, merged, light=light, business=is_business)
+    return {
+        "structured": merged, "fieldSources": field_sources,
+        "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
+        "askedTarget": target.key if target else None, "canSubmit": can_submit, "ready": can_submit,
+        "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
+        "quickReplies": quick_replies(standard, target), "reply": reply,
+        "typeRecognition": recognition, "mode": mode, "granularityHint": None, "impactHints": [],
+    }
+
+
+def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementStatus], prev_target: str | None, previous_form: dict, text: str, *, standards=None, manual_keys=None):
+    # 意图分流（2026-10-19 拍板）：模型判定本轮在做什么；纯闲聊走独立分支（不抽取不判定），
+    # 补充/提问/指令照常合并抽取，但不按"答错当前问题"惩罚（attempts 不计数）。
+    # manual_keys（手改抽取链路，2026-10-19 拍板）：本轮用户手填的要素 key——
+    # ①引述确认跳过（播报已告知）②仍不达标按手改口径计数 ③被重问时用引述式话术
+    kind = output.intent.kind if output.intent else "answer"
+    if kind == "chitchat":
+        return _process_chitchat(form, sources, prev, previous_form, text, standards=standards)
     merged, field_sources, selected = merge_structured(output.structured, form, sources, standards=standards, grounded_text=text)
     # 未定类型仍使用共用三个质量字段，不暴露 TECH 扩展要素。
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
@@ -385,7 +472,13 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     # 用户不知道为何只问 4 项、也不知道 AI 做过"小改动"判断；用户手动定过口径（origin=user）不播
     mode_first_light = prev_mode_level is None and light
     curr = complete_elements(standard, merged, output.elements, light=light)
-    curr = inherit_and_count(prev, curr, prev_target, user_said_skip(standard, text), standard=standard, previous_form=previous_form, form=merged)
+    # 仅 answer 才把 prev_target 按"答了没答好"计数；supplement/question/command 传 None——
+    # 用户没回答当前问题（在补充别的/提问/发指令），不计 attempts，SKIP 状态照常继承
+    counting = kind == "answer"
+    curr = inherit_and_count(prev, curr, prev_target if counting else None,
+                             user_said_skip(standard, text) if counting else False,
+                             standard=standard, previous_form=previous_form, form=merged,
+                             count_keys=manual_keys)
     # B 区必填按判型门槛生效（PRD §4.3、FR-03 分支）：业务需求全量四区，否则 A/C/D
     is_business = business_confirmed(recognition)
     # 先算提交门槛，再据"可提交即停问软质量"选追问目标：必填已齐便不再对不够量化的非空必填项发问
@@ -409,22 +502,53 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         solution_text = get_value(merged, solution_field.field_path).replace("\n", " ").strip()
         snippet = solution_text if len(solution_text) <= 30 else solution_text[:30] + "…"
         solution_notice = f"你说的「{snippet}」我先记到「建议方案」里了，会随需求一起给受理方参考——最终做法由产品和技术评估后再定。"
-    reply = reply_for(standard, target, merged, light=light, business=is_business)
-    if mode_upgraded:
-        reply = "这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。" + reply
-    if mode_first_light:
-        reply = "这个需求听起来是个小改动，我按轻量提报帮你登记，只确认几项关键信息就行。" + reply
-    if solution_notice:
-        reply = reply + " " + solution_notice
-    if impacts:
-        reply = " ".join(impacts) + " " + reply
-    if granularity:
-        reply = granularity["hint"] + " " + reply
-    # 打回闭环（2026-10-11 方案③）：returnReason 留存期间回复白话引述打回原因引导补改，
-    # 重提成功服务端清除 returnReason 后引述自然消失；模型自述不可靠，引述必须由模板层保证
-    return_reason = ((merged.get("ext") or {}).get("returnReason") or {}).get("reason")
-    if return_reason:
-        reply = f"这条需求之前被打回过，打回原因是「{return_reason}」。按这个说明改好后就能重新提交。" + reply
+    # command（流程指令，2026-10-19 拍板）：回复聚焦指令本身，不叠加模式播报/方案播报等前缀——
+    # 用户说「提交吧」时播「这个需求听起来改动面不小」完全文不对题
+    if kind == "command":
+        if can_submit:
+            reply = "好的，信息都齐了，点下方「提交」按钮就能提报。"
+        else:
+            missing_labels = [f.label for f in standard.elements if f.key in compute_missing(standard, merged)]
+            reply = "还差几项必填信息才能提交：" + "、".join(f"「{label}」" for label in missing_labels) + "。"
+            if target is not None:
+                reply += " " + reply_for(standard, target, merged, light=light, business=is_business)
+            else:
+                reply += " 请在下方表单里补齐后提交。"
+    else:
+        # 手改要素仍不达标被选中重问时换引述式话术（2026-10-19 拍板）：引原话+说差距，避免「我不是填了吗」
+        if target is not None and manual_keys and target.key in manual_keys and target.status == "VAGUE":
+            reply = _quoted_reask(standard, target, merged)
+        else:
+            reply = reply_for(standard, target, merged, light=light, business=is_business)
+        # 意图前缀（2026-10-19 拍板）：补充引述确认/提问要素级解释后桥接回当前问题——
+        # 当前问题未被作答、仍是缺口首位时加「回到刚才的问题」衔接，观感接续而非各说各的
+        bridge = " 回到刚才的问题——" if target is not None and prev_target and target.key == prev_target else " "
+        if kind == "supplement":
+            reply = _supplement_confirm(standard, previous_form, merged, prev_target, skip_keys=manual_keys) + bridge + reply
+        elif kind == "question":
+            qkey = output.intent.target_key if output.intent else None
+            qfield = next((f for f in standard.elements if f.key == qkey), None)
+            if qfield is not None:
+                explain = f"「{qfield.label}」{qfield.ask_missing or qfield.ask_l1 or f'是要说明{qfield.label}的具体情况。'}"
+                # 解释的正是当前问题要素时，解释话术本身已是追问，不重复问
+                reply = explain if target is not None and target.key == qkey else explain + bridge + reply
+            else:
+                reply = "我主要帮你把需求记清楚，这个问题我说不好；你按自己的理解大概说说，我帮你整理。" + bridge + reply
+        if mode_upgraded:
+            reply = "这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。" + reply
+        if mode_first_light:
+            reply = "这个需求听起来是个小改动，我按轻量提报帮你登记，只确认几项关键信息就行。" + reply
+        if solution_notice:
+            reply = reply + " " + solution_notice
+        if impacts:
+            reply = " ".join(impacts) + " " + reply
+        if granularity:
+            reply = granularity["hint"] + " " + reply
+        # 打回闭环（2026-10-11 方案③）：returnReason 留存期间回复白话引述打回原因引导补改，
+        # 重提成功服务端清除 returnReason 后引述自然消失；模型自述不可靠，引述必须由模板层保证
+        return_reason = ((merged.get("ext") or {}).get("returnReason") or {}).get("reason")
+        if return_reason:
+            reply = f"这条需求之前被打回过，打回原因是「{return_reason}」。按这个说明改好后就能重新提交。" + reply
     return {
         "structured": merged, "fieldSources": field_sources,
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
@@ -432,4 +556,54 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
         "quickReplies": quick_replies(standard, target), "reply": reply,
         "typeRecognition": recognition, "mode": mode, "granularityHint": granularity, "impactHints": impacts,
+    }
+
+
+def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, changed_keys=None) -> dict:
+    """对话外事件（手改要素/附件回执，2026-10-19 拍板问题②）后的流程接续，不调模型：
+    规则层重算要素状态、从上一轮对话快照继承 attempts/SKIP（prev_target=None 不按对话答错计数；
+    changed_keys=本轮手改的要素，值有变化仍不达标按手改口径记 1 次、满 2 次放过），
+    选下一追问目标并生成话术；必填已齐时给完成话术。手改清空的必填项按 MISSING 自然被重问，
+    手改仍不达标（VAGUE）被重问时用引述式话术。
+    返回 {reply, askedTarget, elements, canSubmit, guidanceComplete, quickReplies}，
+    payload 结构对齐对话结果消息，供前端质量清单回放与下一轮 previous 快照。"""
+    ext = form.get("ext") or {}
+    mode = ext.get("mode") or {}
+    light = (mode.get("level") if isinstance(mode, dict) else None) == "light"
+    recognition = ext.get("typeRecognition") or {}
+    is_business = business_confirmed(recognition if isinstance(recognition, dict) else {})
+    curr = list(assess(standard, form, light=light))
+    prev_elements = [ElementStatus.model_validate(e) for e in ((previous or {}).get("elements") or [])]
+    curr = inherit_and_count(prev_elements, curr, None, False, standard=standard,
+                             previous_form=(previous or {}).get("structured") or {}, form=form,
+                             count_keys=changed_keys)
+    if light:
+        can_submit = not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS)
+    else:
+        active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
+        can_submit = not schema_errors(standard, form, required=True, active_zones=active_zones)
+    # 无描述白话邀请（2026-10-19 拍板）：底稿为空且未达门槛时，先请用户一句话描述需求——
+    # 一句话同时喂饱底稿回填、要素抽取与轻重判定。仅非必填 content（科技标准）适用；
+    # MATL/TRAIN 的 content 仍必填，维持原追问（待独立助手重建）
+    content_field = next((f for f in standard.elements if f.key == "content"), None)
+    if content_field is not None and not content_field.required and blank(get_value(form, "content")) and not can_submit:
+        content_status = next((e for e in curr if e.key == "content"), None)
+        return {
+            "reply": DESC_INVITE,
+            "askedTarget": "content",
+            "elements": [e.model_dump(by_alias=True) for e in curr],
+            "canSubmit": can_submit, "guidanceComplete": False,
+            "quickReplies": quick_replies(standard, content_status),
+        }
+    target = pick_follow_up(standard, curr, business=is_business, light=light, form=form, can_submit=can_submit)
+    if target is not None and changed_keys and target.key in changed_keys and target.status == "VAGUE":
+        reply = _quoted_reask(standard, target, form)
+    else:
+        reply = reply_for(standard, target, form, light=light, business=is_business)
+    return {
+        "reply": reply,
+        "askedTarget": target.key if target else None,
+        "elements": [e.model_dump(by_alias=True) for e in curr],
+        "canSubmit": can_submit, "guidanceComplete": target is None,
+        "quickReplies": quick_replies(standard, target),
     }

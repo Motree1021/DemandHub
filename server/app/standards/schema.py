@@ -139,6 +139,7 @@ class Standard(StandardModel):
         if len(self.follow_up_order) != len(set(self.follow_up_order)) or not set(self.follow_up_order) <= element_keys:
             raise ValueError("follow_up_order 必须引用唯一的质量要素")
         required = {e.key for e in self.elements if e.required}
-        if not {"title", "demandTypeCode", "content"} <= required:
-            raise ValueError("标准必须声明 title/demandTypeCode/content 为必填")
+        # 2026-10-19 拍板：content 不再强制必填（科技标准已改为系统提取项）；仅约束结构性默认字段
+        if not {"title", "demandTypeCode"} <= required:
+            raise ValueError("标准必须声明 title/demandTypeCode 为必填")
         return self

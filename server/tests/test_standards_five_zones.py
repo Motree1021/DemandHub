@@ -18,7 +18,8 @@ def test_five_zone_element_count_and_codes():
 def test_required_set_and_system_snapshot():
     standard = get("TECH")
     interactive_required = {e.key for e in standard.elements if e.required and not e.system}
-    assert interactive_required == {"title", "demandTypeCode", "urgency", "content",
+    # 2026-10-19 拍板：content（A8原话底稿）改为系统提取项，移出必填集
+    assert interactive_required == {"title", "demandTypeCode", "urgency",
                                     "businessGoal", "businessBackground", "businessValue", "stakeholders",
                                     "userRole", "userGoal", "useScenario", "painPoint",
                                     "functionDescription", "inputOutput", "acceptanceCriteria"}

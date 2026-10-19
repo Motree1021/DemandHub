@@ -181,30 +181,31 @@ describe('FormSnapshotCard 要素实时卡', () => {
     expect(wrapper.find('.zone').exists()).toBe(false)
     expect(wrapper.find('.type-row').exists()).toBe(false)
   })
-  // 微需求快速通道（方案②）：AI 判 mode=light 时折叠态显示「轻量提报·必填 X/4」，红星只标最小集
+  // 微需求快速通道（方案②）：AI 判 mode=light 时折叠态显示「轻量提报·必填 X/3」，红星只标最小集；
+  // 2026-10-19 拍板：原话（content）移出最小集——系统提取项，非用户提供项
   const lightStandard: Standard = {
     ...standard,
     elements: [...standard.elements,
-      { key: 'content', label: '原始提报文本', kind: 'text', zone: 'A', required: true },
+      { key: 'content', label: '原始提报文本', kind: 'text', zone: 'A', required: false },
       { key: 'acceptanceCriteria', label: '期望效果', kind: 'text', zone: 'D', path: 'elements.D.acceptanceCriteria', required: true }]
   }
-  it('light 模式：折叠态显示「轻量」迷你标签+「必填 X/4」，不显示常规必填进度', () => {
+  it('light 模式：折叠态显示「轻量」迷你标签+「必填 X/3」，不显示常规必填进度', () => {
     const value = form()
     value.ext = { mode: { level: 'light' } }
     const wrapper = mount(FormSnapshotCard, { props: { standard: lightStandard, form: value }, global: { stubs } })
-    // 标题+紧急程度已填，原话/期望效果待补 → 2/4；口径用色块标签展示而非文本「·」拼接
+    // 标题+紧急程度已填，期望效果待补 → 2/3；口径用色块标签展示而非文本「·」拼接
     expect(wrapper.find('.mode-pill').text()).toBe('轻量')
-    expect(wrapper.text()).toContain('必填 2/4')
+    expect(wrapper.text()).toContain('必填 2/3')
     expect(wrapper.text()).not.toContain('必填 3/7')
   })
-  it('light 模式：红星只标最小集4项（标题/原话/紧急程度/期望效果），C/D其余与B区不标星', () => {
+  it('light 模式：红星只标最小集3项（标题/紧急程度/期望效果），原话/C/D其余与B区不标星', () => {
     const value = form()
     value.ext = { mode: { level: 'light' } }
     const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard: lightStandard, form: value }, global: { stubs } })
     const rows = wrapper.findAll('.el')
     const hasStar = (label: string) => rows.find(row => row.text().includes(label))!.find('.req').exists()
     expect(hasStar('需求标题')).toBe(true)
-    expect(hasStar('原始提报文本')).toBe(true)
+    expect(hasStar('原始提报文本')).toBe(false)
     expect(hasStar('紧急程度')).toBe(true)
     expect(hasStar('期望效果')).toBe(true)
     expect(hasStar('需求类型')).toBe(false)

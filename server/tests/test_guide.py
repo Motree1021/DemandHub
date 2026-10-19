@@ -257,3 +257,22 @@ async def test_unique_session_owned_draft_and_two_drafts_isolate(session_factory
             await session_service.messages(db, another, sid)
         assert error.value.code == 1402
     assert other_did != did
+
+
+async def test_chitchat_first_turn_guides_without_polluting_draft(session_factory, user):
+    """问题③链路（2026-10-19 拍板）：首句闲聊「您好」——模型判 chitchat 后不抽取不判型，
+    prepare 误回填的 A8 底稿（content==本轮消息）被清理不入库，回复引导话术，会话保持 ACTIVE。"""
+    did, sid, revision = await make_draft(session_factory, user, extra={"content": None}, request="chitchat-1")
+    fake = FakeArk({"structured": {}, "elements": [], "intent": {"kind": "chitchat"}})
+    req = request(did, sid, revision, request_id="chitchat-turn-1", message="您好")
+    events = []
+    async with session_factory() as db:
+        async for event in GuideService(db, user, fake).stream(req):
+            events.append(event)
+    text = "".join(events)
+    assert "我是需求收集助手" in text and '"status":"completed"' in text
+    async with session_factory() as db:
+        assert not (await db.get(Demand, did)).content  # 「您好」不当需求底稿入库
+        # 2026-10-19 拍板：content 非必填永不追问，引导话术后接续下一真实缺口
+        session = await db.get(AgentSession, sid)
+        assert session.status == "ACTIVE" and session.asked_target == "userRole"

@@ -57,11 +57,22 @@ class ModeSignalOutput(AgentModel):
     evidence: str = ""
 
 
+class Intent(AgentModel):
+    """本轮消息意图（2026-10-19 拍板）：模型只判断「用户在做什么」；
+    计不计 attempts、说什么话、流程怎么走由纯函数决定（policy.process）。
+    answer=在回答当前问题（默认，缺省按此处理，向后兼容）；supplement=补充/纠正之前的内容，
+    未回答当前问题（targetKey 指向被补充要素）；chitchat=纯寒暄/与需求无关；
+    question=在向 AI 提问（targetKey 指向相关要素）；command=发出指令（如「提交吧」）。"""
+    kind: Literal["answer", "supplement", "chitchat", "question", "command"] = "answer"
+    target_key: str | None = None
+
+
 class ModelOutput(BaseModel):
     structured: dict[str, Any] = Field(default_factory=dict)
     elements: list[ElementStatus] = Field(default_factory=list)
     type_signals: TypeSignalsOutput | None = None
     mode_signal: ModeSignalOutput | None = None
+    intent: Intent | None = None
 
 
 class GuideResult(AgentModel):
@@ -123,7 +134,19 @@ def parse_model_output(raw: str) -> ModelOutput:
         if status not in {"OK", "VAGUE", "MISSING"}:
             status = "VAGUE"
         elements.append(ElementStatus(key=item["key"], status=status, note=item.get("note") if isinstance(item.get("note"), str) else ""))
-    return ModelOutput(structured=value["structured"], elements=elements, type_signals=_parse_type_signals(value.get("typeSignals")), mode_signal=_parse_mode_signal(value.get("modeSignal")))
+    return ModelOutput(structured=value["structured"], elements=elements, type_signals=_parse_type_signals(value.get("typeSignals")), mode_signal=_parse_mode_signal(value.get("modeSignal")), intent=_parse_intent(value.get("intent")))
+
+
+def _parse_intent(value) -> Intent | None:
+    """intent 可选且宽容（2026-10-19 拍板）：五选一辅助信号，kind 非法/结构畸形时按未输出
+    （answer）处理，不像 modeSignal 那样抛错走整轮修复——为一个辅助标签重试整轮不划算。"""
+    if not isinstance(value, dict):
+        return None
+    kind = value.get("kind")
+    if kind not in ("answer", "supplement", "chitchat", "question", "command"):
+        return None
+    target_key = value.get("targetKey") if isinstance(value.get("targetKey"), str) else None
+    return Intent(kind=kind, target_key=target_key or None)
 
 
 def _parse_mode_signal(value) -> ModeSignalOutput | None:

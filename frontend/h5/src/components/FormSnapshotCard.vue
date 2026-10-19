@@ -3,7 +3,7 @@
     <div class="card-title" @click="collapsed = !collapsed">
       <van-icon name="description" />
       <span>需求要素表单（实时）</span>
-      <small v-if="collapsed && isLight"><i class="mode-pill">轻量</i>必填 {{ lightFilled }}/4</small>
+      <small v-if="collapsed && isLight"><i class="mode-pill">轻量</i>必填 {{ lightFilled }}/{{ LIGHT_FIELD_KEYS.length }}</small>
       <small v-else-if="collapsed">必填 {{ baseFilled }}/{{ baseTotal }}<template v-if="businessConfirmed"> · 业务 {{ bizFilled }}/{{ bizTotal }}</template></small>
       <small v-else>{{ isLight ? '轻量提报 · ' : '' }}点任意一项可直接修改</small>
       <van-icon :name="collapsed ? 'arrow-down' : 'arrow-up'" class="fold" />
@@ -55,10 +55,11 @@ const baseTotal = computed(() => baseRequiredFields.value.length)
 const baseFilled = computed(() => baseRequiredFields.value.filter(field => filled(field)).length)
 const bizTotal = computed(() => bizRequiredFields.value.length)
 const bizFilled = computed(() => bizRequiredFields.value.filter(field => filled(field)).length)
-// 微需求快速通道（方案②）：AI 判 mode=light（换 logo/调样式等小需求）时折叠态显示「轻量提报 X/4」，
-// X/4 只数最小集（标题/原文/紧急程度/期望效果），其余要素不标星不算进度，与后端 LIGHT_REQUIRED_KEYS 同口径
+// 微需求快速通道（方案②）：AI 判 mode=light（换 logo/调样式等小需求）时折叠态显示「轻量提报 X/3」，
+// 最小集只数（标题/紧急程度/期望效果），其余要素不标星不算进度，与后端 LIGHT_REQUIRED_KEYS 同口径；
+// 2026-10-19 拍板：原文（content）移出最小集——系统提取项，非用户提供项
 const isLight = computed(() => demandModeOf(props.form) === 'light')
-const LIGHT_FIELD_KEYS = ['title', 'content', 'urgency', 'acceptanceCriteria']
+const LIGHT_FIELD_KEYS = ['title', 'urgency', 'acceptanceCriteria']
 const lightFilled = computed(() => LIGHT_FIELD_KEYS.filter(key => {
   const field = groups.value.flatMap(group => group.fields).find(item => item.key === key)
   return field ? filled(field) : false

@@ -65,16 +65,16 @@ def field_error(field: Element, value: Any, *, today: date | None = None) -> str
     if field.kind == "date":
         try:
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-                return f"{field.label}日期必须为YYYY-MM-DD"
+                return f"{field.label}请点日历选择，或写成「2026-11-20」这样的日期"
             parsed = date.fromisoformat(value)
             if parsed.year < 1000:
-                return f"{field.label}日期必须为YYYY-MM-DD"
+                return f"{field.label}请点日历选择，或写成「2026-11-20」这样的日期"
             # 期望交付时间语义：交付只能安排在今天或以后。模型曾把省略年份的"10/30"错补成
             # 2015-10-30（格式合法但明显错误），过去日期即便格式合法也判无效，促使追问/丢弃
             if field.key == "expectDeliveryAt" and parsed < (today or date.today()):
                 return f"{field.label}不能早于今天"
         except ValueError:
-            return f"{field.label}日期必须为YYYY-MM-DD"
+            return f"{field.label}请点日历选择，或写成「2026-11-20」这样的日期"
     return None
 
 
@@ -128,10 +128,11 @@ def business_confirmed(recognition: dict | None) -> bool:
     return business > max(float(recognition.get(layer) or 0) for layer in ("user", "function"))
 
 
-# 微需求快速通道（2026-10-11 方案②）：light 最小必填集 = A8 原话 + A1 标题 + A6 紧急度 + 期望效果（写 D8），
+# 微需求快速通道（2026-10-11 方案②）：light 最小必填集 = A1 标题 + A6 紧急度 + 期望效果（写 D8），
 # A2 需求类型为结构性默认值随行；C/D 其余要素不追问不标星不拦截。换 logo/调样式/文案微调这类需求
 # 填不满 12 项模板（C 区用户故事、D 区输入输出/量化验收会语义性误伤），轻量口径只保受理最小信息。
-LIGHT_REQUIRED_KEYS = {"title", "demandTypeCode", "content", "urgency", "acceptanceCriteria"}
+# 2026-10-19 拍板：A8 原话底稿移出最小集——系统提取项（回填/兜底归系统），不作为用户提供项
+LIGHT_REQUIRED_KEYS = {"title", "demandTypeCode", "urgency", "acceptanceCriteria"}
 
 
 def demand_mode(form: dict) -> str:
@@ -178,10 +179,9 @@ def assess(standard: Standard, form: dict, *, light: bool = False):
             status, note = "VAGUE", field_error(field, value)
         elif field.kind == "text" and field.key != "content":
             # content（原始提报文本）是系统原样保留的用户原话底稿（FR-02/D6），只在首条消息时
-            # 原样回填、之后不再改写。因此：非空即 OK，不做歧义词/长度/可量化等任何软质量降级，
-            # 也永不作为追问目标——否则原话含「方便/尽快」等正常口语、或首句较短时，会冒出
-            # "请补充原始提报文本"这类用户无法回答、且后续补充也改不了原话的死循环追问。
-            # 信息是否充分由可继续更新的场景/痛点/验收等要素承载；空值仍判 MISSING（提交必填拦截）。
+            # 原样回填、之后不再改写。因此：非空即 OK，不做歧义词/长度/可量化等任何软质量降级。
+            # 2026-10-19 拍板：content 已从必填移除（系统提取项），空值仍判 MISSING 仅作质量清单
+            # 标记，不追问、不拦提交；信息是否充分由可继续更新的场景/痛点/验收等要素承载。
             text = value.strip()
             rule = field.rule
             # 歧义词长句豁免（2026-10-12 拍板）：模糊表态只在"短句且以模糊词为主体"时才追问

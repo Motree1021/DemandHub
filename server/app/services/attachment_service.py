@@ -208,6 +208,10 @@ async def save_attachment(
             {"kind": "attachmentReceipt", "attachmentId": row.id, "fileName": name},
             request_id=request_id,
         )
+        # 附件回执后的流程接续（2026-10-19 拍板，与手改同套逻辑）：回执完不停顿，
+        # 规则层续上下一追问/完成话术，对话不中断
+        from app.services.demand_service import append_conversation_follow_up
+        await append_conversation_follow_up(db, user, demand)
     return row
 
 

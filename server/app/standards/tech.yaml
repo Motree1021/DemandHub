@@ -82,16 +82,17 @@ elements:
   label: 期望交付时间
   kind: date
   ask_missing: 这个需求比较急。期望什么时候交付？说个大概时间就行，比如「月底前」或「11月20日」。
+# A8 原始提报文本（2026-10-19 拍板定位调整）：系统提取的用户原话底稿（对话首轮回填/手改长文本归位/提交兜底），
+# 用户可编辑但永不由 AI 追问、不作提交门槛——「原始提报文本」不是用户能理解的要素概念。
+# 质量清单保留展示（非空即合格、空缺失仅标记）；min_len 已删——非必填格式校验同样拦提交，短标题兜底回填反被卡
 - key: content
   code: A8
   zone: A
   label: 原始提报文本
   kind: text
-  required: true
-  ok_when: ≥10 字，用户原始描述完整保留，作为追溯底稿
-  rule:
-    min_len: 10
-  vague_hint: 描述过短，缺业务背景与期望效果
+  required: false
+  placeholder: 系统自动记录你说的原话，一般不用改
+  ok_when: 用户原始描述完整保留，作为追溯底稿
 # ---- B 区：业务需求要素（Why——识别为业务需求时必填，提交按 active_zones 条件生效）----
 - key: businessGoal
   code: B1

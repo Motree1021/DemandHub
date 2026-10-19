@@ -47,10 +47,16 @@ async def test_upload_png_and_receipt(client, auth_headers, attachment_dir):
     assert len(stored) == 1 and stored[0].read_bytes() == PNG
     # 固定回执不调模型：上传 USER 消息 + AI 回执 ASSISTANT 消息成对落会话
     messages = (await client.get(f"{BASE}/agent/session/{session_id}/messages", headers=auth_headers)).json()["data"]
-    assert messages[-2]["content"] == "[上传附件] logo.png"
-    assert messages[-2]["structuredPayload"] and json.loads(messages[-2]["structuredPayload"])["kind"] == "attachment"
-    assert messages[-1]["content"].startswith("已收到附件「logo.png」")
-    assert json.loads(messages[-1]["structuredPayload"])["kind"] == "attachmentReceipt"
+    assert messages[-3]["content"] == "[上传附件] logo.png"
+    assert messages[-3]["structuredPayload"] and json.loads(messages[-3]["structuredPayload"])["kind"] == "attachment"
+    assert messages[-2]["content"].startswith("已收到附件「logo.png」")
+    assert json.loads(messages[-2]["structuredPayload"])["kind"] == "attachmentReceipt"
+    # 回执后的流程接续（2026-10-19 拍板）：AI 不停在回执，规则层续上下一追问（首个必填缺口），对话不中断
+    follow = json.loads(messages[-1]["structuredPayload"])
+    assert "kind" not in follow  # 接续消息无 kind，可被 guide.prepare 认作下一轮 previous 快照
+    assert follow["askedTarget"] and follow["elements"] and follow["structured"] is not None
+    assert follow["revision"] == draft["revision"]  # 附件不改表单，revision 不变，前端质量清单可回放
+    assert messages[-1]["content"] == follow["reply"]
 
 
 async def test_upload_rejects_bad_type_magic_size(client, auth_headers, attachment_dir):

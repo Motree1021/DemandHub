@@ -1,6 +1,8 @@
 import pytest
 
 from app.agent.policy import (
+    CHITCHAT_GUIDE,
+    DESC_INVITE,
     anchored_template,
     complete_elements,
     inherit_and_count,
@@ -9,9 +11,10 @@ from app.agent.policy import (
     pick_follow_up,
     process,
     reply_for,
+    resume_follow_up,
     user_said_skip,
 )
-from app.agent.schemas import ElementStatus, ModelOutput, ModeSignalOutput, parse_model_output
+from app.agent.schemas import ElementStatus, Intent, ModelOutput, ModeSignalOutput, parse_model_output
 from app.standards.loader import get
 from app.standards.rules import assess
 
@@ -548,3 +551,263 @@ def test_tech_subtype_never_asked_and_not_blocking():
     del form_no_subtype["elements"]["A"]["techSubtype"]
     result = process(ModelOutput(structured={}, elements=[]), form_no_subtype, {}, [], None, {}, "报表")
     assert result["canSubmit"] is True and result["askedTarget"] != "techSubtype"
+
+
+# ---- 意图分流（2026-10-19 拍板）：模型判断「用户在做什么」，计数/话术/接续由纯函数决定 ----
+
+
+def test_supplement_updates_and_returns_to_pending_question():
+    """问题①：用户没答当前问题、补充了之前要素——补充照常落库并引述确认，
+    当前问题不按「答错」计 attempts，话术桥接回到当前问题节点而非跳到下一问。"""
+    standard = get("TECH")
+    base = form()
+    prev = assess(standard, base)
+    # 第一轮：AI 问目标用户，用户答得不合格 → attempts=1
+    first = inherit_and_count(prev, prev, "userRole", False, standard=standard, previous_form=base, form=base)
+    # 第二轮：用户没答，转而补充了使用场景
+    output = ModelOutput(structured={"elements": {"C": {"useScenario": "客户经理每天晨会前查各渠道持仓"}}},
+                         elements=[], intent=Intent(kind="supplement", target_key="useScenario"))
+    result = process(output, base, {}, first, "userRole", base, "补充一下场景：客户经理每天晨会前查持仓")
+    assert result["structured"]["elements"]["C"]["useScenario"] == "客户经理每天晨会前查各渠道持仓"
+    # 当前问题未被作答：attempts 不增加（补充不算答错），状态仍 MISSING
+    urs = next(e for e in result["elements"] if e["key"] == "userRole")
+    assert urs["attempts"] == 1 and urs["status"] == "MISSING"
+    # 回到当前问题节点，而非顺推到下一个缺口
+    assert result["askedTarget"] == "userRole"
+    # 引述式确认（引新值片段请用户当场纠错）+ 桥接回当前问题
+    assert "「使用场景」已按你补充的更新：客户经理每天晨会前查各渠道持仓" in result["reply"]
+    assert "回到刚才的问题" in result["reply"]
+
+
+def test_supplement_without_changes_acknowledges():
+    """补充意图但模型没抽出可落库的新值：温和确认，不编造引述。"""
+    base = form()
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="supplement"))
+    result = process(output, base, {}, [], "userRole", base, "我再想想，刚才说的场景不变")
+    assert result["reply"].startswith("好的，补充的我记下了。")
+
+
+def test_chitchat_first_turn_cleans_backfilled_content():
+    """问题③：首句「您好」被 prepare 误回填为 A8 底稿（content==本轮消息）——闲聊分流清理掉，
+    不判型不抽取；2026-10-19 拍板后 content 非必填、永不追问，引导话术后接续下一真实缺口。"""
+    polluted = {**form(), "content": "您好"}
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="chitchat"))
+    result = process(output, polluted, {"content": "user"}, [], None, polluted, "您好")
+    # 误回填的底稿与来源一并清理，脏数据不留草稿
+    assert not result["structured"].get("content") and "content" not in result["fieldSources"]
+    assert result["typeRecognition"] is None and result["mode"] is None
+    assert result["reply"].startswith(CHITCHAT_GUIDE)
+    assert result["askedTarget"] == "userRole" and not result["canSubmit"]
+
+
+def test_chitchat_mid_conversation_keeps_draft_and_resumes_without_penalty():
+    """对话中期闲聊：A8 已有真实底稿（≠本轮消息）不误伤；重问当前问题且 attempts 不计数。"""
+    standard = get("TECH")
+    base = form()  # content 为真实需求描述
+    prev = assess(standard, base)
+    first = inherit_and_count(prev, prev, "userRole", False, standard=standard, previous_form=base, form=base)
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="chitchat"))
+    result = process(output, base, {}, first, "userRole", base, "谢谢")
+    assert result["structured"]["content"] == "客户经理每天需要查渠道报表和导出"
+    # 引导话术 + 重问当前问题（attempts=1 用 L2 示例话术）
+    assert result["reply"].startswith(CHITCHAT_GUIDE) and "可以这样写" in result["reply"]
+    assert result["askedTarget"] == "userRole"
+    assert next(e for e in result["elements"] if e["key"] == "userRole")["attempts"] == 1
+
+
+def test_question_explains_current_field_once_without_penalty():
+    """提问意图：用户问某要素是什么——给要素级解释（复用该要素提问话术），不按答错计数；
+    解释的正是当前问题时，解释话术本身即追问，不重复问两遍。"""
+    base = form()
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="question", target_key="userRole"))
+    result = process(output, base, {}, [], "userRole", base, "目标用户是指什么？")
+    assert result["askedTarget"] == "userRole"
+    assert next(e for e in result["elements"] if e["key"] == "userRole")["attempts"] == 0
+    assert result["reply"].startswith("「目标用户角色」") and result["reply"].count("给谁用") == 1
+    assert "回到刚才的问题" not in result["reply"]
+
+
+def test_question_about_other_field_bridges_back():
+    """问的不是当前问题要素：先解释所问要素，再桥接回当前问题。"""
+    base = form()
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="question", target_key="acceptanceCriteria"))
+    result = process(output, base, {}, [], "userRole", base, "验收标准是什么意思？")
+    assert result["reply"].startswith("「验收标准」") and "可检查的标准" in result["reply"]
+    assert "回到刚才的问题" in result["reply"] and result["askedTarget"] == "userRole"
+
+
+def test_question_without_target_falls_back():
+    """模型没给出相关要素（与表单无关的问题）：兜底话术引导用户按自己理解说，AI 帮整理。"""
+    base = form()
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="question"))
+    result = process(output, base, {}, [], "userRole", base, "这个系统是谁开发的？")
+    assert "我主要帮你把需求记清楚" in result["reply"]
+    assert "回到刚才的问题" in result["reply"] and result["askedTarget"] == "userRole"
+
+
+def test_command_ready_points_to_submit_button():
+    """指令意图·必填已齐：指引点提交按钮，不叠加模式播报等任何前缀（「提交吧」配「改动面不小」文不对题）。"""
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="command"),
+                         mode_signal=ModeSignalOutput(level="light", evidence="看着是小改动"))
+    result = process(output, acd_filled_form(), {}, [], None, {}, "提交吧")
+    assert result["canSubmit"] is True
+    assert result["reply"] == "好的，信息都齐了，点下方「提交」按钮就能提报。"
+
+
+def test_command_blocked_lists_missing_labels_and_continues():
+    """指令意图·必填未齐：白话列出缺哪几项，并接续追问当前缺口。"""
+    base = form()
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="command"))
+    result = process(output, base, {}, [], "userRole", base, "提交吧")
+    assert not result["canSubmit"]
+    assert result["reply"].startswith("还差几项必填信息才能提交：")
+    assert "「目标用户角色」" in result["reply"] and "「验收标准」" in result["reply"]
+    assert result["askedTarget"] == "userRole" and "给谁用" in result["reply"]
+
+
+def test_answer_is_default_and_counts_when_intent_absent():
+    """向后兼容：模型未输出 intent 按 answer 处理——prev_target 被作答但未合格时照常计 attempts。"""
+    base = form()
+    prev = assess(get("TECH"), base)
+    result = process(ModelOutput(structured={}, elements=[]), base, {}, prev, "userRole", base, "不知道")
+    assert next(e for e in result["elements"] if e["key"] == "userRole")["attempts"] == 1
+
+
+@pytest.mark.parametrize("raw,expected_kind,expected_target", [
+    ('{"structured":{},"elements":[],"intent":{"kind":"supplement","targetKey":"useScenario"}}', "supplement", "useScenario"),
+    ('{"structured":{},"elements":[],"intent":{"kind":"chitchat"}}', "chitchat", None),
+    ('{"structured":{},"elements":[]}', "answer", None),                       # 未输出：按 answer
+    ('{"structured":{},"elements":[],"intent":{"kind":"greeting"}}', "answer", None),  # 非法 kind：宽容按未输出
+    ('{"structured":{},"elements":[],"intent":"chitchat"}', "answer", None),   # 结构畸形：宽容按未输出
+    ('{"structured":{},"elements":[],"intent":{"kind":"question","targetKey":42}}', "question", None),  # targetKey 非字符串置空
+])
+def test_parse_intent_tolerant(raw, expected_kind, expected_target):
+    output = parse_model_output(raw)
+    assert (output.intent.kind if output.intent else "answer") == expected_kind
+    assert (output.intent.target_key if output.intent else None) == expected_target
+
+
+# ---- 对话外事件后的流程接续（2026-10-19 拍板问题②）：手改要素/附件回执后 resume_follow_up ----
+
+
+def test_resume_follow_up_asks_next_gap():
+    """手改后必填仍有缺口：追问下一项缺口（已填项不问），payload 结构对齐对话结果消息。"""
+    standard = get("TECH")
+    value = acd_filled_form()
+    del value["elements"]["C"]["userRole"]
+    follow = resume_follow_up(standard, value, None)
+    assert follow["askedTarget"] == "userRole" and "给谁用" in follow["reply"]
+    assert not follow["canSubmit"] and not follow["guidanceComplete"]
+    assert follow["elements"] and follow["quickReplies"] == []
+
+
+def test_resume_follow_up_all_filled_says_submittable():
+    """手改把最后缺口补齐：给完成话术告知可以提交，不再追问。"""
+    follow = resume_follow_up(get("TECH"), acd_filled_form(), None)
+    assert follow["askedTarget"] is None
+    assert follow["canSubmit"] and follow["guidanceComplete"]
+    assert "可以提交" in follow["reply"]
+
+
+def test_resume_follow_up_cleared_required_is_reasked():
+    """手改清空必填项：规则层判 MISSING 自然被重问，不需要特殊分支。"""
+    standard = get("TECH")
+    value = acd_filled_form()
+    value["elements"]["C"]["useScenario"] = ""
+    follow = resume_follow_up(standard, value, None)
+    assert follow["askedTarget"] == "useScenario"
+    assert next(e for e in follow["elements"] if e["key"] == "useScenario")["status"] == "MISSING"
+
+
+def test_resume_follow_up_inherits_attempts_without_counting():
+    """attempts/SKIP 从上一轮对话快照继承但不 +1（prev_target=None）：手改不算「答错当前问题」。"""
+    standard = get("TECH")
+    value = acd_filled_form()
+    del value["elements"]["C"]["userRole"]
+    asked_once = inherit_and_count(assess(standard, value), assess(standard, value), "userRole", False,
+                                   standard=standard, previous_form=value, form=value)
+    previous = {"structured": acd_filled_form(), "elements": [e.model_dump(by_alias=True) for e in asked_once]}
+    follow = resume_follow_up(standard, value, previous)
+    assert next(e for e in follow["elements"] if e["key"] == "userRole")["attempts"] == 1
+    # 追问额度照常生效：快照中 attempts 已满的问题不再被选为目标
+    exhausted = [e.model_copy(update={"attempts": 2}) if e.key == "userRole" else e for e in asked_once]
+    previous2 = {"structured": acd_filled_form(), "elements": [e.model_dump(by_alias=True) for e in exhausted]}
+    assert resume_follow_up(standard, value, previous2)["askedTarget"] != "userRole"
+
+
+def test_resume_follow_up_light_mode_minimal_gate():
+    """light 模式接续同口径：只按最小集追问/放行，C/D 大片缺失不拦。"""
+    standard = get("TECH")
+    value = light_form(urgency="NORMAL")
+    value["ext"] = {"mode": {"level": "light", "evidence": "换logo"}}
+    follow = resume_follow_up(standard, value, None)
+    assert follow["askedTarget"] == "acceptanceCriteria" and not follow["canSubmit"]
+    complete = light_form(urgency="NORMAL", elements={"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}})
+    complete["ext"] = {"mode": {"level": "light", "evidence": "换logo"}}
+    done = resume_follow_up(standard, complete, None)
+    assert done["askedTarget"] is None and done["canSubmit"] and "可以提交" in done["reply"]
+
+
+def test_resume_invites_plain_description_when_draft_blank():
+    """无描述白话邀请（2026-10-19 拍板）：底稿空且未达门槛 → 一句话邀请，
+    替代「请补充原始提报文本」的术语追问（截图案例：只手填了标题的场景）。"""
+    standard = get("TECH")
+    value = {"title": "修改系统名称", "demandTypeCode": "TECH", "urgency": "NORMAL", "elements": {}}
+    follow = resume_follow_up(standard, value, None)
+    assert follow["reply"] == DESC_INVITE
+    assert follow["askedTarget"] == "content" and follow["quickReplies"] == []
+    assert not follow["canSubmit"] and not follow["guidanceComplete"]
+
+
+def test_resume_invite_skipped_when_submittable():
+    """底稿空但必填已齐 → 不发邀请，直接完成话术（底稿由提交兜底回填，不打断用户）。"""
+    standard = get("TECH")
+    value = {**acd_filled_form(), "content": None}
+    follow = resume_follow_up(standard, value, None)
+    assert follow["askedTarget"] is None and follow["canSubmit"] and "可以提交" in follow["reply"]
+
+
+def test_resume_matl_content_still_required_and_asked():
+    """MATL/TRAIN 维持现状：content 仍必填、空时走原追问（待独立助手重建），不发白话邀请。"""
+    standard = get("MATL")
+    follow = resume_follow_up(standard, {"demandTypeCode": "MATL"}, None)
+    assert follow["reply"] != DESC_INVITE and follow["askedTarget"] is not None
+
+
+def test_resume_counts_manual_attempts_and_quotes_reask():
+    """手改计数+引述重问（2026-10-19 拍板）：手填的验收标准仍笼统——引原话+说差距地再问一次，
+    记 1 次；再改仍不达标记满 2 次放过（不再选中），没碰的要素不记。"""
+    standard = get("TECH")
+    # 仅验收标准笼统 + 紧急度空缺：can_submit=False，验收标准排在沉底的紧急度之前被选中
+    value = acd_filled_form()
+    value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    value["urgency"] = None
+    first = resume_follow_up(standard, value, None, changed_keys={"acceptanceCriteria"})
+    assert first["askedTarget"] == "acceptanceCriteria"
+    assert first["reply"].startswith("你填的「验收标准」『好用就行』我记下了，不过")
+    assert next(e for e in first["elements"] if e["key"] == "acceptanceCriteria")["attempts"] == 1
+    # 第二次手改仍不达标：记满 2 次放过，目标落到紧急度
+    value["elements"]["D"]["acceptanceCriteria"] = "好用"
+    previous = {"structured": acd_filled_form(), "elements": first["elements"]}
+    second = resume_follow_up(standard, value, previous, changed_keys={"acceptanceCriteria"})
+    assert next(e for e in second["elements"] if e["key"] == "acceptanceCriteria")["attempts"] == 2
+    assert second["askedTarget"] == "urgency"
+
+
+def test_resume_untouched_fields_not_counted():
+    """手改计数只针对本轮碰过的要素：改了别的字段，笼统的验收标准不记次数。"""
+    standard = get("TECH")
+    value = acd_filled_form()
+    value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    follow = resume_follow_up(standard, value, None, changed_keys={"userRole"})
+    assert next(e for e in follow["elements"] if e["key"] == "acceptanceCriteria")["attempts"] == 0
+
+
+def test_light_gate_not_blocked_by_missing_content():
+    """light 最小集移出 content（2026-10-19 拍板）：底稿空不拦提交门槛。"""
+    standard = get("TECH")
+    value = light_form(urgency="NORMAL", content=None,
+                       elements={"D": {"acceptanceCriteria": "首页顶部logo显示为新设计的蓝色版本"}})
+    value["ext"] = {"mode": {"level": "light", "evidence": "换logo"}}
+    follow = resume_follow_up(standard, value, None)
+    assert follow["canSubmit"] and follow["guidanceComplete"]

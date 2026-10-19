@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from copy import deepcopy
 from datetime import date, timedelta
 
@@ -10,6 +11,7 @@ from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
 from app.core.statemachine import engine
 from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, PromptVersion, now
+from app.agent.policy import process, resume_follow_up
 from app.services import session_service
 from app.services.demand_no import next_no
 from app.standards import rules
@@ -17,6 +19,8 @@ from app.standards.loader import ensure_snapshot
 from app.standards.loader import get as get_standard
 from app.standards.migration_map import elements_from_legacy, legacy_from_elements
 from app.standards.schema import Standard
+
+logger = logging.getLogger(__name__)
 
 TOP_FIELDS = {"title": "title", "demandTypeCode": "demand_type_code", "content": "content",
               "urgency": "urgency", "expectDeliveryAt": "expect_delivery_at"}
@@ -213,13 +217,14 @@ def change_items(std: Standard | None, before: dict, after: dict) -> list[dict]:
             continue
         element = elements.get(path)
         label = element.label if element else TOP_LABELS.get(path, path.rsplit(".", 1)[-1])
+        key = element.key if element else path
         old_text, new_text = _clip_text(_display_value(element, old)), _clip_text(_display_value(element, new))
         if rules.blank(new):
-            items.append({"action": "clear", "label": label, "old": old_text, "new": ""})
+            items.append({"action": "clear", "key": key, "label": label, "old": old_text, "new": ""})
         elif rules.blank(old):
-            items.append({"action": "fill", "label": label, "old": "", "new": new_text})
+            items.append({"action": "fill", "key": key, "label": label, "old": "", "new": new_text})
         else:
-            items.append({"action": "update", "label": label, "old": old_text, "new": new_text})
+            items.append({"action": "update", "key": key, "label": label, "old": old_text, "new": new_text})
     return items
 
 
@@ -297,16 +302,116 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
             sources[path] = "user"
     assign(demand, form, sources)
     write_change_logs(db, demand, before, form, sources, user.id)
+    notified = False
+    changed_keys: set[str] = set()
     if payload.get("notifyChanges") and demand.session_id is not None:
         # 手工改要素播报（FR-06）：与留痕同源 diff 写入会话；结构化 payload 供前端渲染卡片
         items = change_items(std, before, form)
         if items:
             await session_service.append(db, demand.session_id, "ASSISTANT", describe_changes(items),
                                           {"kind": "manualChange", "changes": items})
+            notified = True
+            changed_keys = {item["key"] for item in items}
     demand.revision += 1
     demand.updated_at = now()
+    if notified:
+        # 手改后的流程接续（2026-10-19 拍板问题②+合并方案）：AI 不停在播报——
+        # 手填长文本先过模型做跨要素抽取归位（失败静默降级），规则层续上下一追问/完成话术
+        await append_conversation_follow_up(db, user, demand, changed_keys=changed_keys)
     await db.flush()
     return demand
+
+
+def _manual_extract_texts(std: Standard | None, form: dict, changed_keys: set[str]) -> list[tuple[str, str]]:
+    """本轮手填的文本类要素（≥10 字）：短字段/枚举/日期/清空几乎不含跨要素信息，不触发模型抽取。"""
+    if std is None:
+        return []
+    fields = {e.key: e for e in std.elements}
+    result = []
+    for key in sorted(changed_keys):
+        field = fields.get(key)
+        if field is None or field.kind != "text":
+            continue
+        value = str(rules.get_value(form, field.field_path) or "").strip()
+        if len(value) >= 10:
+            result.append((field.label, value))
+    return result
+
+
+async def _follow_up_with_model(user, std: Standard, form: dict, sources: dict, previous: dict | None,
+                                history: list, manual_texts: list[tuple[str, str]], changed_keys: set[str]) -> dict:
+    """手改触发的补充式抽取（2026-10-19 拍板）：手填长文本交模型做跨要素抽取归位，
+    意图固定为补充（supplement）——手改就是补充，不需要模型再判意图；
+    走 process 流水线：来源保护（手填字段不被改写）→ 抽取合并 → 引述确认（跳过手填项）→ 接续。"""
+    from app.agent.guide import build_prompt
+    from app.agent.llm_client import get_llm_client
+    from app.agent.schemas import ElementStatus, Intent, parse_model_output
+    llm = get_llm_client()
+    if not llm.available():
+        return None
+    prev_elements = [ElementStatus.model_validate(e) for e in ((previous or {}).get("elements") or [])]
+    previous_form = deepcopy((previous or {}).get("structured") or {})
+    chat_history = [{"role": "user" if m.role == "USER" else "assistant", "content": m.content}
+                    for m in history if m.role in {"USER", "ASSISTANT"}]
+    text = "我在表单里手动写了这些内容：" + "；".join(f"「{label}」{value}" for label, value in manual_texts)
+    messages, _, registry, _ = build_prompt(form, sources, prev_elements, None, chat_history, text)
+    event = await llm.complete_json(messages)
+    output = parse_model_output(event.raw)
+    output = output.model_copy(update={"intent": Intent(kind="supplement")})
+    standards = {code: standard for code, standard in registry.items()}
+    return process(output, form, sources, prev_elements, None, previous_form, text,
+                   standards=standards, manual_keys=changed_keys)
+
+
+async def append_conversation_follow_up(db, user, demand: Demand, *, changed_keys: set[str] | None = None) -> None:
+    """对话外事件（手改要素/附件回执，2026-10-19 拍板）后的流程接续：
+    手填长文本先过模型做跨要素抽取归位（补充式意图，手填字段受来源保护不被改写；
+    模型不可用/失败静默降级为规则接续），规则层续上下一追问/完成话术，
+    并同步 agent_session.asked_target——AI 不停在播报，对话不中断。
+    payload 结构对齐对话结果消息（demandId/sessionId/revision/elements/structured），
+    供前端质量清单回放、并被 guide.prepare 认作下一轮 previous 快照（无 kind 字段）。"""
+    if demand.session_id is None:
+        return
+    form = form_of(demand)
+    std = get_standard(demand.demand_type_code) if demand.demand_type_code else get_standard("MATL")
+    history = await session_service.messages(db, user, demand.session_id)
+    # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报不是模型产物
+    previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT"
+                     and m.structured_payload
+                     and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice", "modeChange")), None)
+    keys = changed_keys or set()
+    follow = None
+    manual_texts = _manual_extract_texts(std, form, keys)
+    if manual_texts:
+        try:
+            follow = await _follow_up_with_model(user, std, form, dict(demand.field_sources or {}),
+                                                 previous, history, manual_texts, keys)
+        except Exception as exc:
+            logger.warning("手改跨要素抽取失败，降级为规则接续 demand=%s %s: %s", demand.id, type(exc).__name__, exc)
+            follow = None
+    if follow is not None:
+        # 抽取归位落库：手填字段 user 来源保护不动，抽中的其他要素 agent 来源；与手改同一 revision（一次保存动作）
+        extracted, extracted_sources = follow["structured"], follow["fieldSources"]
+        if extracted != form:
+            write_change_logs(db, demand, form, extracted, extracted_sources, user.id)
+            assign(demand, extracted, extracted_sources)
+            demand.updated_at = now()
+        follow = {"reply": follow["reply"], "askedTarget": follow["askedTarget"],
+                  "elements": follow["elements"], "canSubmit": follow["canSubmit"],
+                  "guidanceComplete": follow["guidanceComplete"], "quickReplies": follow["quickReplies"]}
+        form = extracted
+    else:
+        follow = resume_follow_up(std, form, previous, changed_keys=keys)
+    await session_service.append(db, demand.session_id, "ASSISTANT", follow["reply"], {
+        "demandId": demand.id, "sessionId": demand.session_id, "revision": demand.revision,
+        "reply": follow["reply"],
+        "elements": follow["elements"], "structured": form,
+        "askedTarget": follow["askedTarget"], "canSubmit": follow["canSubmit"],
+        "guidanceComplete": follow["guidanceComplete"], "quickReplies": follow["quickReplies"],
+    })
+    agent_session = (await db.execute(select(AgentSession).where(AgentSession.id == demand.session_id))).scalar_one_or_none()
+    if agent_session is not None:
+        agent_session.asked_target = follow["askedTarget"]
 
 
 # 管理端改要素（2026-10-13 拍板）：处理人/管理员在需求详情页双击编辑 B/C/D 要素。
@@ -448,9 +553,23 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
     was_returned = demand.status == "NEED_INFO"
     assert_editable(demand, expected_revision)
     form, std = normalized(form_of(demand))
+    # content 提交兜底回填（2026-10-19 拍板，仅科技需求）：A8 已改为系统提取项、不作提交门槛，
+    # 但追溯底稿不应留空——仍空时取会话首条用户消息，再空（纯手改没聊过）用标题兜底；不拦提交。
+    # 来源记 user：值即用户原话/标题本身，受保护不被模型改写
+    if demand.demand_type_code == "TECH" and rules.blank(form.get("content")):
+        backfill = ""
+        if demand.session_id is not None:
+            first_user = next((m for m in await session_service.messages(db, user, demand.session_id) if m.role == "USER"), None)
+            backfill = (first_user.content or "").strip() if first_user is not None else ""
+        if not backfill:
+            backfill = (demand.title or "").strip()
+        if backfill:
+            demand.content = backfill
+            form["content"] = backfill
+            demand.field_sources = {**(demand.field_sources or {}), "content": "user"}
     light = rules.demand_mode(form) == "light"
     if light:
-        # 微需求快速通道（2026-10-11 方案②）：light 只拦最小集（A8原话+A1标题+A6紧急度+D8期望效果），
+        # 微需求快速通道（2026-10-11 方案②）：light 只拦最小集（A1标题+A6紧急度+D8期望效果），
         # C/D 其余 12 项模板要素对换 logo/调样式这类轻量需求会语义性误伤，不作为提交门槛
         errors = rules.schema_errors(std, form, required=True, required_keys=rules.LIGHT_REQUIRED_KEYS)
     else:
