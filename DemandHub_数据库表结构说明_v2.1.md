@@ -1,4 +1,4 @@
-# DemandHub 数据库表结构说明 v2.0（Python 栈现状）
+# DemandHub 数据库表结构说明 v2.1（Python 栈现状）
 
 > 依据：
 >
@@ -6,7 +6,7 @@
 >
 > （SQLAlchemy 2.0 ORM 模型）+ 
 >
-> `server/alembic/versions/0001~0010`
+> `server/alembic/versions/0001~0015`
 >
 >  迁移脚本逐表核对。
 > 数据库：MySQL 8.x，引擎 InnoDB，字符集 
@@ -18,7 +18,9 @@
 > `mysql+asyncmy`
 >
 > 。
-> 生成时间：2026-10-16。
+> 生成时间：2026-10-19。
+>
+> v2.0 → v2.1 变更（对应 0011~0015 五个迁移）：新增渠道白名单两张表（0011）、`dh_user.role` 默认值改 `REPORTER`（0012）、`dh_user.type_scope` 需求类型权限列（0013）、OneID 一期渠道身份两张表与存量回填（0014）、`dh_user.phone` 全表唯一可作登录账号（0015）；同时**企微管理员白名单（config.admin_wecom_userids 过渡机制）已退役**，管理员判定收敛为 `role='ADMIN'` 唯一口径。
 >
 > **本文档与代码一一对应，如后续新增迁移须同步更新。**
 
@@ -34,11 +36,11 @@ DemandHub（创金合信基金零售业务线需求管理系统）当前主线�
 
 | 层        | 位置                                                     | 技术栈 / 说明                                         |
 | -------- | ------------------------------------------------------ | ------------------------------------------------ |
-| 后端 API   | `server/app/api/`                                      | FastAPI，统一前缀 `/demandhub-api`，24 个路由模块           |
-| 业务服务     | `server/app/services/`                                 | 需求、流转、通知、SLA、统计、报表、Agent、RAG、授权等                 |
+| 后端 API   | `server/app/api/`                                      | FastAPI，统一前缀 `/demandhub-api`，27 个路由模块           |
+| 业务服务     | `server/app/services/`                                 | 需求、流转、通知、SLA、统计、报表、Agent、RAG、授权、身份（OneID）等         |
 | 状态机内核    | `server/app/core/statemachine/engine.py`               | 规则落库 + 热重载 + 行锁串行化，每次流转必写日志                      |
-| 数据模型     | `server/app/db/models.py`                              | 全部 32 张表的 ORM 定义（唯一权威来源）                         |
-| 建表迁移     | `server/alembic/versions/0001~0010`                    | 10 个版本，含种子数据（组织 / 类型 / 渠道 / 字典 / 模板 / SLA / 状态机） |
+| 数据模型     | `server/app/db/models.py`                              | 全部 36 张表的 ORM 定义（唯一权威来源）                         |
+| 建表迁移     | `server/alembic/versions/0001~0015`                    | 15 个版本，含种子数据（组织 / 类型 / 渠道 / 字典 / 模板 / SLA / 状态机） |
 | AI Agent | `server/app/agent/`                                    | 提报启发、处理辅助、RAG 相似检索，火山方舟大模型                       |
 | 标准配置     | `server/app/standards/*.yaml`                          | 科技 / 物料 / 培训三类需求五区字段标准（快照落库）                     |
 | H5 移动端   | `frontend/h5/`                                         | Vue 3 + Vant 4，hash 路由，dev 端口 5174               |
@@ -49,7 +51,9 @@ DemandHub（创金合信基金零售业务线需求管理系统）当前主线�
 
 需求主状态 11 个（`demand.status`）：`DRAFT 草稿 → SUBMITTED 待受理 →（NEED_INFO 待补充 / TRIAGE 待分派）→ ANALYZING 分析中 → SOLUTION_REVIEW 方案待评审 → CONFIRMED 已确认/已排期 → IN_PROGRESS 处理中 → ACCEPTANCE 待验收 → DONE 已完成`；任意阶段可 `CLOSED 已关闭`。`ON_HOLD 挂起` 是**叠加态**（不改主状态，由 `hold_snapshot_status` 非空表达）。
 
-角色 4 个：`ADMIN`（超级管理员，状态机全线直通）、`EXECUTIVE`（业务主管，类型修正）、`MANAGER`（承接组织经理，受理 / 分派 / 评审）、`HANDLER`（处理人）；有效角色 = `dh_user.role` 静态角色 ∪ `demand_role_grant` 生效授权。
+角色 5 个：`ADMIN`（超级管理员，状态机全线直通；**唯一管理员判定口径**，config 企微管理员白名单过渡机制已于 0014 时代退役）、`EXECUTIVE`（业务主管，类型修正）、`MANAGER`（承接组织经理，受理 / 分派 / 评审）、`HANDLER`（处理人）、`REPORTER`（提报人，**新建用户默认角色**，0012 起生效，仅可提报与查看自己的需求）；有效角色 = `dh_user.role` 静态角色 ∪ `demand_role_grant` 生效授权（REPORTER 不受 `type_scope` 限制）。
+
+**OneID 身份体系（一期，0014）**：渠道身份独立成表 `dh_channel_identity`（UNIQUE(channel, channel_user_id)，一把渠道钥匙只属于一个人）；渠道用户首次进门照旧自动建档为临时人，管理员在「渠道身份管理」页把未归属身份挂接到 PC 用户（`channel='ACCOUNT'`）名下即完成归并，全程写 `dh_identity_link_log` 审计；不做手机号自动撮合与用户自助绑定；`dh_user.wecom_userid` 一期保留只读对照，登录链路不再读取。`dh_user.phone` 全表唯一（0015），手机号可作为 PC 端登录账号。
 
 ### 1.2 全局建模约定
 
@@ -75,44 +79,48 @@ DemandHub（创金合信基金零售业务线需求管理系统）当前主线�
 
 ***
 
-## 2. 表总览（32 张，按 5 个业务域分组）
+## 2. 表总览（36 张，按 5 个业务域分组）
 
 
 
-| #  | 表名                        | 中文名称                    | 引入版本                | 所属域      |
-| -- | ------------------------- | ----------------------- | ------------------- | -------- |
-| 1  | `dh_user`                 | 用户（渠道回源 + 账密账号）         | 0001/0005           | 用户与权限    |
-| 2  | `refresh_token`           | 刷新令牌（旋转吊销）              | 0005                | 用户与权限    |
-| 3  | `demand_role_grant`       | 业务角色本地授权                | 0008                | 用户与权限    |
-| 4  | `demand`                  | 需求（草稿与正式需求）             | 0001/0002/0006/0008 | 需求核心     |
-| 5  | `demand_no_seq`           | 需求编号按日流水                | 0001                | 需求核心     |
-| 6  | `demand_change_log`       | 需求要素变更留痕                | 0002                | 需求核心     |
-| 7  | `demand_attachment`       | 需求附件（图片 / 文档）           | 0004/0006           | 需求核心     |
-| 8  | `demand_relation`         | 需求关系（父子 / 依赖 / 重复 / 拆分） | 0006                | 需求核心     |
-| 9  | `demand_type`             | 需求类型注册                  | 0010                | 需求核心     |
-| 10 | `demand_channel`          | 来源渠道注册                  | 0010                | 需求核心     |
-| 11 | `demand_org`              | 组织树（物化路径）               | 0010                | 需求核心     |
-| 12 | `channel_dept_unmapped`   | 渠道部门未映射校准清单             | 0010                | 需求核心     |
-| 13 | `sys_dict`                | 业务字典                    | 0010                | 需求核心     |
-| 14 | `state_machine_config`    | 状态机规则配置（热重载）            | 0006                | 流转协作     |
-| 15 | `demand_transition_log`   | 状态流转日志                  | 0006                | 流转协作     |
-| 16 | `assignment`              | 分派 / 领取 / 退单记录          | 0006                | 流转协作     |
-| 17 | `solution`                | 需求方案（版本化）               | 0006                | 流转协作     |
-| 18 | `review`                  | 方案 / 验收评审记录             | 0006                | 流转协作     |
-| 19 | `comment`                 | 需求评论                    | 0006                | 流转协作     |
-| 20 | `effort_log`              | 工时记录                    | 0006                | 流转协作     |
-| 21 | `sla_config`              | SLA 停留时长配置              | 0008                | 流转协作     |
-| 22 | `prompt_version`          | 标准与提示词不可变快照             | 0001                | AI Agent |
-| 23 | `agent_session`           | Agent 会话                | 0001/0007           | AI Agent |
-| 24 | `agent_message`           | Agent 消息与幂等响应           | 0001                | AI Agent |
-| 25 | `agent_draft`             | 处理辅助草稿区                 | 0007                | AI Agent |
-| 26 | `rag_vector`              | RAG 需求向量知识库             | 0007                | AI Agent |
-| 27 | `notification`            | 站内信信箱                   | 0008                | 通知统计     |
-| 28 | `notification_template`   | 通知模板                    | 0008                | 通知统计     |
-| 29 | `notification_preference` | 用户通知偏好                  | 0008                | 通知统计     |
-| 30 | `notify_dedupe`           | 通知去重（替代 Redis）          | 0008                | 通知统计     |
-| 31 | `demand_stat_daily`       | 需求日统计预聚合                | 0008                | 通知统计     |
-| 32 | `report_export_task`      | 报表导出异步任务                | 0008                | 通知统计     |
+| #  | 表名                          | 中文名称                    | 引入版本                       | 所属域      |
+| -- | --------------------------- | ----------------------- | -------------------------- | -------- |
+| 1  | `dh_user`                   | 用户（渠道回源 + 账密账号，OneID 归并） | 0001/0005/0012/0013/0015   | 用户与权限    |
+| 2  | `refresh_token`             | 刷新令牌（旋转吊销）              | 0005                       | 用户与权限    |
+| 3  | `demand_role_grant`         | 业务角色本地授权                | 0008                       | 用户与权限    |
+| 4  | `dh_channel_identity`       | 渠道身份（OneID：渠道钥匙→人）      | 0014                       | 用户与权限    |
+| 5  | `dh_identity_link_log`     | OneID 挂接 / 改挂审计         | 0014                       | 用户与权限    |
+| 6  | `demand_channel_whitelist`  | 渠道白名单（允许谁进）             | 0011                       | 用户与权限    |
+| 7  | `demand_channel_whitelist_log` | 渠道白名单操作留痕            | 0011                       | 用户与权限    |
+| 8  | `demand`                    | 需求（草稿与正式需求）             | 0001/0002/0006/0008        | 需求核心     |
+| 9  | `demand_no_seq`             | 需求编号按日流水                | 0001                       | 需求核心     |
+| 10 | `demand_change_log`         | 需求要素变更留痕                | 0002                       | 需求核心     |
+| 11 | `demand_attachment`         | 需求附件（图片 / 文档）           | 0004/0006                  | 需求核心     |
+| 12 | `demand_relation`           | 需求关系（父子 / 依赖 / 重复 / 拆分） | 0006                       | 需求核心     |
+| 13 | `demand_type`               | 需求类型注册                  | 0010                       | 需求核心     |
+| 14 | `demand_channel`            | 来源渠道注册（含白名单开关）          | 0010/0011                  | 需求核心     |
+| 15 | `demand_org`                | 组织树（物化路径）               | 0010                       | 需求核心     |
+| 16 | `channel_dept_unmapped`     | 渠道部门未映射校准清单             | 0010                       | 需求核心     |
+| 17 | `sys_dict`                  | 业务字典                    | 0010                       | 需求核心     |
+| 18 | `state_machine_config`      | 状态机规则配置（热重载）            | 0006                       | 流转协作     |
+| 19 | `demand_transition_log`     | 状态流转日志                  | 0006                       | 流转协作     |
+| 20 | `assignment`                | 分派 / 领取 / 退单记录          | 0006                       | 流转协作     |
+| 21 | `solution`                  | 需求方案（版本化）               | 0006                       | 流转协作     |
+| 22 | `review`                    | 方案 / 验收评审记录             | 0006                       | 流转协作     |
+| 23 | `comment`                   | 需求评论                    | 0006                       | 流转协作     |
+| 24 | `effort_log`                | 工时记录                    | 0006                       | 流转协作     |
+| 25 | `sla_config`                | SLA 停留时长配置              | 0008                       | 流转协作     |
+| 26 | `prompt_version`            | 标准与提示词不可变快照             | 0001                       | AI Agent |
+| 27 | `agent_session`             | Agent 会话                | 0001/0007                  | AI Agent |
+| 28 | `agent_message`             | Agent 消息与幂等响应           | 0001                       | AI Agent |
+| 29 | `agent_draft`               | 处理辅助草稿区                 | 0007                       | AI Agent |
+| 30 | `rag_vector`                | RAG 需求向量知识库             | 0007                       | AI Agent |
+| 31 | `notification`              | 站内信信箱                   | 0008                       | 通知统计     |
+| 32 | `notification_template`     | 通知模板                    | 0008                       | 通知统计     |
+| 33 | `notification_preference`   | 用户通知偏好                  | 0008                       | 通知统计     |
+| 34 | `notify_dedupe`             | 通知去重（替代 Redis）          | 0008                       | 通知统计     |
+| 35 | `demand_stat_daily`         | 需求日统计预聚合                | 0008                       | 通知统计     |
+| 36 | `report_export_task`        | 报表导出异步任务                | 0008                       | 通知统计     |
 
 
 
@@ -126,7 +134,7 @@ DemandHub（创金合信基金零售业务线需求管理系统）当前主线�
 
 #### 3.1.1 `dh_user` — 用户（渠道回源用户 / 账密账号）
 
-同时承载 SSO 回源用户与账密登录用户；账密用户无企微身份，`wecom_userid` 落占位值 `acct:<login_account>`。
+同时承载 SSO 回源用户与账密登录用户；账密用户无企微身份，`wecom_userid` 落占位值 `acct:<login_account>`。OneID 一期（0014）：`channel='ACCOUNT'` 的用户即 OneID 用户，渠道身份归并入口见 `dh_channel_identity`；`wecom_userid` 保留只读对照，登录链路不再读取；手机号可作为登录账号（0015）。
 
 
 
@@ -134,14 +142,14 @@ DemandHub（创金合信基金零售业务线需求管理系统）当前主线�
 | ----------------- | ------------ | ---------------------------------- | ------------------------------------ |
 | id                | BIGINT       | PK, AUTO\_INCREMENT                | 主键                                   |
 | name              | VARCHAR(64)  | NN                                 | 姓名                                   |
-| wecom\_userid     | VARCHAR(64)  | NN, UQ                             | 企微 / 渠道用户 ID；账密用户为 `acct:账号`         |
-| phone             | VARCHAR(32)  |                                    | 手机号                                  |
+| wecom\_userid     | VARCHAR(64)  | NN, UQ                             | 企微 / 渠道用户 ID；账密用户为 `acct:账号`（一期只读对照） |
+| phone             | VARCHAR(32)  | UQ `uk_user_phone`（0015）           | 手机号；全表唯一，可作登录账号；渠道临时人为渠道快照脏数据已置 NULL |
 | employee\_no      | VARCHAR(32)  |                                    | 工号                                   |
 | email             | VARCHAR(128) |                                    | 邮箱                                   |
 | dept\_id          | VARCHAR(32)  |                                    | 渠道侧部门 ID（登录回源快照）                     |
 | dept\_name        | VARCHAR(128) |                                    | 部门名快照                                |
-| dept\_path        | VARCHAR(512) |                                    | 部门路径快照                               |
-| channel           | VARCHAR(32)  | NN, 默认 `CHUANGJIN_LS`              | 来源渠道码（账密种子为 `ACCOUNT`）               |
+| dept\_path        | VARCHAR(512) |                                    | 部门路径快照                                |
+| channel           | VARCHAR(32)  | NN, 默认 `CHUANGJIN_LS`              | 来源渠道码（账密种子为 `ACCOUNT`，即 OneID 用户）     |
 | status            | VARCHAR(16)  | NN, 默认 `ACTIVE`                    | ACTIVE/INACTIVE                      |
 | last\_login\_at   | DATETIME(3)  |                                    | 最近登录时间                               |
 | login\_account    | VARCHAR(64)  | UQ                                 | 账密登录账号（SSO 用户为空）                     |
@@ -149,11 +157,12 @@ DemandHub（创金合信基金零售业务线需求管理系统）当前主线�
 | must\_change\_pwd | TINYINT(1)   | NN, 默认 0                           | 首登强制改密                               |
 | fail\_count       | INT          | NN, 默认 0                           | 连续登录失败次数                             |
 | locked\_until     | DATETIME(3)  |                                    | 锁定截止时间，过期自动解锁                        |
-| role              | VARCHAR(16)  | NN, 默认 `HANDLER`                   | 静态角色：ADMIN/EXECUTIVE/MANAGER/HANDLER |
+| role              | VARCHAR(16)  | NN, 默认 `REPORTER`（0012 由 HANDLER 改） | 静态角色：ADMIN/EXECUTIVE/MANAGER/HANDLER/REPORTER |
+| type\_scope       | VARCHAR(64)  |（0013）                              | 需求类型权限：逗号分隔类型码，NULL=无权限；仅业务角色生效，ADMIN/REPORTER 不受限 |
 | created\_at       | DATETIME(3)  | NN, 默认 CURRENT\_TIMESTAMP (3)      | 创建时间                                 |
 | updated\_at       | DATETIME(3)  | NN, 默认 / 更新 CURRENT\_TIMESTAMP (3) | 更新时间                                 |
 
-索引：`UNIQUE(wecom_userid)`、`UNIQUE(login_account)`（索引名 `uk_dh_user_login_account`）。
+索引：`UNIQUE(wecom_userid)`、`UNIQUE(login_account)`（索引名 `uk_dh_user_login_account`）、`UNIQUE(phone)`（索引名 `uk_user_phone`，0015；MySQL 唯一索引允许多个 NULL）。
 
 #### 3.1.2 `refresh_token` — 刷新令牌
 
@@ -188,6 +197,86 @@ EXECUTIVE/MANAGER 等角色的额外授权；有效期到点自动生效 / 失�
 | created\_at / updated\_at | DATETIME(3)  | NN                 | 时间戳                             |
 
 约束：`UNIQUE(user_id, role_code, org_id, demand_type_scope, is_deleted)` 名 `uk_grant`；`IDX(role_code)`。
+
+#### 3.1.4 `dh_channel_identity` — 渠道身份（OneID 一期核心表）
+
+一行 = 一把渠道钥匙，`UNIQUE(channel, channel_user_id)` 保证只属于一个人。未归并时 `user_id` 指向渠道自动建档的临时人（`dh_user.channel != 'ACCOUNT'`）；管理员挂接后指向 PC 用户（OneID 用户），渠道免登进入的即该 PC 用户。0014 附带存量回填：非 ACCOUNT 用户每人生成一条指向自己的身份记录（`INSERT IGNORE` 幂等）。
+
+
+
+| 列                   | 类型          | 约束                          | 说明                             |
+| ------------------- | ----------- | --------------------------- | ------------------------------ |
+| id                  | BIGINT      | PK                          | 主键                             |
+| user\_id            | BIGINT      | NN, FK→dh\_user.id, IDX     | 归属人（临时人或挂接后的 OneID 用户）          |
+| channel             | VARCHAR(32) | NN, UQ 组合 `uk_channel_identity` | 渠道码（utf8mb4\_unicode\_ci，随 dh\_user） |
+| channel\_user\_id   | VARCHAR(64) | NN, UQ 组合                    | 渠道侧用户编号（企微 userid）              |
+| channel\_user\_name | VARCHAR(64) |                             | 渠道侧姓名快照（每次进门更新，供管理员识别）         |
+| created\_at         | DATETIME(3) | NN                          | 首次进门时间                         |
+| updated\_at         | DATETIME(3) | NN, ON UPDATE 自动刷新          | 最近进门时间                         |
+
+约束：`UNIQUE(channel, channel_user_id)` 名 `uk_channel_identity`；`INDEX(user_id)` 名 `ix_channel_identity_user`。
+
+#### 3.1.5 `dh_identity_link_log` — OneID 挂接 / 改挂审计
+
+行只增不改。`LINK`（挂接）搬数据并记 `moved_counts` 过户明细 JSON；`REBIND`（改挂）不搬数据、`moved_counts` 为 NULL。人员列全部落姓名快照，主数据后续改名不影响历史回溯。
+
+
+
+| 列                 | 类型           | 约束            | 说明                            |
+| ----------------- | ------------ | ------------- | ----------------------------- |
+| id                | BIGINT        | PK            | 主键                            |
+| action            | VARCHAR(16)   | NN            | LINK 挂接 / REBIND 改挂           |
+| identity\_id      | BIGINT        | NN            | 渠道身份（dh\_channel\_identity.id） |
+| channel           | VARCHAR(32)   | NN            | 渠道码快照                         |
+| channel\_user\_id | VARCHAR(64)   | NN            | 渠道侧用户编号快照                    |
+| from\_user\_id    | BIGINT        | NN            | 原归属人                          |
+| from\_user\_name  | VARCHAR(64)   | NN            | 原归属人姓名快照                     |
+| to\_user\_id      | BIGINT        | NN            | 新归属人                          |
+| to\_user\_name    | VARCHAR(64)   | NN            | 新归属人姓名快照                     |
+| moved\_counts     | VARCHAR(512)  |               | 过户数据量明细 JSON（仅 LINK；REBIND 为 NULL） |
+| operator\_id      | BIGINT        | NN            | 操作人                           |
+| operator\_name    | VARCHAR(64)   | NN            | 操作人姓名快照                      |
+| created\_at       | DATETIME(3)   | NN            | 操作时间                          |
+
+约束：`INDEX(identity_id, created_at)` 名 `ix_link_log_identity`。
+
+#### 3.1.6 `demand_channel_whitelist` — 渠道白名单
+
+管「允许谁进」，与 `dh_user` 用户档案相互独立（登录命中才建档）。开关挂在 `demand_channel.whitelist_enabled`（默认关 = 全放行），拦截页联系引导文案走 `demand_channel.whitelist_contact` 随渠道配置（公开接口读取）。
+
+
+
+| 列                  | 类型          | 约束                        | 说明                    |
+| ------------------ | ----------- | ------------------------- | --------------------- |
+| id                 | BIGINT      | PK                        | 主键                    |
+| channel\_code      | VARCHAR(32) | NN, UQ 组合 `uk_whitelist_user` | 渠道码                   |
+| channel\_user\_id  | VARCHAR(64) | NN, UQ 组合                  | 渠道侧用户编号（企微 userid）    |
+| display\_name      | VARCHAR(64) |                           | 展示姓名（便于管理员识别，非身份凭证）  |
+| status             | VARCHAR(16) | NN, 默认 `ENABLED`           | ENABLED/DISABLED      |
+| created\_by        | BIGINT      |                           | 建档操作人（软关联 dh\_user.id） |
+| created\_by\_name  | VARCHAR(64) |                           | 建档操作人姓名快照             |
+| created\_at / updated\_at | DATETIME(3) | NN                 | 时间戳                   |
+
+约束：`UNIQUE(channel_code, channel_user_id)` 名 `uk_whitelist_user`。
+
+#### 3.1.7 `demand_channel_whitelist_log` — 渠道白名单操作留痕
+
+白名单增 / 删 / 启停 / 渠道开关与文案变更的操作留痕；操作对象落快照，行只增不改。
+
+
+
+| 列                 | 类型           | 约束        | 说明                    |
+| ----------------- | ------------ | --------- | --------------------- |
+| id                | BIGINT        | PK        | 主键                    |
+| action            | VARCHAR(24)   | NN        | 操作类型（增/删/启停/开关/文案）   |
+| channel\_code     | VARCHAR(32)   | NN        | 渠道码                   |
+| channel\_user\_id | VARCHAR(64)   |           | 渠道侧用户编号（渠道级操作为空）     |
+| operator\_id      | BIGINT        | NN        | 操作人                   |
+| operator\_name    | VARCHAR(64)   | NN        | 操作人姓名快照               |
+| detail            | VARCHAR(512)  |           | 操作详情                  |
+| created\_at       | DATETIME(3)   | NN        | 操作时间                  |
+
+约束：`INDEX(channel_code, created_at)` 名 `ix_whitelist_log_channel`。
 
 
 
@@ -349,6 +438,8 @@ EXECUTIVE/MANAGER 等角色的额外授权；有效期到点自动生效 / 失�
 | app\_id                   | VARCHAR(64) |                          | 渠道侧应用 ID        |
 | callback\_enabled         | TINYINT(1)  | NN, 默认 0                 | 回调是否启用          |
 | status                    | VARCHAR(16) | NN, 默认 `ACTIVE`          | ACTIVE/DISABLED |
+| whitelist\_enabled        | TINYINT(1)  | NN, 默认 0（0011）           | 渠道白名单开关（默认关=全放行） |
+| whitelist\_contact        | VARCHAR(255) |（0011）                   | 非白名单拦截页联系引导文案 |
 | config\_json              | JSON        |                          | 渠道配置（预留）        |
 | created\_at / updated\_at | DATETIME(3) | NN                       | 时间戳             |
 
@@ -774,6 +865,8 @@ TODO 待办提醒不可关闭、不落库。
 | 0006 | state\_machine\_config：DEFAULT 默认状态机全套规则（0009 已将角色重映射为 MANAGER/EXECUTIVE 口径）                                                    |
 | 0008 | notification\_template 19 条；sla\_config 11 条（TECH/MATL/TRAIN）                                                                   |
 | 0010 | demand\_org 11 个组织（100/110/111/112/120/121/130/131/140/141/900）；demand\_type 3 类；demand\_channel 8 个（2 个 ACTIVE）；sys\_dict 21 项 |
+| 0014 | dh\_channel\_identity 存量回填：非 ACCOUNT 用户每人生成一条指向自己的渠道身份（INSERT IGNORE 幂等，非种子） |
+| 0015 | 数据清洗：渠道临时人（channel != 'ACCOUNT'）的 phone 渠道快照脏数据统一置 NULL（无消费方），为唯一索引腾出空间 |
 
 
 
@@ -789,6 +882,7 @@ TODO 待办提醒不可关闭、不落库。
 | --------------------------------------------------- | ------------------------------------------- |
 | refresh\_token.user\_id                             | dh\_user.id                                 |
 | demand\_role\_grant.user\_id / granted\_by          | dh\_user.id                                 |
+| dh\_channel\_identity.user\_id                     | dh\_user.id（OneID 归属人，0014）                 |
 | demand.submitter\_id / assignee\_id                 | dh\_user.id                                 |
 | demand.standard\_version\_id                        | prompt\_version.id                          |
 | demand.split\_from\_id                              | demand.id（自引用）                              |
@@ -823,6 +917,9 @@ TODO 待办提醒不可关闭、不落库。
 | notification.demand\_id                             | demand.id                                  | 信箱允许需求侧无感知写入            |
 | agent\_draft.confirmed\_by / target\_solution\_id   | dh\_user.id / solution.id                  | 确认动作可能滞后 / 废弃           |
 | demand\_role\_grant.org\_id                         | demand\_org.id                             | 预留                      |
+| dh\_identity\_link\_log.identity\_id（及人员列）        | dh\_channel\_identity.id / dh\_user.id      | 审计快照，行只增不改，避免约束牵连      |
+| demand\_channel\_whitelist.created\_by               | dh\_user.id                                | 操作人仅作记录                 |
+| demand\_channel\_whitelist（channel\_code）            | demand\_channel.channel\_code              | 渠道码字符串契约               |
 | channel\_dept\_unmapped（channel\_code）              | demand\_channel.channel\_code              | 渠道码字符串契约                |
 | demand.demand\_type\_code / subtype\_code / channel | demand\_type / sys\_dict / demand\_channel | 编码字符串契约，字典 / 类型可启停不影响历史 |
 
@@ -845,3 +942,7 @@ TODO 待办提醒不可关闭、不落库。
 5. **无外部中间件依赖**：通知用信箱表替 MQ、去重替 Redis、文件落本地目录替 MinIO、向量 JSON 替向量库，MVP 只依赖 MySQL 即可运行。
 
 6. **多租户 / 多渠道接缝**：渠道注册、组织树物化路径、渠道部门未映射校准清单支持外部渠道（创金零售小程序）票据登录与部门映射。
+
+7. **OneID 身份一期（0014/0015）**：渠道身份与用户档案分离（`dh_channel_identity` 独立成表），归并唯一手段是管理员挂接（不做手机号自动撮合、不做自助绑定），挂接 / 改挂全程审计留痕；`dh_user.phone` 全表唯一后可作登录账号，管理员判定收敛为 `role='ADMIN'` 唯一口径（config 企微管理员白名单过渡机制退役）；渠道白名单（0011）与 OneID 正交：白名单管「允许谁进」，OneID 管「进来的是谁」。
+
+8. **排序规则注意**：`dh_channel_identity` 按 `channel_user_id` 与 `dh_user.wecom_userid` 关联时混用 `utf8mb4_0900_ai_ci` 会报 Illegal mix of collations，故建表排序规则跟随 dh\_user 的 `utf8mb4_unicode_ci`。

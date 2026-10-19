@@ -42,4 +42,17 @@ describe('测试环境手动登录', () => {
     const wrapper = mountAuth()
     expect(wrapper.text()).toContain('开发环境登录')
   })
+
+  it('白名单拦截（wl=1）显示「暂未开放」落地页且无测试登录入口', async () => {
+    vi.stubEnv('VITE_TEST_LOGIN_ENTRY', 'true')
+    mocks.get.mockResolvedValue({ contact: null })  // whitelistContact 公开接口
+    route.query = { wl: '1', error: '非白名单用户，暂不支持访问' }
+    const wrapper = mountAuth()
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂未开放')
+    expect(wrapper.text()).toContain('敬请期待')
+    expect(wrapper.text()).toContain('返回创金零售')
+    expect(wrapper.text()).not.toContain('测试环境登录')
+    expect(wrapper.text()).not.toContain('非白名单用户')  // 后端错误原文不直接展示
+  })
 })
