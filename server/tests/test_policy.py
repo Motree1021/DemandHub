@@ -14,7 +14,13 @@ from app.agent.policy import (
     resume_follow_up,
     user_said_skip,
 )
-from app.agent.schemas import ElementStatus, Intent, ModelOutput, ModeSignalOutput, parse_model_output
+from app.agent.schemas import (
+    ElementStatus,
+    Intent,
+    ModelOutput,
+    ModeSignalOutput,
+    parse_model_output,
+)
 from app.standards.loader import get
 from app.standards.rules import assess
 

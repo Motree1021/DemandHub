@@ -7,11 +7,11 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert
 
+from app.agent.policy import process, resume_follow_up
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
 from app.core.statemachine import engine
 from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, PromptVersion, now
-from app.agent.policy import process, resume_follow_up
 from app.services import session_service
 from app.services.demand_no import next_no
 from app.standards import rules
