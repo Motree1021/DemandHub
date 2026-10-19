@@ -7,6 +7,9 @@
          直接压缩布局视口，输入行自然贴键盘上沿；iOS 与不支持的浏览器自动忽略，无副作用 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>DemandHub</title>
+    <!-- 微信 JSSDK：H5 嵌在创金零售小程序 web-view 中时，提供 wx.miniProgram.navigateBack 桥接能力
+         （与小程序左上角「‹」返回同效）；非微信环境加载后对象存在但调用静默失败，无副作用 -->
+    <script src="https://res.wx.qq.com/open/js/jweixin-1.3.2.js"></script>
   </head>
   <body>
     <div id="app"></div>

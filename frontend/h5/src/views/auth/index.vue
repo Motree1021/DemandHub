@@ -1,6 +1,6 @@
 <template>
   <div class="auth-page">
-    <h1>DemandHub</h1><p class="subtitle">创金合信零售业务需求提报</p>
+    <h1>DemandHub</h1><p class="subtitle">创金零售需求管理系统</p>
 
     <!-- 白名单拦截（1123）：「暂未开放」友好落地页——柔和色调、不用告警红、无测试登录入口 -->
     <div v-if="isWhitelist" class="wl">
@@ -54,7 +54,32 @@ async function login() {
     await router.replace(redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/report')
   } catch { /* API 已展示错误 */ } finally { loading.value = false }
 }
-function goBack() { if (history.length > 1) history.back(); else showToast('请关闭此页面，从创金零售重新进入') }
+/** 微信小程序 JSSDK 桥（index.html 引入 jweixin-1.3.2.js 注入 window.wx；非小程序环境无 miniProgram） */
+type WxMiniProgram = {
+  getEnv(cb: (res: { miniprogram: boolean }) => void): void
+  navigateBack(opts?: { delta: number }): void
+}
+const wxMp = (): WxMiniProgram | undefined =>
+  (window as { wx?: { miniProgram?: WxMiniProgram } }).wx?.miniProgram
+
+/** 返回创金零售：嵌在小程序 web-view 中时调 wx.miniProgram.navigateBack（与左上角「‹」完全同效）；
+ * 普通浏览器退回上一页；无历史可退时提示点左上角返回（2026-10-19 拍板） */
+function goBack() {
+  const mp = wxMp()
+  if (mp) {
+    mp.getEnv((res) => {
+      if (res.miniprogram) mp.navigateBack({ delta: 1 })
+      else fallbackBack()
+    })
+    return
+  }
+  fallbackBack()
+}
+
+function fallbackBack() {
+  if (history.length > 1) history.back()
+  else showToast('请点击左上角返回按钮，退回创金零售')
+}
 </script>
 <style scoped>
 .auth-page { max-width: var(--shell-width); margin: auto; padding: 64px 28px 24px; text-align: center; }.auth-page h1 { color: #1f3a8a; margin-bottom: 8px; }.subtitle { color: #777; font-size: 13px; margin-bottom: 36px; }.auth-page p { line-height: 1.8; color: #666; }.dev-login { margin-top: 40px; }.dev-login .van-button { margin-top: 16px; }
