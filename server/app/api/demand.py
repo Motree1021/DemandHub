@@ -88,6 +88,12 @@ async def mine(
     return ok(await service.list_records(db, user, page=page, size=size, status=status))
 
 
+@router.get("/my/need-info-count")
+async def my_need_info_count(user=Depends(get_current_user), db=Depends(get_db)):
+    """「我的需求」tab 角标：待补充需求数（业务状态口径，替代原通知未读数）。"""
+    return ok({"count": await service.need_info_count(db, user)})
+
+
 @router.put("/{demand_id}")
 async def update(
     demand_id: int, payload: UpdateDraft, user=Depends(get_current_user), db=Depends(get_db)
@@ -135,7 +141,7 @@ async def close(
     return ok(result)
 
 
-# 提报口径改判（2026-10-11 方案④）：轻量↔常规双向，打回补充期间禁降轻量；响应同 PUT /demand 便于前端 applyDemand 刷新
+# 提报口径改判（2026-10-11 方案④）：轻量↔常规双向；2026-10-20 拍板打回期间不再锁口径；响应同 PUT /demand 便于前端 applyDemand 刷新
 @router.post("/{demand_id}/mode")
 async def change_mode(
     demand_id: int, payload: ChangeMode, user=Depends(get_current_user), db=Depends(get_db)

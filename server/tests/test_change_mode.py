@@ -2,7 +2,7 @@
 
 链路：DRAFT/NEED_INFO 下 change_mode（origin=user 留痕 + modeChange 播报进上下文）
 → 提交门槛随口径切换（light 只拦 4 项最小集）→ AI 判定不得翻转用户手动口径。
-边界：同口径拒绝；打回补充期间（ext.returnReason）禁降轻量。
+边界：同口径拒绝；打回补充期间同样可切换（2026-10-20 拍板，口径由提报人自主判断）。
 """
 from uuid import uuid4
 
@@ -84,8 +84,9 @@ async def test_change_mode_rejects_same_level(session_factory, user):
 
 
 @pytest.mark.asyncio
-async def test_change_mode_blocked_during_return(session_factory, user):
-    """打回补充期间禁降轻量：打回已锁 standard，切 light 被拦。"""
+async def test_change_mode_allowed_during_return(session_factory, user):
+    """打回补充期间可切轻量（2026-10-20 拍板）：打回不锁口径，standard 切 light 放行，
+    重提按 light 4 项门槛校验。"""
     full = {"A": {"techSubtype": "SYS_DEV"},
             "C": {"userRole": "访问系统首页的零售客户", "userGoal": "看到品牌新形象",
                   "useScenario": "客户打开系统首页浏览", "painPoint": "旧logo风格过时"},
@@ -104,10 +105,8 @@ async def test_change_mode_blocked_during_return(session_factory, user):
             db.add(admin)
             await db.flush()
             await demand_service.return_demand(db, admin, did, "请补充使用场景")
-    with pytest.raises(BizError) as error:
-        await change_mode(session_factory, user, did, "light")
-    assert error.value.code == ErrorCode.PARAM_INVALID.code
-    assert "打回补充期间" in str(error.value)
+    light = await change_mode(session_factory, user, did, "light")
+    assert light.ext["mode"]["level"] == "light" and light.ext["returnReason"]["reason"] == "请补充使用场景"
 
 
 @pytest.mark.asyncio
@@ -164,3 +163,81 @@ async def test_change_mode_api_flow(client, session_factory, user):
         json={"expectedRevision": 0, "level": "standard"}, headers={"Authorization": f"Bearer {token}"})
     # 统一响应体：BizError 走 HTTP 200 + body 业务码（409 版本冲突）
     assert stale.json()["code"] == ErrorCode.CONFLICT.code
+
+
+async def last_messages(factory, session_id, count):
+    async with factory() as db:
+        rows = (await db.execute(select(AgentMessage).where(AgentMessage.session_id == session_id)
+                                 .order_by(AgentMessage.id))).scalars().all()
+    return list(rows)[-count:]
+
+
+@pytest.mark.asyncio
+async def test_change_mode_follows_up_with_new_mode_snapshot(session_factory, user):
+    """口径改判当场接续（2026-10-20 拍板）：播报后紧跟一条按新口径重算的正式快照——
+    升 standard：C/D 缺口立即可见并开口追问；降 light：最小集齐直接出「确认提交」。"""
+    did = await make_draft(session_factory, user, session=True)  # MINIMAL：仅 light 最小集
+    await change_mode(session_factory, user, did, "light")  # 先降 light 建立起点
+    upgraded = await change_mode(session_factory, user, did, "standard")
+    notice, snapshot = await last_messages(session_factory, upgraded.session_id, 2)
+    assert notice.structured_payload["kind"] == "modeChange"
+    payload = snapshot.structured_payload
+    assert payload.get("kind") is None  # 无 kind = 正式快照，参与前端质量卡回放
+    assert payload["revision"] == upgraded.revision
+    assert payload["canSubmit"] is False and payload["askedTarget"] is not None
+    # 切回 light：最小集齐 → 快照直接可提交
+    light = await change_mode(session_factory, user, did, "light")
+    latest = (await last_messages(session_factory, light.session_id, 1))[0].structured_payload
+    assert latest.get("kind") is None and latest["canSubmit"] is True
+
+
+# 归类改判（2026-10-20 拍板）：与手改要素/口径改判同规则——当场 typeChange 播报 + 按新归类重算快照
+FULL_NO_B = {"A": {"techSubtype": "SYS_DEV"},
+             "C": {"userRole": "零售客户", "userGoal": "看到新logo", "useScenario": "打开系统首页浏览", "painPoint": "旧logo风格过时"},
+             "D": {"functionDescription": "替换首页顶部logo", "inputOutput": "输入新logo资源，输出更新后首页",
+                   "acceptanceCriteria": "首页顶部展示新logo"}}
+
+
+@pytest.mark.asyncio
+async def test_type_confirm_follows_up_with_business_gate(session_factory, user):
+    """确认业务需求 → B 区纳入必填：typeChange 播报 + 接续快照按新门槛拦截并追问 B 区；
+    恢复 AI 判断 → B 区门槛解除，A/C/D 齐备直接可提交。"""
+    did = await make_draft(session_factory, user, session=True, elements=FULL_NO_B)
+    async with session_factory() as db:
+        async with db.begin():
+            demand = await db.get(Demand, did)
+            await demand_service.update_draft(db, user, did,
+                {"ext": {"typeRecognition": {"confirmed": "business"}}, "expectedRevision": demand.revision})
+    demand = await get_demand(session_factory, did)
+    notice, snapshot = await last_messages(session_factory, demand.session_id, 2)
+    assert notice.structured_payload["kind"] == "typeChange"
+    assert "业务需求" in notice.content and "纳入必填" in notice.content
+    payload = snapshot.structured_payload
+    assert payload.get("kind") is None and payload["canSubmit"] is False and payload["askedTarget"] is not None
+    # 恢复 AI 判断：B 区不再必填 → A/C/D 齐备直接出「确认提交」
+    async with session_factory() as db:
+        async with db.begin():
+            demand = await db.get(Demand, did)
+            await demand_service.update_draft(db, user, did,
+                {"ext": {"typeRecognition": {"confirmed": None}}, "expectedRevision": demand.revision})
+    demand = await get_demand(session_factory, did)
+    notice, snapshot = await last_messages(session_factory, demand.session_id, 2)
+    assert notice.structured_payload["kind"] == "typeChange" and "恢复由 AI 自动判断" in notice.content
+    assert snapshot.structured_payload["canSubmit"] is True
+
+
+@pytest.mark.asyncio
+async def test_type_confirm_unchanged_stays_silent(session_factory, user):
+    """归类未变化不播报：整表单回传带原样 typeRecognition 不产生 typeChange 消息。"""
+    recognition = {"judgedType": "function", "confirmed": "function"}
+    did = await make_draft(session_factory, user, session=True, ext={"typeRecognition": dict(recognition)})
+    async with session_factory() as db:
+        async with db.begin():
+            demand = await db.get(Demand, did)
+            await demand_service.update_draft(db, user, did,
+                {"ext": {"typeRecognition": dict(recognition)}, "expectedRevision": demand.revision})
+    demand = await get_demand(session_factory, did)
+    async with session_factory() as db:
+        notices = (await db.execute(select(AgentMessage).where(AgentMessage.session_id == demand.session_id,
+            AgentMessage.structured_payload["kind"].as_string() == "typeChange"))).scalars().all()
+    assert notices == []

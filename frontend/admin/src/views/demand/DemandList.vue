@@ -11,10 +11,14 @@
         <el-option v-for="(label, k) in TYPE_META" :key="k" :label="label" :value="k" />
       </el-select>
       <el-button type="primary" @click="load(1)">查询</el-button>
+      <!-- 草稿是提报人私有编辑态（2026-10-20 拍板）：默认隐藏，开关按需查看 -->
+      <el-switch v-model="query.includeDrafts" active-text="含草稿" @change="load(1)" />
     </div>
 
     <el-table :data="rows" v-loading="loading" stripe @row-click="goDetail">
-      <el-table-column prop="demandNo" label="编号" width="170" />
+      <el-table-column label="编号" width="170">
+        <template #default="{ row }">{{ row.demandNo || (row.status === 'DRAFT' ? `草稿 #${row.id}` : '—') }}</template>
+      </el-table-column>
       <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
       <el-table-column label="类型" width="110">
         <template #default="{ row }">{{ typeLabel(row.demandTypeCode) }}</template>
@@ -54,7 +58,7 @@ const router = useRouter()
 const loading = ref(false)
 const rows = ref<DemandRow[]>([])
 const total = ref(0)
-const query = reactive({ page: 1, size: 20, status: '', urgency: '', typeCode: '' })
+const query = reactive({ page: 1, size: 20, status: '', urgency: '', typeCode: '', includeDrafts: false })
 
 /** 每页条数变化：回到第 1 页重新查询，避免"大页码 × 大页容"越界空页 */
 function onSizeChange(size: number) {
@@ -71,6 +75,7 @@ async function load(page = query.page) {
       status: query.status || undefined,
       urgency: query.urgency || undefined,
       typeCode: query.typeCode || undefined,
+      includeDrafts: query.includeDrafts || undefined,
     })
     rows.value = data.records
     total.value = data.total

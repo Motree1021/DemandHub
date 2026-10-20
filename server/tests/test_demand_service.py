@@ -230,7 +230,8 @@ async def test_manual_change_follow_up_resume(session_factory, user):
     assert follow.structured_payload["canSubmit"] is True
     assert follow.structured_payload["guidanceComplete"] is True
     assert follow.structured_payload["askedTarget"] is None
-    assert "可以提交" in follow.content
+    # 2026-10-20 拍板：手改完成话术收敛为简短确认（不再播选填项长说明）
+    assert follow.content == "修改已记录好，可以点「确认提交」提交。"
 
 
 class _FakeManualArk:

@@ -95,15 +95,18 @@ async def list_mine(
 
 async def list_all(
     db: AsyncSession, user: User, *, status: str | None, urgency: str | None,
-    type_code: str | None, page: int, size: int,
+    type_code: str | None, page: int, size: int, include_drafts: bool = False,
 ) -> tuple[list[Demand], int]:
-    """管理视角需求列表：ADMIN 全量；HANDLER 仅流转态（与详情可见性同口径），按更新时间倒序。"""
+    """管理视角需求列表：ADMIN 默认不含草稿（includeDrafts 开关放行）；HANDLER 仅流转态（与详情可见性同口径），按更新时间倒序。"""
     from app.core.deps import is_admin
     from app.services.flow_service import FLOW_STATUSES
 
     filters = _scope_filters(user, [])
     if not is_admin(user):
         filters.append(Demand.status.in_(sorted(FLOW_STATUSES)))
+    elif not include_drafts and status != "DRAFT":
+        # 草稿是提报人私有编辑态（2026-10-20 拍板）：管理端默认隐藏，开关或显式选状态才放行
+        filters.append(Demand.status != "DRAFT")
     if status:
         filters.append(Demand.status == status)
     if urgency:

@@ -136,6 +136,24 @@ async def test_submitted_demand_upload_and_delete_blocked(client, auth_headers, 
     assert download.status_code == 200 and download.content == PNG
 
 
+async def test_delete_attachment_removes_chat_messages(client, auth_headers, attachment_dir):
+    """删除连带清理（2026-10-20 拍板）：删除附件后，会话中的附件气泡与回执两条消息一并移除，
+    聊天不留死链；附件记录本身软删留痕。"""
+    draft = await create(client, auth_headers)
+    session = await client.post(BASE + "/agent/session", json={"demandId": draft["id"]}, headers=auth_headers)
+    assert session.json()["code"] == 0, session.text
+    session_id = session.json()["data"]["id"]
+    uploaded = await upload(client, auth_headers, draft["id"], "参考.png", PNG)
+    attachment_id = uploaded.json()["data"]["id"]
+    # 上传已注入「附件气泡+回执」两条消息（request_id=attach-{id}）
+    before = (await client.get(f"{BASE}/agent/session/{session_id}/messages", headers=auth_headers)).json()["data"]
+    assert any("参考.png" in (m["content"] or "") for m in before)
+    deleted = await client.delete(f"{BASE}/demand/{draft['id']}/attachments/{attachment_id}", headers=auth_headers)
+    assert deleted.json()["code"] == 0, deleted.text
+    after = (await client.get(f"{BASE}/agent/session/{session_id}/messages", headers=auth_headers)).json()["data"]
+    assert all("参考.png" not in (m["content"] or "") for m in after)
+
+
 async def test_download_auth_and_admin_visibility(client, auth_headers, attachment_dir, admin_headers):
     draft = await create(client, auth_headers)
     uploaded = await upload(client, auth_headers, draft["id"], "参考.pdf", PDF)

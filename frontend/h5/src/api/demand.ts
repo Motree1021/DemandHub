@@ -84,9 +84,18 @@ export function parseModeChange(raw: string | null | undefined): ModeChangePaylo
     return payload && payload.kind === 'modeChange' && (payload.to === 'light' || payload.to === 'standard') ? payload : null
   } catch { return null }
 }
-/** 会话质量快照回放只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报都不算（与服务端 guide.py 同口径）。 */
+// 归类改判播报（2026-10-20）：提报人确认/恢复判型注入会话的白话通知，渲染同 returnNotice，不参与质量快照回放
+export interface TypeChangePayload { kind: 'typeChange' }
+export function parseTypeChange(raw: string | null | undefined): TypeChangePayload | null {
+  if (!raw) return null
+  try {
+    const payload = JSON.parse(raw) as TypeChangePayload | null
+    return payload && payload.kind === 'typeChange' ? payload : null
+  } catch { return null }
+}
+/** 会话质量快照回放只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报/归类改判播报都不算（与服务端 guide.py 同口径）。 */
 export function isReplayablePayload(raw: string | null | undefined): boolean {
-  return !!raw && !parseManualChange(raw) && !parseAttachmentPayload(raw) && !parseReturnNotice(raw) && !parseModeChange(raw)
+  return !!raw && !parseManualChange(raw) && !parseAttachmentPayload(raw) && !parseReturnNotice(raw) && !parseModeChange(raw) && !parseTypeChange(raw)
 }
 export interface DemandAttachment { id: number; demandId: number; fileName: string; kind: 'IMAGE' | 'DOC'; kindLabel: string; size: number; createdAt: string }
 export const listAttachments = (demandId: number): Promise<DemandAttachment[]> => get(`/demand/${demandId}/attachments`)
@@ -122,13 +131,15 @@ export const createDraft = (data: DemandForm & { clientRequestId: string }): Pro
 export const updateDraft = (id: number, data: DemandForm & { expectedRevision: number; notifyChanges?: boolean }): Promise<DemandEntity> => put(`/demand/${id}`, data)
 export const submitDemand = (id: number, expectedRevision: number): Promise<DemandEntity> => post(`/demand/${id}/submit`, { expectedRevision })
 export const closeDemand = (id: number, reason: string): Promise<DemandEntity> => post(`/demand/${id}/close`, { reason })
-// 提报口径改判（方案④）：轻量↔常规双向；服务端打回补充期间（ext.returnReason）拒绝降轻量，响应同 updateDraft 可直接刷新表单
+// 提报口径改判（方案④）：轻量↔常规双向；2026-10-20 拍板打回补充期间不再锁口径，响应同 updateDraft 可直接刷新表单
 export const changeDemandMode = (id: number, expectedRevision: number, level: 'light' | 'standard'): Promise<DemandEntity> =>
   post(`/demand/${id}/mode`, { expectedRevision, level })
 export function nonEmptyQuery<T extends object>(query: T): Partial<T> {
   return Object.fromEntries(Object.entries(query).filter(([, value]) => value !== '' && value !== null && value !== undefined)) as Partial<T>
 }
 export const myDemands = (query: DemandQuery): Promise<PageResult<DemandEntity>> => get('/demand/my', nonEmptyQuery(query))
+/** 「我的需求」tab 角标：待补充（NEED_INFO）需求数，与「待补充」筛选同口径，处理完自动消 */
+export const myNeedInfoCount = (): Promise<{ count: number }> => get('/demand/my/need-info-count', undefined, { silent: true })
 export const adminDemands = (query: AdminQuery): Promise<PageResult<DemandEntity>> => get('/admin/demand/list', nonEmptyQuery(query))
 // 管理员打回待补充（方案③）：仅已提交需求可打回，原因必填，服务端写留痕并往会话注入播报
 export const returnDemand = (id: number, reason: string): Promise<DemandEntity> => post(`/admin/demand/${id}/return`, { reason })

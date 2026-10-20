@@ -201,16 +201,18 @@ describe('report 口径改判（方案④：轻量↔常规双标签与改判弹
     expect(mocks.changeDemandMode).not.toHaveBeenCalled()
     expect(wrapper.findComponent(PopupStub).props('show')).toBe(false)
   })
-  it('打回补充期间轻量口径置灰并提示不可切换', async () => {
+  it('打回补充期间口径不锁定：轻量可点并发起切换（2026-10-20 拍板）', async () => {
     route.query = { draftId: 1 }
     mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, status: 'NEED_INFO',
-      ext: { mode: { level: 'standard', evidence: '管理员打回待补充' }, returnReason: { reason: '还缺使用场景', returnedBy: '管理员' } } }), quality: [], messages: [] })
+      ext: { mode: { level: 'standard', evidence: '提报人手动调整提报口径' }, returnReason: { reason: '还缺使用场景', returnedBy: '管理员' } } }), quality: [], messages: [] })
     const wrapper = createWrapper(); await flushPromises()
     openPanel(wrapper); await flushPromises()
     const light = wrapper.find('[data-mode-option="light"]')
-    expect((light.element as HTMLButtonElement).disabled).toBe(true)
-    expect(wrapper.find('.lock-hint').text()).toContain('打回补充期间不可切换为轻量')
-    expect(mocks.changeDemandMode).not.toHaveBeenCalled()
+    expect((light.element as HTMLButtonElement).disabled).toBe(false)
+    mocks.changeDemandMode.mockResolvedValue(demand(1, { sessionId: 11, status: 'NEED_INFO',
+      ext: { mode: { level: 'light', evidence: '提报人手动调整提报口径', origin: 'user' }, returnReason: { reason: '还缺使用场景', returnedBy: '管理员' } } }))
+    await light.trigger('click'); await flushPromises()
+    expect(mocks.changeDemandMode).toHaveBeenCalledWith(1, expect.any(Number), 'light')
   })
   it('新建未保存草稿点口径项：提示先发送需求，不调接口', async () => {
     const wrapper = createWrapper(); await flushPromises()

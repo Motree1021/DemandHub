@@ -45,7 +45,7 @@
           <van-icon v-if="activeTypeIndex === index" name="success" color="#1f3a8a" />
         </button>
         <h4 class="group-title">提报口径</h4>
-        <button type="button" class="panel-opt" data-mode-option="light" :class="{ active: isLight }" :disabled="modeLocked" @click="onConfirmMode('light')">
+        <button type="button" class="panel-opt" data-mode-option="light" :class="{ active: isLight }" @click="onConfirmMode('light')">
           <span><strong>轻量提报</strong><small>小改动（如换图片、调文字），只确认 4 项关键信息</small></span>
           <van-icon v-if="isLight" name="success" color="#1f3a8a" />
         </button>
@@ -53,7 +53,6 @@
           <span><strong>常规提报</strong><small>按 12 项完整口径填写，信息更全便于评估</small></span>
           <van-icon v-if="!isLight" name="success" color="#1f3a8a" />
         </button>
-        <p v-if="modeLocked" class="lock-hint">打回补充期间不可切换为轻量，请按打回原因补齐后重新提交。</p>
         <van-button block plain type="primary" class="panel-done" @click="typeSheetVisible = false">完成</van-button>
       </van-popup>
     </div>
@@ -67,7 +66,7 @@ import AppLayout from '@/components/AppLayout.vue'
 import StepsBar from '@/components/StepsBar.vue'
 import AgentChatPanel from '@/components/AgentChatPanel.vue'
 import FieldEditSheet from '@/components/FieldEditSheet.vue'
-import { createDraft, updateDraft, submitDemand, getDemand, getStandard, isReplayablePayload, demandModeOf, returnReasonOf, changeDemandMode, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
+import { createDraft, updateDraft, submitDemand, getDemand, getStandard, isReplayablePayload, demandModeOf, changeDemandMode, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
 import { createAgentSession, type GuidePayload } from '@/api/agent'
 import { ApiError } from '@/api/request'
 import { useUserStore } from '@/store/user'
@@ -244,8 +243,7 @@ function onTypeSelect(_action: unknown, index: number) {
   if (locked.value) { showToast('正在保存，请稍候再改归类'); typeSheetVisible.value = false; return }
   onConfirmType((['business', 'user', 'function', null] as const)[index])
 }
-// 打回补充期间锁定轻量口径：打回按 12 项完整口径补齐，重提清除 returnReason 后恢复自由
-const modeLocked = computed(() => savedDemand?.status === 'NEED_INFO' && !!returnReasonOf(form))
+// 打回补充期间口径不锁定（2026-10-20 拍板）：轻量↔常规由提报人自主判断，提交门槛随口径生效
 async function onConfirmMode(level: 'light' | 'standard') {
   if (locked.value) { typeSheetVisible.value = false; return }
   if (level === (isLight.value ? 'light' : 'standard')) { typeSheetVisible.value = false; return } // 同口径点按视为关闭面板
@@ -254,6 +252,8 @@ async function onConfirmMode(level: 'light' | 'standard') {
     applyDemand(await changeDemandMode(draftId.value, revision.value, level))
     typeSheetVisible.value = false
     showToast(level === 'light' ? '已切换为轻量提报，只需确认四项关键信息' : '已切换为常规提报，我会按完整口径问齐')
+    // 服务端已按新口径当场重算并接续追问（2026-10-20 拍板）：刷新聊天回放最新质量快照
+    void panelRef.value?.refreshHistory?.().catch(() => { /* 历史刷新失败不影响口径切换结果 */ })
   } catch (value) { recordError(value) }
 }
 async function onConfirmType(confirmed: 'business' | 'user' | 'function' | null) {
@@ -261,13 +261,16 @@ async function onConfirmType(confirmed: 'business' | 'user' | 'function' | null)
   form.fieldSources['ext.typeRecognition'] = 'user'
   dirty.value = true
   showToast(confirmed === 'business' ? '已确认为业务需求，「业务目标/背景/价值」纳入必填' : confirmed === 'user' ? '已确认为用户需求' : confirmed === 'function' ? '已确认为功能需求' : '已恢复 AI 自动判断')
-  try { await save() } catch { /* 错误已展示，判型结果保留在表单中可重试 */ }
+  // 归类改判保存后服务端当场按新归类重算并接续追问（2026-10-20 拍板）：刷新聊天回放最新质量快照
+  try { await save(); void panelRef.value?.refreshHistory?.().catch(() => { /* 历史刷新失败不影响归类保存结果 */ }) } catch { /* 错误已展示，判型结果保留在表单中可重试 */ }
 }
 function applyAgent(payload: GuidePayload) {
   if (payload.demandId !== draftId.value || payload.sessionId !== sessionId.value || !canApplyRevision(revision.value, payload.revision, dirty.value)) {
     showToast('对话已保存，当前表单有更新，未覆盖表单'); return
   }
-  Object.assign(form, { ...payload.structured, fieldSources: payload.fieldSources })
+  // fieldSources 缺失时保留现有值（2026-10-21 修复）：存量的对话外接续消息（手改/附件/打回重进快照）
+  // payload 无 fieldSources，直接覆盖会把 form.fieldSources 置成 undefined，下一次手改要素即抛 TypeError
+  Object.assign(form, { ...payload.structured, fieldSources: payload.fieldSources || form.fieldSources })
   revision.value = payload.revision; quality.value = payload.elements; dirty.value = false
   lastPayload.value = payload
   if (savedDemand) savedDemand = { ...savedDemand, ...snapshot(), revision: revision.value, quality: payload.elements, sessionId: sessionId.value }
@@ -370,7 +373,5 @@ onMounted(initialize)
 .panel-opt > span { display: flex; flex-direction: column; gap: 2px; }
 .panel-opt strong { font-size: 14px; color: #1f2937; }
 .panel-opt small { font-size: 12px; color: #6b7280; line-height: 1.5; }
-.panel-opt:disabled { opacity: 0.5; }
-.lock-hint { font-size: 12px; color: #b45309; background: #fef3c7; border-radius: 8px; padding: 8px 10px; margin: 10px 0 0; line-height: 1.6; }
 .panel-done { margin-top: 14px; }
 </style>

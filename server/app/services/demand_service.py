@@ -4,14 +4,14 @@ import logging
 from copy import deepcopy
 from datetime import date, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.mysql import insert
 
-from app.agent.policy import process, resume_follow_up
+from app.agent.policy import process, resume_follow_up, return_quote_seen
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
 from app.core.statemachine import engine
-from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, PromptVersion, now
+from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, Notification, PromptVersion, User, now
 from app.services import session_service
 from app.services.demand_no import next_no
 from app.standards import rules
@@ -241,6 +241,23 @@ def describe_changes(items: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_TYPE_CONFIRM_LABELS = {"business": "业务需求", "user": "用户需求", "function": "功能需求"}
+
+
+def _describe_type_change(before: dict | None, after: dict | None) -> str | None:
+    """归类改判播报文案（2026-10-20 拍板）：只关注 confirmed——提报人确认/改判/恢复 AI 判断，
+    影响 B 区必填门槛；AI 侧的 judgedType/置信度变化归对话链路播报，不在此重复。"""
+    before_confirmed = before.get("confirmed") if isinstance(before, dict) else None
+    after_confirmed = after.get("confirmed") if isinstance(after, dict) else None
+    if before_confirmed == after_confirmed:
+        return None
+    if after_confirmed is None:
+        return "你已恢复由 AI 自动判断需求归类，我会按对话内容重新分析。"
+    label = _TYPE_CONFIRM_LABELS.get(after_confirmed, after_confirmed)
+    suffix = "，「业务目标/背景/价值」纳入必填" if after_confirmed == "business" else "，「业务目标/背景/价值」不再作必填" if before_confirmed == "business" else ""
+    return f"你已确认为{label}{suffix}。"
+
+
 def with_legacy_elements(payload: dict) -> dict:
     """旧六要素 ext 手填兼容（P4 前 H5 表单）：映射为五区 elements，显式 elements 同 key 优先。"""
     legacy = elements_from_legacy(payload.get("ext"))
@@ -259,7 +276,9 @@ async def create_draft(db, user, payload: dict) -> Demand:
         if rules.blank(value) and source is None:
             sources.pop(path, None)
     digest = fingerprint(payload)
-    statement = insert(Demand).values(submitter_id=user.id, client_request_id=payload["clientRequestId"],
+    # 草稿落库即写提报人快照（2026-10-20 拍板）：管理端草稿可见提报人；submit 时仍会按最新资料刷新
+    statement = insert(Demand).values(submitter_id=user.id, submitter_name=user.name,
+        submitter_dept=user.dept_name, client_request_id=payload["clientRequestId"],
         create_request_hash=digest, ext={}, field_sources={}, revision=0, status="DRAFT", channel=user.channel)
     await db.execute(statement.on_duplicate_key_update(id=Demand.id))
     demand = (await db.execute(select(Demand).where(Demand.submitter_id == user.id,
@@ -317,7 +336,15 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
     if notified:
         # 手改后的流程接续（2026-10-19 拍板问题②+合并方案）：AI 不停在播报——
         # 手填长文本先过模型做跨要素抽取归位（失败静默降级），规则层续上下一追问/完成话术
-        await append_conversation_follow_up(db, user, demand, changed_keys=changed_keys)
+        await append_conversation_follow_up(db, user, demand, changed_keys=changed_keys, trigger="manual")
+    # 归类改判播报+接续（2026-10-20 拍板，与手改要素/口径改判同规则）：typeRecognition 是保留键
+    # 不入 change_items，独立检测 confirmed 变化——判型影响 B 区必填门槛，当场重算质量卡：
+    # 有缺口按新门槛追问、要素齐备出「确认提交」快照；手改要素已接续过的快照已含新归类口径，不重复注入
+    type_notice = _describe_type_change((before.get("ext") or {}).get("typeRecognition"), (form.get("ext") or {}).get("typeRecognition"))
+    if type_notice and demand.session_id is not None:
+        await session_service.append(db, demand.session_id, "ASSISTANT", type_notice, {"kind": "typeChange"})
+        if not notified:
+            await append_conversation_follow_up(db, user, demand)
     await db.flush()
     return demand
 
@@ -339,10 +366,12 @@ def _manual_extract_texts(std: Standard | None, form: dict, changed_keys: set[st
 
 
 async def _follow_up_with_model(user, std: Standard, form: dict, sources: dict, previous: dict | None,
-                                history: list, manual_texts: list[tuple[str, str]], changed_keys: set[str]) -> dict:
+                                history: list, manual_texts: list[tuple[str, str]], changed_keys: set[str],
+                                *, trigger: str = "manual", return_quoted: bool = True) -> dict:
     """手改触发的补充式抽取（2026-10-19 拍板）：手填长文本交模型做跨要素抽取归位，
     意图固定为补充（supplement）——手改就是补充，不需要模型再判意图；
-    走 process 流水线：来源保护（手填字段不被改写）→ 抽取合并 → 引述确认（跳过手填项）→ 接续。"""
+    走 process 流水线：来源保护（手填字段不被改写）→ 抽取合并 → 引述确认（跳过手填项）→ 接续。
+    trigger/return_quoted（2026-10-20 拍板）：完成话术与打回引述按触发动作/一次性口径透传。"""
     from app.agent.guide import build_prompt
     from app.agent.llm_client import get_llm_client
     from app.agent.schemas import ElementStatus, Intent, parse_model_output
@@ -360,14 +389,19 @@ async def _follow_up_with_model(user, std: Standard, form: dict, sources: dict, 
     output = output.model_copy(update={"intent": Intent(kind="supplement")})
     standards = {code: standard for code, standard in registry.items()}
     return process(output, form, sources, prev_elements, None, previous_form, text,
-                   standards=standards, manual_keys=changed_keys)
+                   standards=standards, manual_keys=changed_keys,
+                   trigger=trigger, return_quoted=return_quoted)
 
 
-async def append_conversation_follow_up(db, user, demand: Demand, *, changed_keys: set[str] | None = None) -> None:
+async def append_conversation_follow_up(db, user, demand: Demand, *, changed_keys: set[str] | None = None,
+                                        trigger: str = "event", quote_return: bool | None = None) -> None:
     """对话外事件（手改要素/附件回执，2026-10-19 拍板）后的流程接续：
     手填长文本先过模型做跨要素抽取归位（补充式意图，手填字段受来源保护不被改写；
     模型不可用/失败静默降级为规则接续），规则层续上下一追问/完成话术，
     并同步 agent_session.asked_target——AI 不停在播报，对话不中断。
+    trigger（2026-10-20 拍板）：attachment/manual/enter/event——决定完成话术口径；
+    打回原因引述按历史消息判定，本补充会话只引述一次；quote_return 显式覆盖（打回当刻已有
+    完整通知，开场快照传 False 不重复引述）。
     payload 结构对齐对话结果消息（demandId/sessionId/revision/elements/structured），
     供前端质量清单回放、并被 guide.prepare 认作下一轮 previous 快照（无 kind 字段）。"""
     if demand.session_id is None:
@@ -375,17 +409,20 @@ async def append_conversation_follow_up(db, user, demand: Demand, *, changed_key
     form = form_of(demand)
     std = get_standard(demand.demand_type_code) if demand.demand_type_code else get_standard("MATL")
     history = await session_service.messages(db, user, demand.session_id)
-    # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报不是模型产物
+    # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报/归类改判播报不是模型产物
     previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT"
                      and m.structured_payload
-                     and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice", "modeChange")), None)
+                     and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice", "modeChange", "typeChange")), None)
+    # 打回原因引述只引述一次（2026-10-20 拍板）：查历史助理消息；打回当刻通知措辞不含引述标记，不算已引述
+    return_quoted = (not return_quote_seen([m.content for m in history if m.role == "ASSISTANT"])) if quote_return is None else quote_return
     keys = changed_keys or set()
     follow = None
     manual_texts = _manual_extract_texts(std, form, keys)
     if manual_texts:
         try:
             follow = await _follow_up_with_model(user, std, form, dict(demand.field_sources or {}),
-                                                 previous, history, manual_texts, keys)
+                                                 previous, history, manual_texts, keys,
+                                                 trigger=trigger, return_quoted=return_quoted)
         except Exception as exc:
             logger.warning("手改跨要素抽取失败，降级为规则接续 demand=%s %s: %s", demand.id, type(exc).__name__, exc)
             follow = None
@@ -401,11 +438,15 @@ async def append_conversation_follow_up(db, user, demand: Demand, *, changed_key
                   "guidanceComplete": follow["guidanceComplete"], "quickReplies": follow["quickReplies"]}
         form = extracted
     else:
-        follow = resume_follow_up(std, form, previous, changed_keys=keys)
+        follow = resume_follow_up(std, form, previous, changed_keys=keys,
+                                  trigger=trigger, return_quoted=return_quoted)
+    # payload 须含 fieldSources（2026-10-21 修复）：前端回放时按对话结果结构整体应用表单，
+    # 缺 fieldSources 会把 form.fieldSources 覆盖成 undefined，下一次手改要素即抛 TypeError
     await session_service.append(db, demand.session_id, "ASSISTANT", follow["reply"], {
         "demandId": demand.id, "sessionId": demand.session_id, "revision": demand.revision,
         "reply": follow["reply"],
         "elements": follow["elements"], "structured": form,
+        "fieldSources": dict(demand.field_sources or {}),
         "askedTarget": follow["askedTarget"], "canSubmit": follow["canSubmit"],
         "guidanceComplete": follow["guidanceComplete"], "quickReplies": follow["quickReplies"],
     })
@@ -477,7 +518,8 @@ async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
     """管理员打回待补充（2026-10-11 方案③）：SUBMITTED → NEED_INFO。
 
     - 打回原因存 ext.returnReason（保留位），并写 change_log（status/ext.returnReason 两行，source=admin）
-    - ext.mode 强制升 standard：打回意味着信息不足，按 12 项完整口径补填，不回轻量快速通道
+    - 提报口径保持原样（2026-10-20 拍板）：不再强制升 standard——打回原因可能只是一处小补充，
+      轻量需求仍按 4 项最小集补填重提，完整/轻量由提报人自主判断
     - 会话重开 ACTIVE 并注入一条引述打回原因的播报消息（kind=returnNotice，不参与质量快照回放）
     """
     demand = (await db.execute(select(Demand).where(Demand.id == demand_id).with_for_update())).scalar_one_or_none()
@@ -492,7 +534,6 @@ async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
     ext = dict(demand.ext or {})
     ext["returnReason"] = {"reason": reason_text, "returnedBy": admin_user.name,
                            "returnedAt": now().isoformat(timespec="seconds")}
-    ext["mode"] = {"level": "standard", "evidence": "管理员打回待补充，按完整口径补齐后重新提交"}
     demand.ext = ext
     # P2 硬约束：打回经状态机 RETURN 事件（SUBMITTED → NEED_INFO）并写 transition_log
     await engine.transition(db, demand_id, "RETURN", admin_user, comment=reason_text)
@@ -509,6 +550,15 @@ async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
                   "可以直接回复我来补充，我会帮你把缺的内容问齐；也可以点开「需求要素表单」卡片逐项修改。")
         await session_service.append(db, demand.session_id, "ASSISTANT", notice,
                                      {"kind": "returnNotice", "reason": reason_text})
+        # 打回开场快照（2026-10-20 拍板方案A）：纯规则按 12 项完整口径重算质量快照，落库为正式对话
+        # 结果消息（带打回后 revision）——修复「状态机流转 bump
+        # revision 甩开最后快照 → 前端回放守卫拦截 → 重进提报页按钮/清单/步骤全丢」的引导断链：
+        # 重进即见缺口追问，补齐后「确认提交」随新一轮快照自然出现。
+        # 打回原因不再前置引述（上一条 returnNotice 已完整告知，2026-10-20 拍板）；
+        # 提报人回来后第一次操作时由 return_quote_seen 自动判定引述一次
+        owner = await db.get(User, demand.submitter_id)
+        if owner is not None:
+            await append_conversation_follow_up(db, owner, demand, trigger="enter", quote_return=False)
     await db.flush()
     return demand
 
@@ -517,7 +567,7 @@ async def change_mode(db, user, demand_id: int, expected_revision: int, level: s
     """提报口径改判（2026-10-11 方案④口径显性化）：轻量↔常规双向，由提报人主动发起。
 
     - AI 判定保持单向升不降（merge_mode_signal standard 粘性）；用户手动定过（origin=user）后 AI 双向不翻转
-    - 打回补充期间（ext.returnReason 存在）不可切换为轻量：打回按 12 项完整口径补齐，重提清除后恢复自由
+    - 打回补充期间同样可双向切换（2026-10-20 拍板）：口径由提报人自主判断，提交门槛随口径生效
     - 已填的 C/D 数据保留不清除，提交门槛随口径切换（light 只拦 4 项最小集）
     - 会话注入 kind=modeChange 播报（进对话上下文，AI 后续轮次可见；不参与质量快照回放）
     """
@@ -526,8 +576,6 @@ async def change_mode(db, user, demand_id: int, expected_revision: int, level: s
     before_level = rules.demand_mode(form_of(demand))
     if level == before_level:
         raise BizError(ErrorCode.PARAM_INVALID, "提报口径未变化")
-    if level == "light" and (demand.ext or {}).get("returnReason"):
-        raise BizError(ErrorCode.PARAM_INVALID, "打回补充期间不可切换为轻量，请按打回原因补齐后重新提交")
     ext = dict(demand.ext or {})
     old_mode = ext.get("mode")
     ext["mode"] = {"level": level, "evidence": "提报人手动调整提报口径", "origin": "user"}
@@ -542,6 +590,9 @@ async def change_mode(db, user, demand_id: int, expected_revision: int, level: s
                   "你已把提报口径从「常规提报」改为「轻量提报」。只需确认四项关键信息：标题、你的原话、紧急程度、期望效果，其余不再追问，之前填的内容都保留。")
         await session_service.append(db, demand.session_id, "ASSISTANT", notice,
                                      {"kind": "modeChange", "from": before_level, "to": level})
+        # 当场按新口径接续（2026-10-20 拍板，与手改要素同规则）：重算质量卡——
+        # 有缺口按新口径追问、要素齐备出「确认提交」快照，不再只发文案等下一轮
+        await append_conversation_follow_up(db, user, demand)
     await db.flush()
     return demand
 
@@ -696,6 +747,15 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
         demand.ext = ext
         db.add(DemandChangeLog(demand_id=demand.id, field_key="status", old_value="NEED_INFO", new_value="SUBMITTED",
                                source="user", changed_by=user.id))
+    # 角标闭环（2026-10-20 拍板）：提交即视为本需求相关待办已处理——将提报人对本需求的未读通知
+    # 标记已读（首次提交时无通知自然空转；重提时清掉打回通知）。「我的需求」tab 角标随之下架
+    await db.execute(
+        update(Notification).where(
+            Notification.receiver_id == user.id,
+            Notification.demand_id == demand.id,
+            Notification.is_read.is_(False),
+        ).values(is_read=True, read_at=now())
+    )
     if demand.session_id is not None:
         session = (await db.execute(select(AgentSession).where(AgentSession.id == demand.session_id).with_for_update())).scalar_one()
         if session.demand_id != demand.id or session.user_id != user.id:
@@ -728,6 +788,18 @@ def filters(statement, *, status=None, type_code=None, date_from=None, date_to=N
     return statement
 
 
+async def need_info_count(db, user) -> int:
+    """「我的需求」tab 角标（2026-10-20 拍板改口径）：待补充需求数，
+    与 /demand/my?status=NEED_INFO 完全同口径——补充重提/撤销后状态流转，角标自动消，
+    不再依赖通知已读（通知无可信已读通路时会产生幽灵角标）。"""
+    return (await db.execute(
+        select(func.count(Demand.id)).where(
+            Demand.submitter_id == user.id,
+            Demand.status == "NEED_INFO",
+        )
+    )).scalar_one()
+
+
 async def list_records(db, user=None, *, page=1, size=20, **query):
     statement = select(Demand)
     if user is not None:
@@ -748,6 +820,37 @@ async def standard_for(db, demand: Demand) -> Standard | None:
     return get_standard(demand.demand_type_code) if demand.demand_type_code else None
 
 
+async def _ensure_entry_opening_snapshot(db, demand: Demand, rows) -> bool:
+    """进入提报页即校验要素（2026-10-20 拍板）：打回补提与草稿续提统一兜底——凡可提报状态
+    （DRAFT/NEED_INFO），会话中无「与当前 revision 匹配、且要素键集合与当前模板一致的正式快照
+    （无 kind 的对话结果消息）」时，纯规则重算并补注一条：要素齐备 → 快照 canSubmit=true，
+    进页直接显示「确认提交」；有缺口 → AI 开口追问当前缺口。覆盖：修复上线前的存量打回单、
+    手改/模式切换等顶了 revision 使快照失配的路径、无任何快照的老草稿。幂等——注入后再次
+    读取命中既有快照即跳过。
+    模板指纹校验（2026-10-20 拍板）：revision 只跟随表单数据，规则模板演进（如五区重构）
+    不顶 revision——老模板生成的快照 revision 仍匹配会被误回放（陈旧快照污染：老 7 要素
+    快照 canSubmit=true 掩盖五区缺口）。快照要素键集合与当前模板键集合不一致即视为失配，
+    触发重算；同模板下 assess 恒输出全量键，不会误伤。"""
+    if demand.status not in ("DRAFT", "NEED_INFO") or demand.session_id is None:
+        return False
+    std = await standard_for(db, demand)
+    template_keys = ({field.key for field in std.elements if not field.system and field.assessed}
+                     if std is not None else set())
+    for row in reversed(rows):
+        payload = row.structured_payload
+        if (row.role == "ASSISTANT" and isinstance(payload, dict) and payload.get("kind") is None
+                and payload.get("revision") == demand.revision
+                and {e.get("key") for e in payload.get("elements") or [] if isinstance(e, dict)} == template_keys):
+            return False
+    owner = await db.get(User, demand.submitter_id)
+    if owner is None:
+        return False
+    # 进页面补快照（2026-10-20）：enter 话术；打回引述按历史自动判定（第一次进补充会话引述一次）
+    await append_conversation_follow_up(db, owner, demand, trigger="enter")
+    await db.flush()
+    return True
+
+
 async def detail(db, user, demand_id: int) -> dict:
     demand = await db.get(Demand, demand_id)
     # P2 可见性：提报人/管理员 之外，处理人可查看已进入流转的需求（管理视角详情页）
@@ -758,6 +861,9 @@ async def detail(db, user, demand_id: int) -> dict:
     messages = []
     if demand.session_id:
         rows = (await db.execute(select(AgentMessage).where(AgentMessage.session_id == demand.session_id).order_by(AgentMessage.id))).scalars().all()
+        # 进入提报页即校验：自愈注入后重取，保证本次响应即携带开场快照（回放/按钮一次就位）
+        if await _ensure_entry_opening_snapshot(db, demand, rows):
+            rows = (await db.execute(select(AgentMessage).where(AgentMessage.session_id == demand.session_id).order_by(AgentMessage.id))).scalars().all()
         messages = [{"id": row.id, "sessionId": row.session_id, "role": row.role, "content": row.content,
             "structuredPayload": json.dumps(row.structured_payload, ensure_ascii=False) if row.structured_payload else None,
             "createdAt": encode(row.created_at)} for row in rows]

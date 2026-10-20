@@ -19,6 +19,7 @@
           </div>
         </div>
         <div v-else-if="attachmentOf(message)?.kind === 'attachment'" class="msg-bubble attach-bubble" :class="{ mine: message.role === 'USER' }" @click="openAttachment(message)">
+          <button class="attach-del" type="button" aria-label="删除附件" @click.stop="removeAttachment(message)"><van-icon name="cross" /></button>
           <img v-if="attachmentOf(message)!.fileKind === 'IMAGE' && thumbs.get(attachmentOf(message)!.attachmentId)" class="attach-thumb" :src="thumbs.get(attachmentOf(message)!.attachmentId)" alt="">
           <div v-else-if="attachmentOf(message)!.fileKind === 'IMAGE'" class="attach-pending">图片加载中…</div>
           <div class="attach-line">
@@ -83,11 +84,11 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { showImagePreview, showToast, showLoadingToast, closeToast } from 'vant'
+import { showImagePreview, showToast, showLoadingToast, closeToast, showConfirmDialog } from 'vant'
 import { agentSessionMessages, guideChatStream, StreamError, type GuidePayload, type GuideRequest } from '@/api/agent'
 import {
   ATTACHMENT_ACCEPT, ATTACHMENT_COUNT_LIMIT, ATTACHMENT_SIZE_LIMIT, fmtSize, isReplayablePayload,
-  parseAttachmentPayload, parseManualChange, uploadAttachment, fetchAttachmentThumb, downloadAttachment,
+  parseAttachmentPayload, parseManualChange, uploadAttachment, fetchAttachmentThumb, downloadAttachment, deleteAttachment,
   type AgentMessage, type AttachmentPayload, type DemandForm, type ElementStatus, type ManualChangePayload, type Standard, type StandardField,
 } from '@/api/demand'
 import { canApplyRevision } from '@/utils/form'
@@ -283,6 +284,19 @@ async function onFileChosen(event: Event, source: 'image' | 'doc') {
   } catch { /* 失败原因已由请求层 toast；本地上传不消耗 AI 额度，直接重试即可 */ }
   finally { uploading.value = false; emit('busy', false); scroll() }
 }
+/** 删除附件（2026-10-20 拍板）：气泡右上角 × 触发，确认后调接口并刷新会话——
+ * 后端会连带清掉附件气泡与回执两条消息，聊天不留死链；权限/状态限制由后端把关并 toast 原因 */
+async function removeAttachment(message: AgentMessage) {
+  const payload = attachmentOf(message)
+  if (!payload || !props.demandId || uploading.value || sending.value) return
+  try { await showConfirmDialog({ title: '删除附件', message: `确定删除附件「${payload.fileName}」吗？` }) }
+  catch { return }
+  try {
+    await deleteAttachment(props.demandId, payload.attachmentId)
+    showToast('已删除')
+    await loadHistory()
+  } catch { /* 失败原因已由请求层 toast */ }
+}
 function openAttachment(message: AgentMessage) {
   const payload = attachmentOf(message)
   if (!payload || !props.demandId) return
@@ -311,10 +325,13 @@ function releaseThumbs() {
   thumbs.value.forEach(url => URL.revokeObjectURL(url))
   thumbs.value = new Map()
 }
-watch(() => [props.demandId, props.sessionId], () => {
+watch(() => [props.demandId, props.sessionId], (current, previous) => {
   releaseThumbs()
   historyGeneration++; runGeneration++; controller?.abort()
-  messages.value = []; latest.value = null; pending.value = null; input.value = ''; failure.value = ''
+  messages.value = []; latest.value = null; pending.value = null; failure.value = ''
+  // 输入框文本只在「切换到另一条已有草稿」时清空（2026-10-20 拍板）：首次发消息/上传触发
+  // 「空草稿→新建落库」的 id 变化（null→数字）属同一草稿，不能刷掉用户正在写的字
+  if (previous?.[0] && current[0] !== previous[0]) input.value = ''
   restorePending(); loadHistory().catch(() => { failure.value = '历史对话暂未载入，请稍后重试' })
 })
 onMounted(() => { restorePending(); loadHistory().catch(() => { /* 首次进入无会话属正常 */ }); window.visualViewport?.addEventListener('resize', onViewportResize) })
@@ -365,7 +382,9 @@ defineExpose({ scrollToBottom: scroll, refreshHistory: loadHistory })
 .attach-btn:disabled { color: #b4bdcc; background: #f3f4f7; }
 .uploading-hint { padding: 0 14px 8px; font-size: 12px; color: #5b6472; }
 /* 附件消息卡片：图片缩略图置顶，文件行置底；用户侧卡片品牌蓝底白字与普通用户气泡一致 */
-.attach-bubble { min-width: 180px; max-width: 82%; padding: 8px; cursor: pointer; }
+.attach-bubble { min-width: 180px; max-width: 82%; padding: 8px; cursor: pointer; position: relative; }
+/* 附件删除入口（2026-10-20 拍板）：气泡右上角浮角 ×，素白底灰图标，不抢视觉 */
+.attach-del { position: absolute; top: -7px; right: -7px; z-index: 2; width: 20px; height: 20px; padding: 0; border: 1px solid #dbe4f3; border-radius: 50%; background: #fff; color: #94a3b8; font-size: 11px; display: flex; align-items: center; justify-content: center; }
 .attach-bubble.mine { background: #1f3a8a; border-color: #1f3a8a; color: #fff; }
 .attach-thumb { display: block; width: 100%; max-height: 180px; object-fit: cover; border-radius: 8px; margin-bottom: 6px; }
 .attach-pending { font-size: 12px; color: #94a3b8; padding: 24px 0; text-align: center; }

@@ -164,7 +164,7 @@ export const triageApi = {
   counts: () => get<{ queue: number; pool: number }>('/triage/counts'),
   mine: (params: { page: number; size: number; status?: string }) =>
     get<PageResult<DemandRow>>('/triage/mine', params),
-  demands: (params: { page: number; size: number; status?: string; urgency?: string; typeCode?: string }) =>
+  demands: (params: { page: number; size: number; status?: string; urgency?: string; typeCode?: string; includeDrafts?: boolean }) =>
     get<PageResult<DemandRow>>('/triage/demands', params),
   // 分派候选人按需求类型过滤（类型权限管控点）：仅返回覆盖该类型的处理人，ADMIN 直通
   assignees: (typeCode: string) => get<AssigneeOption[]>('/triage/assignees', { typeCode }),

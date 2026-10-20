@@ -398,7 +398,8 @@ async def test_api_mailbox(client, session_factory, submitter):
     assert (await client.get("/demandhub-api/notification/mine/unread-count",
                              headers=submitter_headers)).json()["data"]["count"] == 0
 
-    # 再来两封 → 全部已读（RETURN 仅允许 SUBMITTED 源态，另起一单退回两次）
+    # 退回→重提→再退回：中间那次重提触发角标闭环（2026-10-20 拍板）——第一封打回通知被自动已读，
+    # 故未读=1（仅最后一封）而非 2；随后 read-all 清掉它
     did2 = await make_submitted(session_factory, submitter)
     async with session_factory() as db:
         async with db.begin():
@@ -406,9 +407,9 @@ async def test_api_mailbox(client, session_factory, submitter):
             await demand_service.submit(db, submitter, did2, (await db.get(Demand, did2)).revision)
             await engine.transition(db, did2, "RETURN", manager, comment="仍不齐全")
     assert (await client.get("/demandhub-api/notification/mine/unread-count",
-                             headers=submitter_headers)).json()["data"]["count"] == 2
+                             headers=submitter_headers)).json()["data"]["count"] == 1
     assert (await client.put("/demandhub-api/notification/mine/read-all",
-                             headers=submitter_headers)).json()["data"]["updated"] == 2
+                             headers=submitter_headers)).json()["data"]["updated"] == 1
 
 
 @pytest.mark.asyncio

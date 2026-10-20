@@ -195,11 +195,16 @@ def test_no_soft_quality_followup_once_submittable():
     assert pick_follow_up(standard, elements2, form=value2, can_submit=False).key == "functionDescription"
 
 
-def test_light_mode_ignores_urgent_gate():
-    # light 微需求即使选了紧急也不追问日期：保持最小集口径（最多 2 轮），照常问期望效果
+def test_light_mode_urgent_gate_applies():
+    # 急单门控 light 同规（2026-10-20 拍板）：轻量选了紧急同样插队追问交付日期——急单不分轻重，
+    # 「请说明期望时间」承诺不落空；遵守 light「每项最多问一次」：问满 1 次即放过，恢复最小集顺序
     standard = get("TECH")
     base = {"title": "更换首页顶部logo", "demandTypeCode": "TECH", "content": "把首页顶部的logo换成新设计的蓝色版本", "urgency": "URGENT", "elements": {}}
-    assert pick_follow_up(standard, assess(standard, base, light=True), light=True, form=base).key == "acceptanceCriteria"
+    elements = assess(standard, base, light=True)
+    assert pick_follow_up(standard, elements, light=True, form=base).key == "expectDeliveryAt"
+    # 问满 1 次仍无日期：放过（light 上限比 standard 更严），回到最小集追问期望效果
+    asked_once = [e.model_copy(update={"attempts": 1}) if e.key == "expectDeliveryAt" else e for e in elements]
+    assert pick_follow_up(standard, asked_once, light=True, form=base).key == "acceptanceCriteria"
 
 
 def test_matl_urgent_gate_not_applicable():
@@ -422,13 +427,44 @@ def test_completion_reply_gates_b_zone_by_business():
 
 
 def test_return_reason_is_quoted_in_reply():
-    # 打回闭环（方案③）：returnReason 留存期间回复模板前置白话引述打回原因，重提清除后引述自然消失
+    # 打回闭环（方案③ + 2026-10-20 拍板）：补充会话首次对话前置白话引述打回原因，重提清除后引述自然消失；
+    # 完成话术是打回补充口径（「确认提交」重新提交），不再播新草稿的选填项长说明
     base = acd_filled_form()
     base["ext"] = {"returnReason": {"reason": "缺少使用场景说明，请补充后重新提交"}}
     result = process(ModelOutput(structured={}, elements=[]), base, {}, [], None, {}, "我来看看还需要补充什么")
     assert result["reply"].startswith("这条需求之前被打回过")
     assert "打回原因是「缺少使用场景说明，请补充后重新提交」" in result["reply"]
-    assert "可以提交" in result["reply"]
+    assert "重新提交" in result["reply"] and "以后能补" not in result["reply"]
+    # return_quoted=False（本补充会话已引述过）：只给简短确认，不重复引述
+    again = process(ModelOutput(structured={}, elements=[]), base, {}, [], None, {}, "附件传好了",
+                    return_quoted=False)
+    assert not again["reply"].startswith("这条需求之前被打回过")
+    assert "确认提交" in again["reply"]
+
+
+def test_resume_follow_up_quotes_return_reason():
+    """规则接续（resume_follow_up，2026-10-20 拍板）：
+    returnReason 留存且首次时 reply 前置白话引述打回原因；有缺口选中追问，无缺口给重提话术；
+    return_quoted=False 不再引述（补充会话只引述一次）。"""
+    standard = get("TECH")
+    base = acd_filled_form()
+    base["ext"] = {"returnReason": {"reason": "缺少使用场景说明，请补充后重新提交"}}
+    base["elements"]["C"]["userRole"] = ""  # 制造缺口：规则接续应选中追问
+    result = resume_follow_up(standard, base, None, trigger="enter")
+    assert result["reply"].startswith("这条需求之前被打回过")
+    assert "打回原因是「缺少使用场景说明，请补充后重新提交」" in result["reply"]
+    assert result["canSubmit"] is False and result["askedTarget"] == "userRole"
+    # 无缺口（打回原因与要素无关）：引述仍在，canSubmit=True → 重进即见「确认提交」
+    full = acd_filled_form()
+    full["ext"] = {"returnReason": {"reason": "请把标题改得更准确些"}}
+    done = resume_follow_up(standard, full, None, trigger="attachment")
+    assert done["reply"].startswith("这条需求之前被打回过")
+    assert "确认提交" in done["reply"] and "以后能补" not in done["reply"]
+    assert done["canSubmit"] is True and done["askedTarget"] is None
+    # 已引述过：附件动作不再引述，话术只给行动指引
+    later = resume_follow_up(standard, full, None, trigger="attachment", return_quoted=False)
+    assert not later["reply"].startswith("这条需求之前被打回过")
+    assert "确认提交" in later["reply"]
 
 
 def test_light_mode_minimal_set_can_submit_without_acd():

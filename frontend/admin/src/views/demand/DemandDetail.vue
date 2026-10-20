@@ -5,7 +5,7 @@
         <template #header>
           <div class="head">
             <div class="title-area">
-              <span class="dno">{{ demand.demandNo || '未编号' }}</span>
+              <span class="dno">{{ demand.demandNo || (demand.status === 'DRAFT' ? `草稿 #${demand.id}` : '未编号') }}</span>
               <StatusTag :status="demand.status" :on-hold="demand.onHold" :hold-reason="demand.holdReason" />
               <UrgencyTag :urgency="demand.urgency" />
               <el-tag v-if="isLight" size="small" type="info" effect="plain">轻量提报</el-tag>

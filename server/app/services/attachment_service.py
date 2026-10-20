@@ -13,13 +13,13 @@
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.config import get_settings
 from app.core.deps import is_admin
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
-from app.db.models import Demand, DemandAttachment
+from app.db.models import AgentMessage, Demand, DemandAttachment
 from app.services import session_service
 
 MAX_SIZE = 10 * 1024 * 1024
@@ -227,9 +227,9 @@ async def save_attachment(
             request_id=request_id,
         )
         # 附件回执后的流程接续（2026-10-19 拍板，与手改同套逻辑）：回执完不停顿，
-        # 规则层续上下一追问/完成话术，对话不中断
+        # 规则层续上下一追问/完成话术（2026-10-20：附件动作专用简短话术），对话不中断
         from app.services.demand_service import append_conversation_follow_up
-        await append_conversation_follow_up(db, user, demand)
+        await append_conversation_follow_up(db, user, demand, trigger="attachment")
     return row
 
 
@@ -281,5 +281,14 @@ async def delete_attachment(db, user, demand_id: int, attachment_id: int) -> Non
         if solution is None or solution.status != "DRAFT":
             raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "仅草稿方案的附件可删除")
     # COMMENT 附件：上传人或管理员可删（不再加状态限制）
+    # 连带清理会话里的附件气泡与回执（2026-10-20 拍板）：两条消息 request_id 固定为 attach-{附件id}，
+    # 删除后聊天不再留死链气泡；附件记录本身软删留痕，不影响追溯
+    if demand.session_id is not None:
+        await db.execute(
+            delete(AgentMessage).where(
+                AgentMessage.session_id == demand.session_id,
+                AgentMessage.request_id == f"attach-{row.id}",
+            )
+        )
     row.status = "DELETED"
     await db.flush()

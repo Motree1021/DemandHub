@@ -243,11 +243,11 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     C/D 其余要素与 B 区一律不问；content 永不追问（A8 底稿由系统首条消息回填），
     title 2026-10-20 起同为系统提取项（auto_fill）退出追问序列。
 
-    急单门控（2026-10-12 拍板）：紧急度为紧急/特急而期望交付时间还空着时，插队最优先
-    追问日期——紧急度话术承诺「紧急或特急请说明期望时间」，但点选快捷项只发枚举标签
-    （如「紧急」两个字），没有时间信息可抽，不插队追问承诺就落空；日期填上或问满
-    （attempts 达上限）即自动恢复正常顺序。仅 TECH 生效（MATL/TRAIN 的期望时间在
-    common_fields、不在追问循环，无此场景）。
+    急单门控（2026-10-12 拍板；2026-10-20 起 light 同规）：紧急度为紧急/特急而期望交付时间
+    还空着时，插队最优先追问日期——紧急度话术承诺「紧急或特急请说明期望时间」，但点选快捷项
+    只发枚举标签（如「紧急」两个字），没有时间信息可抽，不插队追问承诺就落空；急单不分轻重，
+    light 同样生效并遵守「每项最多问一次」上限；日期填上或问满（attempts 达上限）即自动恢复
+    正常顺序。仅 TECH 生效（MATL/TRAIN 的期望时间在 common_fields、不在追问循环，无此场景）。
 
     可提交即停问软质量（2026-10-12 拍板）：一旦必填门槛达成（can_submit=True，AI 已说
     「可以提交」），除急单交付日期这种"承诺型追问"外，不再对"有值但被判不够量化/不够具体"
@@ -286,16 +286,18 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
             return False
         return True
 
+    # 急单门控插队最优先（light 同规，2026-10-20 拍板）：急单不分轻重，交付承诺不落空；
+    # light 遵守「每项最多问一次」上限——比 standard 更严，问过一次就放过不纠缠
+    if form is not None and get_value(form, "urgency") in {"URGENT", "CRITICAL"}:
+        delivery = by_key.get("expectDeliveryAt")
+        if delivery is not None and delivery.status not in {"OK", "SKIP"}:
+            if delivery.attempts < (1 if light else standard.max_attempts):
+                return delivery
     if light:
         for key in light_order:
             if eligible(key):
                 return by_key[key]
         return None
-    # 急单门控插队：与 B 区门控对称（B 区=判型生效才问，这里=急单才问日期）
-    if form is not None and get_value(form, "urgency") in {"URGENT", "CRITICAL"}:
-        delivery = by_key.get("expectDeliveryAt")
-        if delivery is not None and delivery.status not in {"OK", "SKIP"} and delivery.attempts < standard.max_attempts:
-            return delivery
     # 稳定排序：A/C/D 必填在前（保持 yaml 原顺序），B 区沉底，紧急程度最后（2026-10-15 拍板）
     ordered = sorted(required, key=lambda k: (k == "urgency", 1 if field_of[k].zone == "B" else 0))
     for key in ordered + standard.follow_up_order:
@@ -350,16 +352,81 @@ def anchored_template(standard, field, form):
     return field.ask_anchor.replace("{anchor}", snippet)
 
 
-def reply_for(standard, target, form, *, light: bool = False, business: bool = False):
+def _return_reason_of(form: dict) -> str | None:
+    return ((form.get("ext") or {}).get("returnReason") or {}).get("reason")
+
+
+# 完成话术按触发场景区分（2026-10-20 拍板）：打回补充单要素本就齐全，
+# 不再播「可选项以后能补、产品经理调研后可补」的新手引导长话术；附件/手改/进页面各自给简短行动指引
+RETURN_QUOTE_PREFIX = "这条需求之前被打回过，打回原因是「{reason}」。按这个说明改好后就能重新提交。"
+_RETURN_DONE = {
+    "attachment": "可以点「确认提交」重新提交。",
+    "manual": "修改已记录好，可以点「确认提交」重新提交。",
+    "enter": "可以点「确认提交」重新提交。",
+    "event": "可以点「确认提交」重新提交。",
+    "dialog": "补充的内容已记录好，点下方「确认提交」即可重新提交。",
+}
+_RETURN_INCOMPLETE = {
+    "attachment": "还有几项必填信息没填齐，请在下方表单里补齐后重新提交。",
+    "manual": "修改已记录好。还有几项必填信息没填齐，请在下方表单里补齐后重新提交。",
+}
+_DRAFT_DONE = {
+    "attachment": "可以点「确认提交」提交。",
+    "manual": "修改已记录好，可以点「确认提交」提交。",
+    "enter": "该填的都齐了，可以提交。",
+    "event": "该填的都齐了，可以提交。",
+}
+_DRAFT_INCOMPLETE_ATTACHMENT = "还有几项必填信息没填齐，请在下方表单里补齐后提交。"
+# 打回原因引述前缀的固定开头：用于历史消息判定「本补充会话是否已引述过」（只引述一次）
+RETURN_QUOTE_MARK = "这条需求之前被打回过，打回原因是"
+
+
+def _incomplete_reply(*, light: bool, trigger: str, return_reason: str | None) -> str:
+    """无追问目标但必填仍缺（追问次数用尽放过）时的兜底指引。"""
+    if return_reason:
+        return _RETURN_INCOMPLETE.get(trigger, "还有几项必填信息没填齐，请在下方表单里补齐后重新提交。")
+    if trigger == "attachment":
+        return _DRAFT_INCOMPLETE_ATTACHMENT
+    return ("我这边问得差不多了。还差的几项请在下方表单里补齐后提交。" if light
+            else "我这边问得差不多了。请在下方表单里把标红星※的必填项补齐后提交。")
+
+
+def _prefix_return_quote(reply: str, form: dict, *, return_quoted: bool) -> str:
+    """打回原因引述（2026-10-20 拍板）：补充会话只引述一次，由调用方按历史消息判定是否首次。"""
+    if not return_quoted:
+        return reply
+    reason = _return_reason_of(form)
+    if not reason:
+        return reply
+    return RETURN_QUOTE_PREFIX.format(reason=reason) + reply
+
+
+def return_quote_seen(texts) -> bool:
+    """历史助理消息里是否已引述过打回原因（2026-10-20 拍板）：补充会话只引述一次。
+    打回当刻的完整通知措辞为「这条需求被产品经理打回了」，不含本标记，不会误判。"""
+    return any(RETURN_QUOTE_MARK in (text or "") for text in texts)
+
+
+def reply_for(standard, target, form, *, light: bool = False, business: bool = False, trigger: str = "dialog"):
     if target is None:
-        if light:
-            # light 模式必填门槛是最小集（required_keys），全齐即普通完成话术；未齐给兜底指引
-            return "都记好了，请核对一下表单。该填的都齐了，可以提交。" if not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS) else "我这边问得差不多了。还差的几项请在下方表单里补齐后提交。"
-        # 完成话术与提交门槛（process 的 can_submit）同一口径：B 区必填仅在判型为业务需求时生效，
-        # 否则未判业务需求的 B 区缺项会把「都齐了」误报成「还有必填没填」
         active_zones = {"A", "C", "D"} | ({"B"} if business else set())
-        # 必填已齐、引导结束：选填项的 VAGUE/MISSING 状态会留在要素记录里供审核参考，用白话告知而非"质量缺口"术语
-        return "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，以后能补；产品经理调研后也可以补。" if not schema_errors(standard, form, required=True, active_zones=active_zones) else "我这边问得差不多了。请在下方表单里把标红星※的必填项补齐后提交。"
+        return_reason = _return_reason_of(form)
+        if light:
+            complete = not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS)
+        else:
+            complete = not schema_errors(standard, form, required=True, active_zones=active_zones)
+        if complete:
+            if return_reason:
+                return _RETURN_DONE.get(trigger, _RETURN_DONE["dialog"])
+            if trigger == "dialog":
+                return ("都记好了，请核对一下表单。该填的都齐了，可以提交。" if light
+                        else "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，以后能补；产品经理调研后也可以补。")
+            if trigger == "attachment":
+                return _DRAFT_DONE["attachment"]
+            if trigger == "manual":
+                return _DRAFT_DONE["manual"]
+            return _DRAFT_DONE["event"]
+        return _incomplete_reply(light=light, trigger=trigger, return_reason=return_reason)
     field = next(e for e in standard.elements if e.key == target.key)
     value = str(get_value(form, field.field_path) or "")
     snippet = value[:20] + ("…" if len(value) > 20 else "")
@@ -463,7 +530,8 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
     }
 
 
-def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementStatus], prev_target: str | None, previous_form: dict, text: str, *, standards=None, manual_keys=None):
+def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementStatus], prev_target: str | None, previous_form: dict, text: str, *, standards=None, manual_keys=None,
+            trigger: str = "dialog", return_quoted: bool = True):
     # 意图分流（2026-10-19 拍板）：模型判定本轮在做什么；纯闲聊走独立分支（不抽取不判定），
     # 补充/提问/指令照常合并抽取，但不按"答错当前问题"惩罚（attempts 不计数）。
     # manual_keys（手改抽取链路，2026-10-19 拍板）：本轮用户手填的要素 key——
@@ -531,13 +599,15 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     # command（流程指令，2026-10-19 拍板）：回复聚焦指令本身，不叠加模式播报/方案播报等前缀——
     # 用户说「提交吧」时播「这个需求听起来改动面不小」完全文不对题
     if kind == "command":
+        is_return = bool(_return_reason_of(merged))
         if can_submit:
-            reply = "好的，信息都齐了，点下方「提交」按钮就能提报。"
+            reply = ("好的，信息都齐了，点下方「确认提交」就能重新提交。" if is_return
+                     else "好的，信息都齐了，点下方「提交」按钮就能提报。")
         else:
             missing_labels = [f.label for f in standard.elements if f.key in compute_missing(standard, merged)]
             reply = "还差几项必填信息才能提交：" + "、".join(f"「{label}」" for label in missing_labels) + "。"
             if target is not None:
-                reply += " " + reply_for(standard, target, merged, light=light, business=is_business)
+                reply += " " + reply_for(standard, target, merged, light=light, business=is_business, trigger=trigger)
             else:
                 reply += " 请在下方表单里补齐后提交。"
     else:
@@ -545,7 +615,7 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         if target is not None and manual_keys and target.key in manual_keys and target.status == "VAGUE":
             reply = _quoted_reask(standard, target, merged)
         else:
-            reply = reply_for(standard, target, merged, light=light, business=is_business)
+            reply = reply_for(standard, target, merged, light=light, business=is_business, trigger=trigger)
         # 意图前缀（2026-10-19 拍板）：补充引述确认/提问要素级解释后桥接回当前问题——
         # 当前问题未被作答、仍是缺口首位时加「回到刚才的问题」衔接，观感接续而非各说各的
         bridge = " 回到刚才的问题——" if target is not None and prev_target and target.key == prev_target else " "
@@ -570,11 +640,10 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
             reply = " ".join(impacts) + " " + reply
         if granularity:
             reply = granularity["hint"] + " " + reply
-        # 打回闭环（2026-10-11 方案③）：returnReason 留存期间回复白话引述打回原因引导补改，
-        # 重提成功服务端清除 returnReason 后引述自然消失；模型自述不可靠，引述必须由模板层保证
-        return_reason = ((merged.get("ext") or {}).get("returnReason") or {}).get("reason")
-        if return_reason:
-            reply = f"这条需求之前被打回过，打回原因是「{return_reason}」。按这个说明改好后就能重新提交。" + reply
+        # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次——调用方按历史消息判定是否首次；
+        # 打回当刻另有完整通知，重提清除 returnReason 后引述自然消失；模型自述不可靠，引述由模板层保证。
+        # command 意图不叠加（「点确认提交重新提交」与引述尾巴语义重复）
+        reply = _prefix_return_quote(reply, merged, return_quoted=return_quoted)
     return {
         "structured": merged, "fieldSources": field_sources,
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
@@ -588,12 +657,15 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     }
 
 
-def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, changed_keys=None) -> dict:
+def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, changed_keys=None,
+                     trigger: str = "event", return_quoted: bool = True) -> dict:
     """对话外事件（手改要素/附件回执，2026-10-19 拍板问题②）后的流程接续，不调模型：
     规则层重算要素状态、从上一轮对话快照继承 attempts/SKIP（prev_target=None 不按对话答错计数；
     changed_keys=本轮手改的要素，值有变化仍不达标按手改口径记 1 次、满 2 次放过），
-    选下一追问目标并生成话术；必填已齐时给完成话术。手改清空的必填项按 MISSING 自然被重问，
-    手改仍不达标（VAGUE）被重问时用引述式话术。
+    选下一追问目标并生成话术；必填已齐时按触发动作给简短完成话术（2026-10-20 拍板）。
+    手改清空的必填项按 MISSING 自然被重问，手改仍不达标（VAGUE）被重问时用引述式话术。
+    trigger: attachment/manual/enter/event——决定完成话术口径；
+    return_quoted: 打回原因是否在本轮引述（补充会话只引述一次，由调用方按历史消息判定）。
     返回 {reply, askedTarget, elements, canSubmit, guidanceComplete, quickReplies}，
     payload 结构对齐对话结果消息，供前端质量清单回放与下一轮 previous 快照。"""
     ext = form.get("ext") or {}
@@ -618,7 +690,7 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
     if content_field is not None and not content_field.required and blank(get_value(form, "content")) and not can_submit:
         content_status = next((e for e in curr if e.key == "content"), None)
         return {
-            "reply": DESC_INVITE,
+            "reply": _prefix_return_quote(DESC_INVITE, form, return_quoted=return_quoted),
             "askedTarget": "content",
             "elements": [e.model_dump(by_alias=True) for e in curr],
             "canSubmit": can_submit, "guidanceComplete": False,
@@ -628,7 +700,9 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
     if target is not None and changed_keys and target.key in changed_keys and target.status == "VAGUE":
         reply = _quoted_reask(standard, target, form)
     else:
-        reply = reply_for(standard, target, form, light=light, business=is_business)
+        reply = reply_for(standard, target, form, light=light, business=is_business, trigger=trigger)
+    # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次，由调用方按历史消息判定 return_quoted
+    reply = _prefix_return_quote(reply, form, return_quoted=return_quoted)
     return {
         "reply": reply,
         "askedTarget": target.key if target else None,

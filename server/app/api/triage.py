@@ -53,7 +53,7 @@ async def _serialize_page(db, rows, total, page, size):
 
 @router.get("/queue")
 async def queue(
-    urgency: str | None = None, type_code: str | None = None,
+    urgency: str | None = None, type_code: str | None = Query(None, alias="typeCode"),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
     user=Depends(require_role("MANAGER", "EXECUTIVE")), db=Depends(get_db),
 ):
@@ -89,13 +89,16 @@ async def mine(
 
 @router.get("/demands")
 async def demands(
-    status: str | None = None, urgency: str | None = None, type_code: str | None = None,
+    status: str | None = None, urgency: str | None = None,
+    type_code: str | None = Query(None, alias="typeCode"),
+    include_drafts: bool = Query(False, alias="includeDrafts"),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
     user=Depends(workbench), db=Depends(get_db),
 ):
-    """管理视角需求列表（12 态过滤）：ADMIN 全量，HANDLER 仅流转态。"""
+    """管理视角需求列表（12 态过滤）：ADMIN 全量（默认不含草稿，includeDrafts 放行），HANDLER 仅流转态。"""
     rows, total = await triage_service.list_all(
-        db, user, status=status, urgency=urgency, type_code=type_code, page=page, size=size)
+        db, user, status=status, urgency=urgency, type_code=type_code,
+        include_drafts=include_drafts, page=page, size=size)
     return ok(await _serialize_page(db, rows, total, page, size))
 
 

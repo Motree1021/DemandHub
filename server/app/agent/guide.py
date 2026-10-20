@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.agent.llm_client import LlmContentRejected, LlmUnavailable, get_llm_client
-from app.agent.policy import process
+from app.agent.policy import process, return_quote_seen
 from app.agent.schemas import ElementStatus, GuideChatRequest, GuideResult, parse_model_output
 from app.core.errors import BizError, ErrorCode
 from app.db.models import AgentMessage, Demand
@@ -48,6 +48,7 @@ class Prepared:
     previous_form: dict
     history: list
     replay: GuideResult | None = None
+    return_quoted: bool = True
 
 
 def build_prompt(form, sources, previous_elements, asked_target, history, message, *, registry=None, today=None):
@@ -98,17 +99,19 @@ class GuideService:
                 logger.warning("AI不可用拦截（密钥未配置或冷却中，冷却至 %.0f）", self.llm.cooldown_until)
                 raise BizError(ErrorCode.AI_SERVICE_UNAVAILABLE)
             history = await session_service.messages(self.db, self.user, req.session_id, limit=20)
-            # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报不是模型产物，误用会丢要素状态
+            # 上一轮表单快照只认真正的对话结果消息：手改播报/附件回执/打回播报/口径改判播报/归类改判播报不是模型产物，误用会丢要素状态
             previous = next((m.structured_payload for m in reversed(history) if m.role == "ASSISTANT"
                              and m.structured_payload
-                             and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice", "modeChange")), {})
+                             and (m.structured_payload or {}).get("kind") not in ("manualChange", "attachmentReceipt", "returnNotice", "modeChange", "typeChange")), {})
             form = demand_form(demand)
             sources = deepcopy(demand.field_sources or {})
             # FR-02/D6 原文保真：content 为空时本轮消息原文即 A8 底稿（来源 user，模型不得改写）
             if not (form.get("content") or "").strip() and req.message.strip():
                 form["content"] = req.message
                 sources["content"] = "user"
-            return Prepared(form, sources, [ElementStatus.model_validate(e) for e in previous.get("elements", [])], agent_session.asked_target, deepcopy(previous.get("structured", {})), [{"role": "user" if m.role == "USER" else "assistant", "content": m.content} for m in history if m.role in {"USER", "ASSISTANT"}])
+            # 打回原因引述只引述一次（2026-10-20 拍板）：查历史助理消息；打回当刻完整通知措辞不含引述标记
+            quoted = not return_quote_seen([m.content for m in history if m.role == "ASSISTANT"])
+            return Prepared(form, sources, [ElementStatus.model_validate(e) for e in previous.get("elements", [])], agent_session.asked_target, deepcopy(previous.get("structured", {})), [{"role": "user" if m.role == "USER" else "assistant", "content": m.content} for m in history if m.role in {"USER", "ASSISTANT"}], return_quoted=quoted)
         finally:
             # ORM读取默认autobegin，显式结束，模型等待不占数据库连接。
             if self.db.in_transaction():
@@ -133,13 +136,13 @@ class GuideService:
                     if final is None:
                         raise ValueError("上游流未返回完整输出")
                     output = parse_model_output(final.raw)
-                    result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry)
+                    result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry, trigger="dialog", return_quoted=prepared.return_quoted)
                 except (ValueError, TypeError, KeyError):
                     # 完整格式错误最多修复一次，不重复发送任何模型措辞。
                     repaired = await self.llm.complete_json([*model_messages, {"role": "user", "content": "上次输出格式不符合契约。请重新输出合法JSON，structured闭集字段及当前类型完整elements；不要提问。"}])
                     try:
                         output = parse_model_output(repaired.raw)
-                        result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry)
+                        result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry, trigger="dialog", return_quoted=prepared.return_quoted)
                     except (ValueError, TypeError, KeyError):
                         self.llm.on_failure()
                         # 记尾部而非头部：截断类故障病灶在结尾（头部 80 字符看不出，2026-10-16 拍板）
