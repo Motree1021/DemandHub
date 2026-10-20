@@ -320,6 +320,88 @@ async def test_submit_backfills_content_from_title_when_no_chat(session_factory,
     assert (d.field_sources or {}).get("content") == "user"
 
 
+async def test_submit_joins_effective_turns_and_polishes_title(session_factory, user, monkeypatch):
+    """提交时最后整理（2026-10-20 拍板）：底稿=按时序拼接全部有效对话（闲聊轮按 request_id 配对
+    ASSISTANT payload.intent 排除，逐句原话不改写）；标题由模型基于有效对话重拟（agent 来源）。"""
+    import app.agent.llm_client as llm_module
+    from app.services import session_service
+    data = payload("polish-1")
+    data["title"] = None
+    data["content"] = None
+    monkeypatch.setattr(llm_module, "get_llm_client", lambda: _FakeManualArk({"title": "报表按机构导出功能"}))
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.create_draft(db, user, data)
+            session = await session_service.create(db, user, "SUBMIT_GUIDE", d.id)
+            await session_service.append(db, session.id, "USER", "您好", request_id="r1")
+            await session_service.append(db, session.id, "ASSISTANT", "你好！我在", {"intent": "chitchat"}, request_id="r1")
+            await session_service.append(db, session.id, "USER", "报表想加个按机构导出", request_id="r2")
+            await session_service.append(db, session.id, "ASSISTANT", "记下了", {"intent": "answer"}, request_id="r2")
+            await session_service.append(db, session.id, "USER", "还要能按机构筛选", request_id="r3")
+            await session_service.append(db, session.id, "ASSISTANT", "好的", {"intent": "answer"}, request_id="r3")
+            demand_id = d.id
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.submit(db, user, demand_id, 0)
+    # 闲聊轮排除；两条有效原话按时序拼接、补句号衔接
+    assert d.content == "报表想加个按机构导出。还要能按机构筛选"
+    assert d.title == "报表按机构导出功能" and (d.field_sources or {}).get("title") == "agent"
+
+
+async def test_submit_title_falls_back_to_first_sentence_when_model_fails(session_factory, user, monkeypatch):
+    """标题降级链（2026-10-20 拍板）：模型故障 → 底稿首句截断（≤60字），提交不因此失败。"""
+    import app.agent.llm_client as llm_module
+    from app.services import session_service
+    data = payload("polish-2")
+    data["title"] = None
+    data["content"] = None
+    monkeypatch.setattr(llm_module, "get_llm_client", lambda: _FakeManualArk(error=RuntimeError("上游故障")))
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.create_draft(db, user, data)
+            session = await session_service.create(db, user, "SUBMIT_GUIDE", d.id)
+            await session_service.append(db, session.id, "USER", "客户经理每天晨会前要查渠道报表。现在手工统计太慢", request_id="r1")
+            demand_id = d.id
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.submit(db, user, demand_id, 0)
+    assert d.content == "客户经理每天晨会前要查渠道报表。现在手工统计太慢"
+    assert d.title == "客户经理每天晨会前要查渠道报表"
+
+
+async def test_submit_manual_title_not_rewritten(session_factory, user, monkeypatch):
+    """手改标题权威（2026-10-20 拍板）：来源=user 且非空的标题不被模型重拟覆盖。"""
+    import app.agent.llm_client as llm_module
+    monkeypatch.setattr(llm_module, "get_llm_client", lambda: _FakeManualArk({"title": "模型拟的标题"}))
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.create_draft(db, user, payload("polish-3"))
+            demand_id = d.id
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.submit(db, user, demand_id, 0)
+    assert d.title == "需求记录"
+
+
+async def test_submit_replaces_stale_chitchat_echo(session_factory, user):
+    """陈旧回填清理（2026-10-20 拍板）：底稿恰为被排除轮次的原文（旧流程误存的寒暄）→
+    不留脏数据，按兜底链改用标题。"""
+    from app.services import session_service
+    data = payload("polish-4")
+    data["content"] = "您好"
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.create_draft(db, user, data)
+            session = await session_service.create(db, user, "SUBMIT_GUIDE", d.id)
+            await session_service.append(db, session.id, "USER", "您好", request_id="r1")
+            await session_service.append(db, session.id, "ASSISTANT", "你好！我在", {"intent": "chitchat"}, request_id="r1")
+            demand_id = d.id
+    async with session_factory() as db:
+        async with db.begin():
+            d = await service.submit(db, user, demand_id, 0)
+    assert d.content == "需求记录"
+
+
 async def test_submit_matl_does_not_backfill_content(session_factory, user):
     """MATL/TRAIN 维持现状（待独立助手重建）：content 仍必填，不兜底、照拦。"""
     from app.core.errors import BizError

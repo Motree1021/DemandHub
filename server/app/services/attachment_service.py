@@ -30,6 +30,18 @@ DOC_EXTS = {"md", "pdf", "doc", "docx", "ppt", "pptx"}
 KIND_LABELS = {"IMAGE": "图片", "DOC": "文档"}
 
 
+def detect_image_ext(head: bytes) -> str | None:
+    """按文件头魔数识别图片格式（2026-10-20 拍板）：手机拍照文件名不可靠（无扩展名/空名/非白名单
+    扩展名），扩展名白名单兜不住时用魔数再认一次；认不出的格式（gif/bmp/heic 等）仍按不支持处理。"""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 def check_magic(ext: str, head: bytes) -> bool:
     """按扩展名校验文件头魔数，防扩展名伪造；md 为纯文本无魔数，以不含 NUL 字节作二进制排除。"""
     if ext == "png":
@@ -144,10 +156,16 @@ async def save_attachment(
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     kind = "IMAGE" if ext in IMAGE_EXTS else "DOC" if ext in DOC_EXTS else None
     if kind is None:
-        raise BizError(
-            ErrorCode.PARAM_INVALID,
-            "不支持的文件类型，仅支持图片（png/jpg/jpeg/webp）与文档（md/pdf/doc/docx/ppt/pptx）",
-        )
+        # 魔数兜底（2026-10-20 拍板）：拍照无扩展名/扩展名不在白名单时，按文件头再认一次图片，
+        # 认出则按识别结果归类并把扩展名规范化（存储与下载展示统一）
+        detected = detect_image_ext(payload[:16]) if payload else None
+        if detected is None:
+            raise BizError(
+                ErrorCode.PARAM_INVALID,
+                "不支持的文件类型，仅支持图片（png/jpg/jpeg/webp）与文档（md/pdf/doc/docx/ppt/pptx）",
+            )
+        base = name.rsplit(".", 1)[0] if "." in name else name
+        name, ext, kind = f"{base[:250]}.{detected}", detected, "IMAGE"
     if not payload:
         raise BizError(ErrorCode.PARAM_INVALID, "文件内容为空")
     if len(payload) > MAX_SIZE:

@@ -76,14 +76,14 @@
     <van-action-sheet v-model:show="attachVisible" :actions="attachActions" cancel-text="取消" close-on-click-action
       :description="`AI 暂不支持识别附件内容，附件仅作为需求材料随需求一并提交给受理方；单文件不超过 10MB，最多 ${ATTACHMENT_COUNT_LIMIT} 个`"
       @select="onAttachSelect" />
-    <input ref="imageInput" type="file" :accept="ATTACHMENT_ACCEPT.image" hidden @change="onFileChosen($event)">
-    <input ref="docInput" type="file" :accept="ATTACHMENT_ACCEPT.doc" hidden @change="onFileChosen($event)">
+    <input ref="imageInput" type="file" :accept="ATTACHMENT_ACCEPT.image" hidden @change="onFileChosen($event, 'image')">
+    <input ref="docInput" type="file" :accept="ATTACHMENT_ACCEPT.doc" hidden @change="onFileChosen($event, 'doc')">
     <span v-if="uploading" class="uploading-hint">附件上传中…</span>
   </div>
 </template>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { showImagePreview, showToast } from 'vant'
+import { showImagePreview, showToast, showLoadingToast, closeToast } from 'vant'
 import { agentSessionMessages, guideChatStream, StreamError, type GuidePayload, type GuideRequest } from '@/api/agent'
 import {
   ATTACHMENT_ACCEPT, ATTACHMENT_COUNT_LIMIT, ATTACHMENT_SIZE_LIMIT, fmtSize, isReplayablePayload,
@@ -243,11 +243,37 @@ function onAttachSelect(action: { value?: string }) {
 function pickFromWeChat() {
   showToast('即将支持：需小程序宿主配合开通，开通后可直接从微信/企微选文件')
 }
-async function onFileChosen(event: Event) {
+// 拍照/相册文件归一化（2026-10-20 拍板）：手机端文件名不可靠——
+// ①无扩展名按 MIME 补齐；②iPhone「高效」格式的 HEIC 用 heic2any 前端转 JPG 再传
+// （浏览器无法直接预览 HEIC，白名单不收；heic2any 按需动态加载，不进主包）
+const IMAGE_MIME_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
+function isHeic(file: File): boolean {
+  return /\.(heic|heif)$/i.test(file.name) || ['image/heic', 'image/heif'].includes(file.type)
+}
+async function normalizeImage(file: File): Promise<File> {
+  if (isHeic(file)) {
+    showLoadingToast({ message: 'HEIC 照片转换中…', forbidClick: true, duration: 0 })
+    try {
+      const { default: heic2any } = await import('heic2any')
+      const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
+      const blob = Array.isArray(converted) ? converted[0] : converted
+      const base = file.name.replace(/\.(heic|heif)$/i, '') || `photo-${Date.now()}`
+      return new File([blob], `${base}.jpg`, { type: 'image/jpeg' })
+    } finally { closeToast() }
+  }
+  if (/\.[a-z0-9]+$/i.test(file.name)) return file
+  const ext = IMAGE_MIME_EXT[file.type]
+  return ext ? new File([file], `photo-${Date.now()}.${ext}`, { type: file.type }) : file
+}
+async function onFileChosen(event: Event, source: 'image' | 'doc') {
   const target = event.target as HTMLInputElement
-  const file = target.files?.[0]
+  let file = target.files?.[0]
   target.value = ''
   if (!file || sending.value || uploading.value) return
+  if (source === 'image') {
+    try { file = await normalizeImage(file) }
+    catch { showToast('HEIC 照片转换失败，请从相册另选一张，或把相机格式改为「兼容性最佳」后重拍'); return }
+  }
   if (file.size > ATTACHMENT_SIZE_LIMIT) { showToast('文件超过 10MB 上限'); return }
   uploading.value = true; emit('busy', true)
   try {

@@ -36,11 +36,12 @@
 同时输出 modeSignal 轻重判定对象：{"level":"light 或 standard","evidence":"判定依据的原文片段"}。
 modeSignal 打分规则（微需求快速通道，2026-10-11）：
 - light（轻量小需求）：一句话能说清、改动面很小、几乎不需要开发或只要极小改动——如换 logo/图标/图片、调颜色/字号/间距等样式微调、改文案、改按钮文字、简单配置开关、加一个展示字段。特征：不需要"谁在什么时候用"的用户故事，也不需要输入输出说明，验收一眼就能看出对不对。
+- 标识与外观类打包仍判 light（2026-10-20 拍板）：改系统名称、换 logo 或按公司既有风格重新设计 logo、调整颜色/样式风格——即使多条一起提报、即使 logo 需要按既有风格出新设计，只要改动面限于"名称与外观"、不涉及功能行为与数据，都判 light。
 - standard（常规需求）：新功能、新报表、系统集成、流程或数据改动、性能或安全改造，或需要多角色协作、涉及数据口径。
 - 安全类从严：出现登录、权限、加密、漏洞、脱敏、安全等字眼且改动影响面说不清时一律 standard；但「把登录页 logo 换掉」「登录按钮文字改一下」这类虽带安全字眼、影响面一眼清楚（只是换图/改字）的仍判 light。
 - 实现路径从严：出现平台/系统迁移、域名申请或备案、部署或架构调整、多个候选方案或技术选型等信号，说明实现路径有分量，一律 standard；即使表面只是"换个地方部署"也不是 light。
 - 拿不准选 standard；对话中发现改动面比最初判断更大时可以由 light 改判 standard，一旦判定 standard 不得再改回 light。
-- 示例：「把首页 logo 换成公司新 logo」→ light；「系统名称改为XX」→ light；「优化一下访问安全」→ standard（影响面不清）；「报表支持按机构导出」→ standard（新功能）；「把系统从coze平台迁移到公司自己的H5服务器，或为coze申请企业专用域名并备案」→ standard（平台迁移+备案+二选一，实现路径有分量）。
+- 示例：「把首页 logo 换成公司新 logo」→ light；「系统名称改为XX」→ light；「帮我把"话术生成系统"的名称改成"话术生成与分发系统"，同时把系统的 logo 改成与公司 logo 颜色和样式风格一致的 logo」→ light（名称+外观打包，改动面一眼清楚）；「优化一下访问安全」→ standard（影响面不清）；「报表支持按机构导出」→ standard（新功能）；「把系统从coze平台迁移到公司自己的H5服务器，或为coze申请企业专用域名并备案」→ standard（平台迁移+备案+二选一，实现路径有分量）。
 同时输出 structured.ext.overview 需求概述：详情页给提报人"一眼看懂自己提了什么"的四段式摘要，基于最新表单内容每轮整体重写。固定四个键：problem（问题/机会）、userScene（用户&场景）、goal（目标&期望效果）、acceptance（验收标准）。每段值格式为"详细描述｜一句话概括"：详细描述整合对应要素的事实（problem←用户痛点、userScene←用户角色+使用场景、goal←用户目标/业务目标+功能描述、acceptance←验收标准），不新增原文没有的信息；一句话概括20字内点出本质。对应要素缺失的段省略该键，四段都无依据时省略 overview。
 若一段话里识别出多个可独立受理的需求，当前 structured 只抽取最聚焦的一条，其余写进 structured.ext.pendingSplits（数组，每项含 title 与 summary），不要在当前要素里混装多条需求。
 {"structured":{"title":"需求标题","demandTypeCode":"TECH","elements":{"A":{"techSubtype":"DATA_RPT"},"C":{"useScenario":"角色+时机+任务"}},"ext":{"overview":{"problem":"手工从三个系统拼表要40分钟易错｜现有统计方式低效","userScene":"客户经理每天晨会前统计渠道销量｜晨会前手工统计","goal":"每天早上8点前自动生成销量报表并推企微群｜自动报表替代手工","acceptance":"交易日8:00前生成且数据与核心一致｜按时生成数据一致"}}},"elements":[{"key":"title","status":"OK","note":""}],"typeSignals":{"business":{"confidence":0.8,"evidence":"原文片段"},"user":{"confidence":0.3,"evidence":""},"function":{"confidence":0.5,"evidence":"原文片段"}},"modeSignal":{"level":"standard","evidence":"自动生成销量报表属新功能"},"intent":{"kind":"answer"}}

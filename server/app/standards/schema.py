@@ -39,6 +39,10 @@ class Element(StandardModel):
     # 是否参与质量评估（assess/完备度统计）；false 的要素照常展示与保存，但不进 quality 计数
     assessed: bool = True
     required: bool = False
+    # 系统兜底提取项（2026-10-20 拍板）：单据必填但由系统自动提取/兜底，不追问、
+    # 不占提交门槛（schema_errors 必填校验豁免）；用户可手改，手改后系统不再覆盖（来源=user 权威）。
+    # 与 required:false 的区别：必填语义保留（质量清单照常标星、提交前由 submit 兜底链保证非空）
+    auto_fill: bool = False
     options: dict[str, str] = Field(default_factory=dict)
     default: Any = None
     placeholder: str = ""

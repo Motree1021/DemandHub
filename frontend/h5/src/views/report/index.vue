@@ -250,8 +250,9 @@ async function submit() {
   const resubmit = savedDemand?.status === 'NEED_INFO'
   try {
     const message = resubmit
-      ? '这条需求此前被打回过。请确认这次已按打回原因补齐，重新提交后会再次进入受理。'
-      : '请确认要素内容准确。提交后生成正式编号，质量缺口会保留给整理人员。'
+      ? '这条需求此前被打回过。请确认这次已按打回原因补齐，重新提交后会再次交给产品经理受理。'
+      // 白话口径（2026-10-20 拍板）：不用「质量缺口/整理人员」等用户不可见的系统术语；角色统一称「产品经理」
+      : '请确认需求要素内容准确。提交后生成正式编号。如有问题，我们的产品经理分析后会与您沟通确认。'
     await showConfirmDialog({ title: resubmit ? '重新提交' : '确认提交', message })
   } catch { return }
   submitting.value = true

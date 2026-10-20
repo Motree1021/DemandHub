@@ -151,7 +151,9 @@ def schema_errors(standard: Standard | None, form: dict, *, required: bool = Fal
         if field.system:
             continue
         value = get_value(form, field.field_path)
-        if required and field.required and blank(value):
+        # auto_fill（2026-10-20 拍板）：系统兜底提取项不占必填门槛——标题/底稿由系统提取，
+        # 空值不拦「可以提交」，提交前由 submit 兜底链保证非空；格式校验（如 60 字上限）照常生效
+        if required and field.required and not field.auto_fill and blank(value):
             gate = True
             if required_keys is not None:
                 gate = field.key in required_keys

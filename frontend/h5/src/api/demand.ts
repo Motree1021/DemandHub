@@ -105,7 +105,9 @@ export const downloadAttachment = (demandId: number, attachmentId: number, fileN
   downloadFile(`/demand/${demandId}/attachments/${attachmentId}/download`, fileName)
 export const ATTACHMENT_SIZE_LIMIT = 10 * 1024 * 1024
 export const ATTACHMENT_COUNT_LIMIT = 5
-export const ATTACHMENT_ACCEPT = { image: 'image/png,image/jpeg,image/webp', doc: '.md,.pdf,.doc,.docx,.ppt,.pptx' }
+// 图片入口放宽为 image/*（2026-10-20 拍板）：手机拍照/相册文件名与格式不可靠（无扩展名、HEIC），
+// 先保证各机型相机都能调起，格式把关交给「前端归一化（HEIC 转 JPG/补扩展名）+ 后端魔数兜底」
+export const ATTACHMENT_ACCEPT = { image: 'image/*', doc: '.md,.pdf,.doc,.docx,.ppt,.pptx' }
 export function fmtSize(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`
   return `${Math.max(Math.round(size / 1024), 1)}KB`

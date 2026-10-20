@@ -350,7 +350,7 @@ describe('report 打回待补充（方案③ NEED_INFO）', () => {
       quality: [],
       messages: [
         { id: 1, role: 'ASSISTANT', structuredPayload: JSON.stringify({ demandId: 1, sessionId: 11, revision: 5, elements: [{ key: 'businessScenario', status: 'OK', label: '业务场景', note: '', attempts: 0 }] }) },
-        { id: 2, role: 'ASSISTANT', content: '这条需求被整理人员打回了，需要补充信息后重新提交。', structuredPayload: JSON.stringify({ kind: 'returnNotice', reason: '还缺紧急程度' }) },
+        { id: 2, role: 'ASSISTANT', content: '这条需求被产品经理打回了，需要补充信息后重新提交。', structuredPayload: JSON.stringify({ kind: 'returnNotice', reason: '还缺紧急程度' }) },
       ]
     })
     const wrapper = createWrapper(); await flushPromises()
@@ -377,6 +377,6 @@ describe('report 打回待补充（方案③ NEED_INFO）', () => {
     mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, title: '海报生成智能体', content: '我要做个海报生成智能体，给市场部用' }), quality: [], messages: [] })
     const draft = createWrapper(); await flushPromises()
     draft.findComponent(PanelStub).vm.$emit('submit'); await flushPromises()
-    expect(showConfirmDialog).toHaveBeenLastCalledWith(expect.objectContaining({ title: '确认提交', message: expect.stringContaining('请确认要素内容准确') }))
+    expect(showConfirmDialog).toHaveBeenLastCalledWith(expect.objectContaining({ title: '确认提交', message: expect.stringContaining('请确认需求要素内容准确') }))
   })
 })

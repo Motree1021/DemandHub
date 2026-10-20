@@ -75,6 +75,24 @@ async def test_upload_rejects_bad_type_magic_size(client, auth_headers, attachme
     assert ok.json()["code"] == 0 and ok.json()["data"]["fileName"] == "公司logo.png"
 
 
+async def test_upload_magic_fallback_for_camera_photo(client, auth_headers, attachment_dir):
+    """魔数兜底（2026-10-20 拍板）：手机拍照文件名不可靠——无扩展名/空名/非白名单扩展名时，
+    按文件头再认一次图片，认出则归类并规范扩展名；认不出的格式仍按不支持拒绝。"""
+    draft = await create(client, auth_headers)
+    jpeg = b"\xff\xd8\xff\xe0" + b"0" * 64
+    # 无扩展名（微信拍照常见空名/「image」）+ jpg 魔数 → 通过并规范为 .jpg
+    response = await upload(client, auth_headers, draft["id"], "image", jpeg)
+    assert response.json()["code"] == 0, response.text
+    assert response.json()["data"]["fileName"] == "image.jpg" and response.json()["data"]["kind"] == "IMAGE"
+    # 非白名单扩展名（如 .photo）+ png 魔数 → 扩展名规范为 .png
+    again = await upload(client, auth_headers, draft["id"], "截图.photo", PNG)
+    assert again.json()["code"] == 0, again.text
+    assert again.json()["data"]["fileName"] == "截图.png"
+    # 魔数也认不出（gif）→ 维持不支持
+    rejected = await upload(client, auth_headers, draft["id"], "动图.gif", b"GIF89a" + b"0" * 32)
+    assert rejected.json()["code"] == 400 and "不支持的文件类型" in rejected.json()["message"]
+
+
 async def test_upload_count_limit_and_soft_delete(client, auth_headers, attachment_dir):
     draft = await create(client, auth_headers)
     ids = []

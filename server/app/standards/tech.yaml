@@ -11,17 +11,20 @@ glossary:
 - 晨会：一线部门每个交易日 8:30 前的例会
 elements:
 # ---- A 区：公共要素（所有科技需求必填）----
+# A1 需求标题（2026-10-20 拍板定位调整）：与 A8 同为系统提取项——用户不懂「为何要我突然写标题」，
+# 那是单据的系统要求。永不追问（auto_fill：不追问、不占提交门槛）；对话中由模型从有效内容抽取，
+# 提交时基于全部有效对话重拟整理（模型失败降级为底稿首句截断）；用户可手改，手改后系统不再覆盖。
 - key: title
   code: A1
   zone: A
   label: 需求标题
   kind: text
   required: true
+  auto_fill: true
   ok_when: 一句话，2~60 字，能看出要解决什么问题
   rule:
     min_len: 2
     max_len: 60
-  ask_l1: 我把需求标题记为「{snippet}」，你看合适吗？不合适直接告诉我改成什么。
 - key: demandTypeCode
   code: A2
   zone: A

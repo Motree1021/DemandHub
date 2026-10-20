@@ -16,8 +16,11 @@ from app.standards.rules import (
 )
 from app.standards.schema import Standard
 
-# 纯闲聊引导话术（2026-10-19 拍板）：识别寒暄/无关内容时不判型、不抽取，温和引导回正题
-CHITCHAT_GUIDE = "我是需求收集助手，专门帮你把需求记清楚、提给受理方。直接说说你想提的需求就行，比如「报表想加个按机构导出」。"
+# 闲聊引导话术（2026-10-20 拍板，单问题原则：一条回复最多一个问句）：
+# 首轮（会话还没有任何一轮正式结果）只发简短引导、不追问——前端聊天气泡第一条已有完整静态开场白，
+# 再发完整版会连着出现两遍相同文字，故首轮用简短变体；对话中期闲聊用短承接+重问当前问题（接续而非第二问）
+CHITCHAT_GREET_FIRST = "你好！我在，直接说你的需求就行——一句话诉求、整段粘贴、语音转文字都可以。"
+CHITCHAT_GUIDE = "我在，咱们继续把需求记清楚。"
 
 # 无描述白话邀请（2026-10-19 拍板）：底稿（content）为空且未达提交门槛时的对话开场白——
 # 一句话同时喂饱底稿回填、要素抽取与轻重判定；替代此前「请补充原始提报文本」的术语追问
@@ -221,7 +224,9 @@ def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_
 
 
 def compute_missing(standard, form):
-    return [e.key for e in standard.elements if e.required and not e.system and blank(get_value(form, e.field_path))]
+    # auto_fill（2026-10-20 拍板）：系统兜底提取项不算用户侧缺口——指令回复列缺项/缺失清单
+    # 不把标题算进去（提交前系统重拟兜底，让用户补标题违背「系统提取」定位）
+    return [e.key for e in standard.elements if e.required and not e.system and not e.auto_fill and blank(get_value(form, e.field_path))]
 
 
 def pick_follow_up(standard, elements, *, business: bool = False, light: bool = False, form: dict | None = None, can_submit: bool = False):
@@ -233,9 +238,10 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     紧急程度沉底最后问（2026-10-15 拍板）：排期类信息待需求本体问齐后再确认；
     答"紧急/特急"时急单门控承接追问期望交付时间，恰好收尾。
 
-    light 模式（2026-10-11 方案②）：只追问最小集 {期望效果(D8)→标题兜底→紧急度}，
+    light 模式（2026-10-11 方案②）：只追问最小集 {期望效果(D8)→紧急度}，
     每项最多问一次（合计≤2轮，对齐拍板口径；紧急度 2026-10-15 起同步沉底），
-    C/D 其余要素与 B 区一律不问；content 永不追问（A8 底稿由系统首条消息回填）。
+    C/D 其余要素与 B 区一律不问；content 永不追问（A8 底稿由系统首条消息回填），
+    title 2026-10-20 起同为系统提取项（auto_fill）退出追问序列。
 
     急单门控（2026-10-12 拍板）：紧急度为紧急/特急而期望交付时间还空着时，插队最优先
     追问日期——紧急度话术承诺「紧急或特急请说明期望时间」，但点选快捷项只发枚举标签
@@ -252,13 +258,16 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
     required = [e.key for e in standard.elements if e.required and not e.system]
-    # light 追问顺序固定（2026-10-15 拍板紧急度同步沉底）：期望效果先问并连带标题确认，
-    # 标题仅兜底，紧急度最后
-    light_order = ["acceptanceCriteria", "title", "urgency"]
+    # light 追问顺序固定（2026-10-15 拍板紧急度同步沉底；2026-10-20 拍板标题转系统提取项退出序列）：
+    # 期望效果先问并连带标题确认，紧急度最后
+    light_order = ["acceptanceCriteria", "urgency"]
 
     def eligible(key):
         field = field_of.get(key)
         if field is None:
+            return False
+        # auto_fill（2026-10-20 拍板）：系统兜底提取项（标题）永不作为追问目标
+        if field.auto_fill:
             return False
         if light:
             if key not in light_order:
@@ -403,15 +412,22 @@ def _supplement_confirm(standard: Standard, previous_form: dict, merged: dict, p
     return "；".join(parts) + "。"
 
 
-def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], previous_form: dict, text: str, *, standards=None) -> dict:
-    """纯闲聊分流（2026-10-19 拍板，问题③）：不抽取、不判型/轻重、不计 attempts，
-    回复引导话术并（对话进行中时）重问当前问题；
-    prepare 已把本轮闲聊原文回填为 A8 底稿（content==本轮消息即误回填），清掉防脏数据留草稿。"""
-    merged = deepcopy(form)
-    field_sources = dict(sources)
+def _clear_echo_backfill(merged: dict, field_sources: dict, text: str) -> None:
+    """非抽取意图（闲聊/提问/指令）的误回填清理（2026-10-20 拍板，问题②推广）：
+    prepare 会把本轮消息原文预填为 A8 底稿，但纯寒暄/提问/指令并非需求内容——
+    底稿==本轮消息原文时判定为误回填，连来源标记一起清掉，防脏数据留草稿随单提交。"""
     if text.strip() and (merged.get("content") or "") == text:
         merged.pop("content", None)
         field_sources.pop("content", None)
+
+
+def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], previous_form: dict, text: str, *, standards=None) -> dict:
+    """纯闲聊分流（2026-10-19 拍板，问题③）：不抽取、不判型/轻重、不计 attempts。
+    单问题原则（2026-10-20 拍板）：首轮（prev 为空=还没有任何一轮正式结果）只发简短引导、
+    不追问、askedTarget 记空（避免下一轮把答非所问按答错计数）；对话中期短承接+重问当前问题。"""
+    merged = deepcopy(form)
+    field_sources = dict(sources)
+    _clear_echo_backfill(merged, field_sources, text)
     type_code = merged.get("demandTypeCode")
     selected = (standards[type_code] if standards else standard_loader.get(type_code)) if type_code else None
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
@@ -427,10 +443,15 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
     else:
         active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
-    target = pick_follow_up(standard, curr, business=is_business, light=light, form=merged, can_submit=can_submit)
-    reply = CHITCHAT_GUIDE
-    if target is not None:
-        reply += " " + reply_for(standard, target, merged, light=light, business=is_business)
+    if not prev:
+        # 首轮闲聊：只引导不追问（单问题原则）——此前连发引导+标题确认两个问题，用户不知答哪个
+        target = None
+        reply = CHITCHAT_GREET_FIRST
+    else:
+        target = pick_follow_up(standard, curr, business=is_business, light=light, form=merged, can_submit=can_submit)
+        reply = CHITCHAT_GUIDE
+        if target is not None:
+            reply += " " + reply_for(standard, target, merged, light=light, business=is_business)
     return {
         "structured": merged, "fieldSources": field_sources,
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
@@ -438,6 +459,7 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
         "quickReplies": quick_replies(standard, target), "reply": reply,
         "typeRecognition": recognition, "mode": mode, "granularityHint": None, "impactHints": [],
+        "intent": "chitchat",
     }
 
 
@@ -450,6 +472,10 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     if kind == "chitchat":
         return _process_chitchat(form, sources, prev, previous_form, text, standards=standards)
     merged, field_sources, selected = merge_structured(output.structured, form, sources, standards=standards, grounded_text=text)
+    # 误回填清理推广（2026-10-20 拍板，问题②）：提问/指令与闲聊同口径——纯提问（「什么是需求标题？」）
+    # 或流程指令（「提交吧」）并非需求内容，prepare 预填的底稿连来源一起清掉
+    if kind in ("question", "command"):
+        _clear_echo_backfill(merged, field_sources, text)
     # 未定类型仍使用共用三个质量字段，不暴露 TECH 扩展要素。
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
     # FR-01/FR-03 判型合并：confirmed（用户定稿）不被模型覆盖，模型票只更新置信度与依据
@@ -556,6 +582,9 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
         "quickReplies": quick_replies(standard, target), "reply": reply,
         "typeRecognition": recognition, "mode": mode, "granularityHint": granularity, "impactHints": impacts,
+        # intent 落库（2026-10-20 拍板）：随 ASSISTANT 消息 payload 存档，提交时按 request_id 配对
+        # 识别并排除闲聊/提问/指令轮的用户消息，保证底稿只拼接有效对话
+        "intent": kind,
     }
 
 

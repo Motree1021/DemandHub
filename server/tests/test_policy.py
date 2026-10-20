@@ -1,6 +1,7 @@
 import pytest
 
 from app.agent.policy import (
+    CHITCHAT_GREET_FIRST,
     CHITCHAT_GUIDE,
     DESC_INVITE,
     anchored_template,
@@ -594,16 +595,18 @@ def test_supplement_without_changes_acknowledges():
 
 
 def test_chitchat_first_turn_cleans_backfilled_content():
-    """问题③：首句「您好」被 prepare 误回填为 A8 底稿（content==本轮消息）——闲聊分流清理掉，
-    不判型不抽取；2026-10-19 拍板后 content 非必填、永不追问，引导话术后接续下一真实缺口。"""
+    """问题③+单问题原则（2026-10-20 拍板）：首句「您好」被 prepare 误回填为 A8 底稿——闲聊分流清理；
+    首轮（prev 为空=还没有正式结果）只发简短引导、不追问、askedTarget 记空——
+    此前连发引导+标题确认两个问题，用户不知答哪个。"""
     polluted = {**form(), "content": "您好"}
     output = ModelOutput(structured={}, elements=[], intent=Intent(kind="chitchat"))
     result = process(output, polluted, {"content": "user"}, [], None, polluted, "您好")
     # 误回填的底稿与来源一并清理，脏数据不留草稿
     assert not result["structured"].get("content") and "content" not in result["fieldSources"]
     assert result["typeRecognition"] is None and result["mode"] is None
-    assert result["reply"].startswith(CHITCHAT_GUIDE)
-    assert result["askedTarget"] == "userRole" and not result["canSubmit"]
+    assert result["reply"] == CHITCHAT_GREET_FIRST
+    assert result["askedTarget"] is None and result["quickReplies"] == []
+    assert result["intent"] == "chitchat"
 
 
 def test_chitchat_mid_conversation_keeps_draft_and_resumes_without_penalty():
@@ -649,6 +652,52 @@ def test_question_without_target_falls_back():
     result = process(output, base, {}, [], "userRole", base, "这个系统是谁开发的？")
     assert "我主要帮你把需求记清楚" in result["reply"]
     assert "回到刚才的问题" in result["reply"] and result["askedTarget"] == "userRole"
+
+
+def test_question_cleans_echo_backfill():
+    """问题②（2026-10-20 拍板）：纯提问「什么是需求标题？」被 prepare 误回填为 A8 底稿——
+    提问分流与闲聊同口径清理，提问原文不作需求底稿留草稿随单提交。"""
+    base = {**form(), "content": "什么是需求标题？"}
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="question"))
+    result = process(output, base, {"content": "user"}, [], "userRole", form(), "什么是需求标题？")
+    assert not result["structured"].get("content") and "content" not in result["fieldSources"]
+    assert result["intent"] == "question"
+
+
+def test_command_cleans_echo_backfill():
+    """问题②推广：流程指令「提交吧」同理不作需求底稿；清理不影响提交门槛判定。"""
+    base = {**acd_filled_form(), "content": "提交吧"}
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="command"))
+    result = process(output, base, {"content": "user"}, [], None, acd_filled_form(), "提交吧")
+    assert not result["structured"].get("content") and "content" not in result["fieldSources"]
+    assert result["canSubmit"] is True and result["intent"] == "command"
+
+
+def test_title_gap_skipped_to_next_real_gap():
+    """标题转系统提取项（2026-10-20 拍板）：标题空缺时追问目标跳过标题，落在下一真实缺口（用户角色）。"""
+    base = {key: value for key, value in form().items() if key != "title"}
+    output = ModelOutput(structured={}, elements=[])
+    result = process(output, base, {}, [], None, base, "继续")
+    assert result["askedTarget"] == "userRole"
+
+
+def test_title_blank_does_not_block_can_submit():
+    """标题不占提交门槛（auto_fill，2026-10-20 拍板）：其余必填齐、标题空时仍可提交——
+    提交前由 submit 整理链重拟/兜底，对话不再为标题发问。"""
+    base = {key: value for key, value in acd_filled_form().items() if key != "title"}
+    output = ModelOutput(structured={}, elements=[])
+    result = process(output, base, {}, [], None, base, "继续")
+    assert result["canSubmit"] is True and result["askedTarget"] is None
+
+
+def test_light_mode_title_exits_follow_up_sequence():
+    """light 追问序列移除标题兜底位（2026-10-20 拍板）：期望效果已答后，标题空缺不追问，落紧急度。"""
+    base = {"demandTypeCode": "TECH",
+            "ext": {"mode": {"level": "light", "evidence": "小改动"}},
+            "elements": {"D": {"acceptanceCriteria": "首页 logo 换成公司新版"}}}
+    output = ModelOutput(structured={}, elements=[])
+    result = process(output, base, {}, [], None, base, "继续")
+    assert result["askedTarget"] == "urgency"
 
 
 def test_command_ready_points_to_submit_button():

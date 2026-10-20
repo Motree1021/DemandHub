@@ -505,7 +505,7 @@ async def return_demand(db, admin_user, demand_id: int, reason: str) -> Demand:
         if session.demand_id != demand.id:
             raise BizError(ErrorCode.CONFLICT, "草稿与会话关联不一致")
         session.status = "ACTIVE"
-        notice = (f"这条需求被整理人员打回了，需要补充信息后重新提交。\n打回原因：{reason_text}\n"
+        notice = (f"这条需求被产品经理打回了，需要补充信息后重新提交。\n打回原因：{reason_text}\n"
                   "可以直接回复我来补充，我会帮你把缺的内容问齐；也可以点开「需求要素表单」卡片逐项修改。")
         await session_service.append(db, demand.session_id, "ASSISTANT", notice,
                                      {"kind": "returnNotice", "reason": reason_text})
@@ -546,6 +546,80 @@ async def change_mode(db, user, demand_id: int, expected_revision: int, level: s
     return demand
 
 
+# 提交时整理的意图排除集（2026-10-20 拍板）：闲聊/提问/指令轮的用户消息不是需求内容，不入底稿
+_NON_DEMAND_INTENTS = ("chitchat", "question", "command")
+
+
+def _effective_user_turns(messages) -> list[str]:
+    """有效对话的用户原话（2026-10-20 拍板）：按 request_id 与 ASSISTANT 消息 payload.intent 配对，
+    排除闲聊/提问/指令轮；存量消息无 intent 标记视为有效（保守保留，不丢原话）。"""
+    intent_by_request = {}
+    for m in messages:
+        if m.role == "ASSISTANT" and m.request_id:
+            kind = (m.structured_payload or {}).get("intent")
+            if kind:
+                intent_by_request[m.request_id] = kind
+    return [m.content.strip() for m in messages
+            if m.role == "USER" and (m.content or "").strip()
+            and intent_by_request.get(m.request_id) not in _NON_DEMAND_INTENTS]
+
+
+def _join_turns(turns: list[str]) -> str:
+    """按时序拼接为一段底稿（2026-10-20 拍板）：逐句原话不改写不润色（守住原文保真）；
+    上一条未以标点收尾时补句号衔接。"""
+    parts = []
+    for turn in turns:
+        if parts and not parts[-1].endswith(("。", "！", "？", "；", "…", ".", "!", "?", ";", "\n")):
+            parts[-1] += "。"
+        parts.append(turn)
+    return "".join(parts)
+
+
+def _first_sentence(text, limit=60) -> str:
+    """取首句并截断（标题降级用）：按句读/换行切首句，再按 A1 字数上限截断。"""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    for sep in ("。", "！", "？", "；", "\n", ".", "!", "?", ";"):
+        idx = text.find(sep)
+        if idx > 0:
+            text = text[:idx]
+            break
+    return text[:limit].strip()
+
+
+# 标题整理提示词（2026-10-20 拍板）：提交时基于全部有效对话重拟，约束与 A1 ok_when 一致；
+# 信息不足输出空串，由调用方走降级截断链
+_TITLE_POLISH_PROMPT = (
+    "你是需求标题拟写助手。根据用户提报对话（turns，按时序）与需求表单（form），拟一个需求标题。"
+    "要求：2~60字，一句话，能看出要解决什么问题；结尾不写句号，不要引号，不要解释；"
+    "只整合用户说过的事实，不编造；信息不足以拟出合格标题时输出空字符串。"
+    '只输出一个 JSON 对象：{"title":"标题或空字符串"}。'
+)
+
+
+async def _polish_title(form: dict, turns: list[str]) -> str:
+    """模型重拟标题（2026-10-20 拍板）；模型不可用/输出非法/信息不足一律返回空串，由调用方降级。"""
+    try:
+        from app.agent.llm_client import get_llm_client
+        llm = get_llm_client()
+        if not llm.available():
+            return ""
+        payload = {"turns": turns, "form": {k: v for k, v in form.items() if k != "ext"}}
+        event = await llm.complete_json([
+            {"role": "system", "content": _TITLE_POLISH_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ])
+        data = json.loads(event.raw)
+        title = str(data.get("title") or "").strip().strip("「」\"'").rstrip("。.").strip() if isinstance(data, dict) else ""
+        if len(title) < 2:
+            return ""
+        return title[:60]
+    except Exception as exc:
+        logger.warning("提交标题重拟失败，走降级截断 %s: %s", type(exc).__name__, exc)
+        return ""
+
+
 async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
     demand = await get_owned_draft(db, user, demand_id, for_update=True)
     if demand.status == "SUBMITTED":
@@ -553,20 +627,41 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
     was_returned = demand.status == "NEED_INFO"
     assert_editable(demand, expected_revision)
     form, std = normalized(form_of(demand))
-    # content 提交兜底回填（2026-10-19 拍板，仅科技需求）：A8 已改为系统提取项、不作提交门槛，
-    # 但追溯底稿不应留空——仍空时取会话首条用户消息，再空（纯手改没聊过）用标题兜底；不拦提交。
-    # 来源记 user：值即用户原话/标题本身，受保护不被模型改写
-    if demand.demand_type_code == "TECH" and rules.blank(form.get("content")):
-        backfill = ""
-        if demand.session_id is not None:
-            first_user = next((m for m in await session_service.messages(db, user, demand.session_id) if m.role == "USER"), None)
-            backfill = (first_user.content or "").strip() if first_user is not None else ""
-        if not backfill:
-            backfill = (demand.title or "").strip()
-        if backfill:
-            demand.content = backfill
-            form["content"] = backfill
-            demand.field_sources = {**(demand.field_sources or {}), "content": "user"}
+    # 提交时最后整理（2026-10-20 拍板，仅科技需求）：底稿（A8）与标题（A1）同为系统提取项——
+    # ①底稿=按时序拼接全部有效对话（排除闲聊/提问/指令轮，逐句原话不改写）；仍为空用标题兜底；
+    # ②标题=模型基于有效对话重拟（失败降级：底稿首句截断→功能描述截断→未命名需求）。
+    # 手改权威：来源=user 且非回填产物的值一律不动；回填产物判定=值恰等于某条用户消息原文。
+    if demand.demand_type_code == "TECH":
+        sources = dict(demand.field_sources or {})
+        history = await session_service.messages(db, user, demand.session_id) if demand.session_id is not None else []
+        turns = _effective_user_turns(history)
+        joined = _join_turns(turns)
+        all_user_texts = {m.content.strip() for m in history if m.role == "USER" and (m.content or "").strip()}
+        current_content = (form.get("content") or "").strip()
+        if not current_content or current_content in all_user_texts:
+            new_content = joined or (demand.title or "").strip()
+            if new_content:
+                demand.content, form["content"] = new_content, new_content
+                # 来源记 user：值即用户原话拼接/标题本身，受保护不被模型改写
+                sources["content"] = "user"
+            elif current_content:
+                # 底稿是被排除轮次的陈旧回填（如旧流程误存的寒暄）：清空，不拦提交
+                demand.content, form["content"] = None, None
+                sources.pop("content", None)
+        # 手改且非空的标题是权威内容，不动；空标题无论来源一律由系统兜底（A1 单据必填的保证在此）
+        title_manual = not rules.blank(form.get("title")) and (sources.get("title") or "") == "user"
+        if not title_manual:
+            polished = await _polish_title(form, turns)
+            if polished:
+                demand.title, form["title"] = polished, polished
+                sources["title"] = "agent"
+            if rules.blank(form.get("title")):
+                fallback = (_first_sentence(form.get("content"))
+                            or _first_sentence(rules.get_value(form, "elements.D.functionDescription"))
+                            or "未命名需求")
+                demand.title, form["title"] = fallback, fallback
+                sources["title"] = "agent"
+        demand.field_sources = sources
     light = rules.demand_mode(form) == "light"
     if light:
         # 微需求快速通道（2026-10-11 方案②）：light 只拦最小集（A1标题+A6紧急度+D8期望效果），

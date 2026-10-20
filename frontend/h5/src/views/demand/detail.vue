@@ -29,7 +29,7 @@
       <div v-if="extensionFields.length" class="detail-card"><h2>补充信息</h2><div v-for="item in extensionFields" :key="item.path" class="ext-row"><strong>{{ item.label }}</strong><span>{{ item.value }}</span></div></div>
       <div class="detail-card playback"><van-collapse v-model="expanded"><van-collapse-item title="信息完备度" name="quality"><quality-list :elements="detail.quality" :labels="labels" /></van-collapse-item></van-collapse></div>
       <div v-if="demand.status === 'CLOSED'" class="detail-card"><h2>撤销说明</h2><p class="content">{{ demand.closeReason }}</p><small>{{ fmtTime(demand.closedAt) }}</small></div>
-      <div v-if="returnReason" class="detail-card return-card"><h2>打回说明</h2><p class="content">{{ returnReason.reason }}</p><small>打回人：{{ returnReason.returnedBy || '需求整理人员' }} · {{ fmtTime(returnReason.returnedAt || undefined) }}</small></div>
+      <div v-if="returnReason" class="detail-card return-card"><h2>打回说明</h2><p class="content">{{ returnReason.reason }}</p><small>打回人：{{ returnReason.returnedBy || '产品经理' }} · {{ fmtTime(returnReason.returnedAt || undefined) }}</small></div>
       <div class="detail-card actions">
         <template v-if="own && demand.status === 'ACCEPTANCE'">
           <van-button block type="success" @click="passVisible = true">验收通过</van-button>
