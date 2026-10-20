@@ -11,7 +11,16 @@ from app.agent.policy import process, resume_follow_up, return_quote_seen
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
 from app.core.statemachine import engine
-from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, Notification, PromptVersion, User, now
+from app.db.models import (
+    AgentMessage,
+    AgentSession,
+    Demand,
+    DemandChangeLog,
+    Notification,
+    PromptVersion,
+    User,
+    now,
+)
 from app.services import session_service
 from app.services.demand_no import next_no
 from app.standards import rules

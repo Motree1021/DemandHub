@@ -13,7 +13,14 @@ from sqlalchemy import select
 from app.agent.guide import GuideService
 from app.agent.schemas import GuideChatRequest
 from app.core.errors import BizError, ErrorCode
-from app.db.models import AgentMessage, AgentSession, Demand, DemandChangeLog, NotificationTemplate, User
+from app.db.models import (
+    AgentMessage,
+    AgentSession,
+    Demand,
+    DemandChangeLog,
+    NotificationTemplate,
+    User,
+)
 from app.services import demand_service, notification_service, session_service
 from tests.test_guide import FakeArk
 
