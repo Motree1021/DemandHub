@@ -12,9 +12,21 @@
               <div class="ava ag">AI</div>
               <div class="msg-bubble">
                 你好，我是需求收集助手，负责帮你把需求提报清楚。你可以直接说一句话诉求、整段粘贴整理好的文字，用输入法语音转文字也行。我会自动拆解成要素表单，缺什么会主动问你。
+                <!-- 参考示例折叠条（2026-10-20 拍板方案A）：默认收起但存在感明确（灯泡图标+共情文案+箭头）；
+                     展开后头部右侧带素版复制图标，对应「快速复制再编辑」偏好 -->
                 <div class="example-card">
-                  <strong>参考示例（作为谁 / 什么时候或什么场景 / 要做什么 / 做完想看到什么效果）：</strong>
-                  <p>{{ EXAMPLE }}</p>
+                  <div class="example-head" role="button" tabindex="0" @click="exampleExpanded = !exampleExpanded" @keydown.enter="exampleExpanded = !exampleExpanded">
+                    <van-icon name="bulb-o" class="ex-ico" />
+                    <span class="ex-label">{{ exampleExpanded ? '参考示例' : '不会写？点开看参考示例' }}</span>
+                    <van-icon v-if="exampleExpanded" name="description" class="ex-copy" @click.stop="copyExample" />
+                    <van-icon :name="exampleExpanded ? 'arrow-up' : 'arrow'" class="ex-arrow" />
+                  </div>
+                  <div class="example-body" :class="{ open: exampleExpanded }">
+                    <div class="example-inner">
+                      <p class="example-struct">写法：作为谁 / 什么时候或什么场景 / 要做什么 / 做完想看到什么效果</p>
+                      <p class="example-text">{{ EXAMPLE }}</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -73,6 +85,21 @@ const lastPayload = ref<GuidePayload | null>(null)
 // 欢迎语示例（2026-10-15 调整）：隐藏原三入口按钮（清晰需求/示例/模糊想法），直接展示一条用户故事手法的
 // 需求示例（作为谁→什么时候→要做什么→想看到什么效果），只作参照不提供一键填入，避免示例原文污染需求文本
 const EXAMPLE = '作为银行渠道部的客户经理，我希望每天晨会前一打开企微，就能看到系统自动生成的各渠道销量报表（含明细和排名）。现在我得从三个系统导数手工拼 Excel，每次约 40 分钟还容易出错。希望每个交易日早上 8:00 前生成并推送到企微群，数据与核心系统对账一致。'
+// 示例折叠（2026-10-20 拍板）：默认收起，用户可点开看全文
+const exampleExpanded = ref(false)
+/** 复制示例全文：clipboard 不可用时降级 execCommand，均失败提示长按手动复制 */
+async function copyExample() {
+  let ok = true
+  try { await navigator.clipboard.writeText(EXAMPLE) }
+  catch {
+    try {
+      const area = document.createElement('textarea')
+      area.value = EXAMPLE; area.style.position = 'fixed'; area.style.opacity = '0'
+      document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove()
+    } catch { ok = false }
+  }
+  showToast(ok ? '已复制，粘贴到输入框后可随意改' : '复制失败，请长按示例文字手动复制')
+}
 // FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；业务占优才激活 B 区必填门槛（对齐服务端 business_confirmed）
 const typeRecognition = computed(() => form.ext.typeRecognition as TypeRecognition | undefined)
 const businessConfirmed = computed(() => {
@@ -322,9 +349,17 @@ onMounted(initialize)
 .ava.me { background: #c7d2fe; color: #312e81; }
 .msg-bubble { background: #fff; border: 1px solid #e5e9f2; border-radius: 12px; border-top-left-radius: 4px; padding: 10px 12px; font-size: 14px; line-height: 1.7; max-width: 88%; overflow-wrap: anywhere; }
 .msg-row.user .msg-bubble { color: #fff; background: #1f3a8a; border-color: #1f3a8a; border-radius: 12px; border-top-right-radius: 4px; }
-.example-card { border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-.example-card strong { font-size: 13px; color: #3730a3; }
-.example-card p { font-size: 13px; line-height: 1.8; color: #444; margin: 8px 0 0; white-space: pre-wrap; }
+.example-card { border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 10px; margin: 10px 0; overflow: hidden; }
+.example-head { display: flex; align-items: center; gap: 6px; padding: 9px 12px; cursor: pointer; user-select: none; }
+.example-head .ex-ico { color: #4f46e5; font-size: 15px; }
+.example-head .ex-label { font-size: 13px; font-weight: 600; color: #3730a3; }
+.example-head .ex-copy { color: #818cf8; font-size: 15px; padding: 2px 4px; }
+.example-head .ex-arrow { margin-left: auto; color: #818cf8; font-size: 13px; }
+.example-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .2s ease; }
+.example-body.open { grid-template-rows: 1fr; }
+.example-inner { overflow: hidden; min-height: 0; padding: 0 12px; }
+.example-inner .example-struct { font-size: 12px; color: #6366f1; margin: 2px 0 6px; line-height: 1.6; }
+.example-inner .example-text { font-size: 13px; line-height: 1.8; color: #444; margin: 0 0 10px; white-space: pre-wrap; }
 /* 归类与提报口径面板（方案④）：底部圆角弹层，宽屏下限宽居中与页面壳一致 */
 .type-panel { width: 100%; max-width: var(--shell-width); left: 50%; transform: translateX(-50%); padding: 18px 16px calc(16px + env(safe-area-inset-bottom)); box-sizing: border-box; }
 .panel-title { font-size: 16px; color: #1f2937; text-align: center; margin: 0 0 6px; }

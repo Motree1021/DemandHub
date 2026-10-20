@@ -379,4 +379,24 @@ describe('report 打回待补充（方案③ NEED_INFO）', () => {
     draft.findComponent(PanelStub).vm.$emit('submit'); await flushPromises()
     expect(showConfirmDialog).toHaveBeenLastCalledWith(expect.objectContaining({ title: '确认提交', message: expect.stringContaining('请确认需求要素内容准确') }))
   })
+  it('参考示例默认收起、点击展开、复制图标复制全文（2026-10-20 拍板方案A）', async () => {
+    route.query = {}
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const wrapper = createWrapper(); await flushPromises()
+    const head = wrapper.find('.example-head')
+    expect(head.exists()).toBe(true)
+    // 默认收起：共情文案引导点击，示例正文折叠（0fr）
+    expect(head.text()).toContain('不会写？点开看参考示例')
+    expect(wrapper.find('.example-body').classes()).not.toContain('open')
+    expect(wrapper.find('.ex-copy').exists()).toBe(false)
+    // 点击展开：标题变「参考示例」，正文可见，出现素版复制图标
+    await head.trigger('click')
+    expect(head.text()).toContain('参考示例')
+    expect(wrapper.find('.example-body').classes()).toContain('open')
+    expect(wrapper.text()).toContain('作为银行渠道部的客户经理')
+    await wrapper.find('.ex-copy').trigger('click')
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('作为银行渠道部的客户经理'))
+    expect(showToast).toHaveBeenCalledWith('已复制，粘贴到输入框后可随意改')
+  })
 })
