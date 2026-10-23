@@ -1,23 +1,36 @@
 import hashlib
 import json
 import logging
+import shutil
 from copy import deepcopy
 from datetime import date, timedelta
+from pathlib import Path
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.mysql import insert
 
 from app.agent.policy import process, resume_follow_up, return_quote_seen
+from app.config import get_settings
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
 from app.core.statemachine import engine
 from app.db.models import (
+    AgentDraft,
     AgentMessage,
     AgentSession,
+    Assignment,
+    Comment,
     Demand,
+    DemandAttachment,
     DemandChangeLog,
+    DemandRelation,
+    DemandTransitionLog,
+    EffortLog,
     Notification,
     PromptVersion,
+    RagVector,
+    Review,
+    Solution,
     User,
     now,
 )
@@ -783,6 +796,54 @@ async def close(db, user, demand_id: int, reason: str) -> Demand:
     await engine.transition(db, demand_id, "WITHDRAW", user, comment=reason,
                             field_update={"close_reason": reason, "closed_at": now()})
     return demand
+
+
+# ---- 删除草稿需求（2026-10-22 拍板：①A 物理删除 + ②A 服务端记日志 + ③A 前端标准确认框）----
+# 仅 ADMIN 可操作（路由 require_admin 守门）、仅 DRAFT 态可删（防误删正式需求的最重要一道闸）
+
+
+async def delete_draft(db, user, demand_id: int) -> dict:
+    """物理删除草稿及其全部关联数据（事务内级联）。返回删除前的快照信息供提交后留痕。"""
+    demand = (await db.execute(
+        select(Demand).where(Demand.id == demand_id).with_for_update()
+    )).scalar_one_or_none()
+    if demand is None:
+        raise BizError(ErrorCode.DEMAND_NOT_FOUND)
+    if demand.status != "DRAFT":
+        raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "仅草稿需求可删除")
+    snapshot = {"id": demand.id, "title": demand.title}
+    # 级联删除：草稿态实际有数据的通常只有会话/消息/附件/变更留痕，其余表兜底删。
+    # agent_message 挂 agent_session，须先取会话 id 再删消息
+    session_ids = (await db.execute(
+        select(AgentSession.id).where(AgentSession.demand_id == demand_id)
+    )).scalars().all()
+    if session_ids:
+        await db.execute(delete(AgentMessage).where(AgentMessage.session_id.in_(session_ids)))
+    await db.execute(delete(AgentDraft).where(AgentDraft.demand_id == demand_id))
+    await db.execute(delete(AgentSession).where(AgentSession.demand_id == demand_id))
+    await db.execute(delete(DemandAttachment).where(DemandAttachment.demand_id == demand_id))
+    await db.execute(delete(DemandChangeLog).where(DemandChangeLog.demand_id == demand_id))
+    await db.execute(delete(DemandTransitionLog).where(DemandTransitionLog.demand_id == demand_id))
+    await db.execute(delete(RagVector).where(RagVector.demand_id == demand_id))
+    # review.target_id 外键指向 solution，先删 review 再删 solution
+    await db.execute(delete(Review).where(Review.demand_id == demand_id))
+    await db.execute(delete(Solution).where(Solution.demand_id == demand_id))
+    await db.execute(delete(Comment).where(Comment.demand_id == demand_id))
+    await db.execute(delete(EffortLog).where(EffortLog.demand_id == demand_id))
+    await db.execute(delete(Assignment).where(Assignment.demand_id == demand_id))
+    await db.execute(delete(DemandRelation).where(
+        (DemandRelation.from_id == demand_id) | (DemandRelation.to_id == demand_id)
+    ))
+    # notification.demand_id 是普通列无外键，同步清理避免悬空引用
+    await db.execute(delete(Notification).where(Notification.demand_id == demand_id))
+    await db.delete(demand)
+    return snapshot
+
+
+def purge_draft_attachments(demand_id: int) -> None:
+    """删除草稿的附件物理目录（须在 DB 事务提交后调用，避免回滚时文件先丢、记录还在的不一致）。"""
+    # 附件按 demand_id 分目录存放（attachment_service.storage_path 同规则），整目录删除
+    shutil.rmtree(Path(get_settings().attachment_dir) / str(demand_id), ignore_errors=True)
 
 
 def filters(statement, *, status=None, type_code=None, date_from=None, date_to=None):

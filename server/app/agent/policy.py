@@ -254,6 +254,12 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     的非空必填项主动发问——完成话术承诺了「不太完整的可选项不影响提交、以后能补」，继续
     追问即前后矛盾；完善提示留在表单卡片由用户/产品经理自愿补，质量兜底走打回机制。
     MISSING（真空着）不受此限：必填缺口仍需追问或拦提交。
+
+    先补"没有"再修"不好"（2026-10-23 拍板）：追问目标选取拆两遍扫描——第一遍只在 MISSING
+    （真空着）必填里按既有顺序选，全部问完才轮到 VAGUE（有值但质检不达标）的质检追问。
+    图片解析/大段粘贴会一次性把 D 区验收等填成长文本，原排序下 D 区 VAGUE 质检抢在 B 区与
+    紧急程度的空必填前面，AI 先纠结"填得不好"而把"还没填"晾一边；轻重口径不变（light 本就
+    只问 MISSING），急单门控插队仍最优先，组内顺序仍按 A/C/D→B 区沉底→紧急程度最后。
     """
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
@@ -300,7 +306,12 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
         return None
     # 稳定排序：A/C/D 必填在前（保持 yaml 原顺序），B 区沉底，紧急程度最后（2026-10-15 拍板）
     ordered = sorted(required, key=lambda k: (k == "urgency", 1 if field_of[k].zone == "B" else 0))
-    for key in ordered + standard.follow_up_order:
+    sequence = ordered + standard.follow_up_order
+    # 先补"没有"再修"不好"（2026-10-23 拍板）：第一遍只扫 MISSING（真空着），全部问完才轮到 VAGUE 质检
+    for key in sequence:
+        if eligible(key) and by_key[key].status == "MISSING":
+            return by_key[key]
+    for key in sequence:
         if eligible(key):
             return by_key[key]
     return None
@@ -364,19 +375,25 @@ _RETURN_DONE = {
     "manual": "修改已记录好，可以点「确认提交」重新提交。",
     "enter": "可以点「确认提交」重新提交。",
     "event": "可以点「确认提交」重新提交。",
+    "vision": "可以点「确认提交」重新提交。",
     "dialog": "补充的内容已记录好，点下方「确认提交」即可重新提交。",
 }
 _RETURN_INCOMPLETE = {
     "attachment": "还有几项必填信息没填齐，请在下方表单里补齐后重新提交。",
     "manual": "修改已记录好。还有几项必填信息没填齐，请在下方表单里补齐后重新提交。",
+    "vision": "还有几项必填信息没填齐，请在下方表单里补齐后重新提交。",
 }
 _DRAFT_DONE = {
     "attachment": "可以点「确认提交」提交。",
     "manual": "修改已记录好，可以点「确认提交」提交。",
     "enter": "该填的都齐了，可以提交。",
     "event": "该填的都齐了，可以提交。",
+    "vision": "可以点「确认提交」提交。",
 }
 _DRAFT_INCOMPLETE_ATTACHMENT = "还有几项必填信息没填齐，请在下方表单里补齐后提交。"
+# vision 触发前缀（2026-10-22 拍板）：图片来自「让 AI 读懂图片」入口，视觉模型已把图转写为文本
+# 走正常抽取整理；前缀告知内容来自图片，误识别可在后续追问中自然纠正（不做单独确认环节）
+VISION_PREFIX = "我从图片里读到了内容，先帮你整理了一下。"
 # 打回原因引述前缀的固定开头：用于历史消息判定「本补充会话是否已引述过」（只引述一次）
 RETURN_QUOTE_MARK = "这条需求之前被打回过，打回原因是"
 
@@ -385,20 +402,21 @@ def _incomplete_reply(*, light: bool, trigger: str, return_reason: str | None) -
     """无追问目标但必填仍缺（追问次数用尽放过）时的兜底指引。"""
     if return_reason:
         return _RETURN_INCOMPLETE.get(trigger, "还有几项必填信息没填齐，请在下方表单里补齐后重新提交。")
-    if trigger == "attachment":
+    if trigger in ("attachment", "vision"):
         return _DRAFT_INCOMPLETE_ATTACHMENT
     return ("我这边问得差不多了。还差的几项请在下方表单里补齐后提交。" if light
             else "我这边问得差不多了。请在下方表单里把标红星※的必填项补齐后提交。")
 
 
 def _prefix_return_quote(reply: str, form: dict, *, return_quoted: bool) -> str:
-    """打回原因引述（2026-10-20 拍板）：补充会话只引述一次，由调用方按历史消息判定是否首次。"""
+    """打回原因引述（2026-10-20 拍板）：补充会话只引述一次，由调用方按历史消息判定是否首次。
+    多段拼接排版（2026-10-23 拍板）：引述段与后文空行分段，不再密不透风一句到底。"""
     if not return_quoted:
         return reply
     reason = _return_reason_of(form)
     if not reason:
         return reply
-    return RETURN_QUOTE_PREFIX.format(reason=reason) + reply
+    return RETURN_QUOTE_PREFIX.format(reason=reason) + "\n\n" + reply
 
 
 def return_quote_seen(texts) -> bool:
@@ -421,11 +439,7 @@ def reply_for(standard, target, form, *, light: bool = False, business: bool = F
             if trigger == "dialog":
                 return ("都记好了，请核对一下表单。该填的都齐了，可以提交。" if light
                         else "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，以后能补；产品经理调研后也可以补。")
-            if trigger == "attachment":
-                return _DRAFT_DONE["attachment"]
-            if trigger == "manual":
-                return _DRAFT_DONE["manual"]
-            return _DRAFT_DONE["event"]
+            return _DRAFT_DONE.get(trigger, _DRAFT_DONE["event"])
         return _incomplete_reply(light=light, trigger=trigger, return_reason=return_reason)
     field = next(e for e in standard.elements if e.key == target.key)
     value = str(get_value(form, field.field_path) or "")
@@ -595,7 +609,8 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     if solution_field is not None and blank(get_value(form, solution_field.field_path)) and not blank(get_value(merged, solution_field.field_path)):
         solution_text = get_value(merged, solution_field.field_path).replace("\n", " ").strip()
         snippet = solution_text if len(solution_text) <= 30 else solution_text[:30] + "…"
-        solution_notice = f"你说的「{snippet}」我先记到「建议方案」里了，会随需求一起给受理方参考——最终做法由产品和技术评估后再定。"
+        # 播报精简（2026-10-23 拍板）：去掉「最终做法由产品和技术评估后再定」尾巴，播报一句到位
+        solution_notice = f"你说的「{snippet}」我先记到「建议方案」里，随需求给受理方参考。"
     # command（流程指令，2026-10-19 拍板）：回复聚焦指令本身，不叠加模式播报/方案播报等前缀——
     # 用户说「提交吧」时播「这个需求听起来改动面不小」完全文不对题
     if kind == "command":
@@ -634,16 +649,29 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
             reply = "这个需求听起来改动面不小，我按常规需求帮你把基本信息问齐。" + reply
         if mode_first_light:
             reply = "这个需求听起来是个小改动，我按轻量提报帮你登记，只确认几项关键信息就行。" + reply
-        if solution_notice:
-            reply = reply + " " + solution_notice
-        if impacts:
-            reply = " ".join(impacts) + " " + reply
+        # 多段拼接排版（2026-10-23 拍板）：提示/播报类各自空行成段，行动项（追问）沉底——
+        # 原单空格首尾相接密不透风，建议方案播报还压在追问后面，重点被淹（vision 场景最典型）
+        paragraphs = []
         if granularity:
-            reply = granularity["hint"] + " " + reply
+            paragraphs.append(granularity["hint"])
+        if impacts:
+            paragraphs.append(" ".join(impacts))
+        if solution_notice:
+            paragraphs.append(solution_notice)
+        paragraphs.append(reply)  # 追问（含意图桥接/模式播报）始终末段，离输入框最近
+        reply = "\n\n".join(paragraphs)
         # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次——调用方按历史消息判定是否首次；
         # 打回当刻另有完整通知，重提清除 returnReason 后引述自然消失；模型自述不可靠，引述由模板层保证。
         # command 意图不叠加（「点确认提交重新提交」与引述尾巴语义重复）
         reply = _prefix_return_quote(reply, merged, return_quoted=return_quoted)
+    # vision 前缀（2026-10-22 拍板）：告知内容来自图片转写，误识别可在后续追问中自然纠正；
+    # 挂在最外层（含 command 分支）——转写文本里若出现「提交吧」等字样被误判指令，前缀同样成立；
+    # 与建议方案播报同属"整理播报"（2026-10-23 拍板）：播报恰为首段时空格同段衔接，否则空行自成一段
+    if trigger == "vision":
+        if solution_notice and kind != "command" and reply.startswith(solution_notice):
+            reply = VISION_PREFIX + " " + reply
+        else:
+            reply = VISION_PREFIX + "\n\n" + reply
     return {
         "structured": merged, "fieldSources": field_sources,
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],

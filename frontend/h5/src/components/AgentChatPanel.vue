@@ -28,6 +28,7 @@
               <strong>{{ attachmentOf(message)!.fileName }}</strong>
               <small v-if="attachmentOf(message)!.size">{{ fmtSize(attachmentOf(message)!.size!) }} · 点击查看</small>
               <small v-else>点击查看</small>
+              <small v-if="attachmentOf(message)!.parsed" class="attach-parsed">AI 已读取</small>
             </span>
           </div>
         </div>
@@ -75,11 +76,12 @@
       </div>
     </van-popup>
     <van-action-sheet v-model:show="attachVisible" :actions="attachActions" cancel-text="取消" close-on-click-action
-      :description="`AI 暂不支持识别附件内容，附件仅作为需求材料随需求一并提交给受理方；单文件不超过 10MB，最多 ${ATTACHMENT_COUNT_LIMIT} 个`"
+      :description="`「让 AI 读懂图片」会提取图中文字帮你整理需求，图片里若有账号、密码等敏感信息请先遮盖再传；其他方式仅存档随需求提交，AI 不看内容。单文件不超过 10MB，最多 ${ATTACHMENT_COUNT_LIMIT} 个`"
       @select="onAttachSelect" />
     <input ref="imageInput" type="file" :accept="ATTACHMENT_ACCEPT.image" hidden @change="onFileChosen($event, 'image')">
+    <input ref="parseImageInput" type="file" :accept="ATTACHMENT_ACCEPT.image" hidden @change="onFileChosen($event, 'parse-image')">
     <input ref="docInput" type="file" :accept="ATTACHMENT_ACCEPT.doc" hidden @change="onFileChosen($event, 'doc')">
-    <span v-if="uploading" class="uploading-hint">附件上传中…</span>
+    <span v-if="uploading" class="uploading-hint">{{ uploadingKind === 'parse' ? 'AI 识别中，约需几秒到半分钟…' : '附件上传中…' }}</span>
   </div>
 </template>
 <script setup lang="ts">
@@ -222,12 +224,19 @@ function onViewportResize() { if (keyboardOpen.value) scrollInstant() }
 // ---- 附件上传（阶段一）：＋面板选择来源，本机文件直传；企微/微信选择待宿主桥接 ----
 const attachVisible = ref(false)
 const uploading = ref(false)
+// 上传动作类型（2026-10-22 拍板）：parse-image=「让 AI 读懂图片」（后端同步识别最长约 30s），
+// 区分 loading 文案（AI 识别中… vs 附件上传中…），识别期间锁上传入口防并发
+const uploadingKind = ref<'archive' | 'parse'>('archive')
 const imageInput = ref<HTMLInputElement>()
 const docInput = ref<HTMLInputElement>()
+const parseImageInput = ref<HTMLInputElement>()
 const thumbs = ref(new Map<number, string>())
+// 三入口（2026-10-22 拍板）：AI 读懂图片 / 仅作为附件存档 / 上传文档——默认「AI 不看附件内容」口径不变，
+// 用户显式选择才触发识别；识别图片与附件共用同一 5 个限额与权限矩阵
 const attachActions = [
-  { name: '拍照或选择图片', value: 'image' },
-  { name: '上传文档（md / pdf / word / ppt）', value: 'doc' },
+  { name: '让 AI 读懂图片', subname: '聊天截图等，AI 提取图中文字帮你整理需求', value: 'parse-image' },
+  { name: '拍照或选择图片', subname: '仅作为附件存档，AI 不看内容', value: 'image' },
+  { name: '上传文档（md / pdf / word / ppt）', subname: '仅作为附件存档，AI 不看内容', value: 'doc' },
   { name: '从微信/企微选择文件', subname: '即将支持' },
 ]
 function attachmentOf(message: AgentMessage): AttachmentPayload | null {
@@ -236,6 +245,7 @@ function attachmentOf(message: AgentMessage): AttachmentPayload | null {
 function onAttachSelect(action: { value?: string }) {
   if (action.value === 'image') imageInput.value?.click()
   else if (action.value === 'doc') docInput.value?.click()
+  else if (action.value === 'parse-image') parseImageInput.value?.click()
   else pickFromWeChat()
 }
 /** 企微/微信选文件桥接（分期预留，2026-10-11 拍板）：网页够不到微信聊天文件/微文档，
@@ -266,20 +276,20 @@ async function normalizeImage(file: File): Promise<File> {
   const ext = IMAGE_MIME_EXT[file.type]
   return ext ? new File([file], `photo-${Date.now()}.${ext}`, { type: file.type }) : file
 }
-async function onFileChosen(event: Event, source: 'image' | 'doc') {
+async function onFileChosen(event: Event, source: 'image' | 'doc' | 'parse-image') {
   const target = event.target as HTMLInputElement
   let file = target.files?.[0]
   target.value = ''
   if (!file || sending.value || uploading.value) return
-  if (source === 'image') {
+  if (source !== 'doc') {
     try { file = await normalizeImage(file) }
     catch { showToast('HEIC 照片转换失败，请从相册另选一张，或把相机格式改为「兼容性最佳」后重拍'); return }
   }
   if (file.size > ATTACHMENT_SIZE_LIMIT) { showToast('文件超过 10MB 上限'); return }
-  uploading.value = true; emit('busy', true)
+  uploading.value = true; uploadingKind.value = source === 'parse-image' ? 'parse' : 'archive'; emit('busy', true)
   try {
     const context = await props.prepare()
-    await uploadAttachment(context.demandId, file)
+    await uploadAttachment(context.demandId, file, uploadingKind.value)
     await loadHistory()
   } catch { /* 失败原因已由请求层 toast；本地上传不消耗 AI 额度，直接重试即可 */ }
   finally { uploading.value = false; emit('busy', false); scroll() }
@@ -394,6 +404,9 @@ defineExpose({ scrollToBottom: scroll, refreshHistory: loadHistory })
 .attach-meta strong { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attach-meta small { font-size: 11px; color: #94a3b8; }
 .attach-bubble.mine .attach-meta small { color: #c7d2fe; }
+/* 「AI 已读取」标签（2026-10-22 拍板）：识别成功的图片附件气泡内联小标，提报人一眼可见 AI 看过这张图 */
+.attach-parsed { display: inline-flex; align-self: flex-start; margin-top: 2px; padding: 1px 6px; border-radius: 4px; background: #ecfdf3; color: #067647 !important; font-size: 11px; }
+.attach-bubble.mine .attach-parsed { background: rgba(255, 255, 255, 0.18); color: #d1fae5 !important; }
 .hint-banner { background: #fdf6ec; border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-size: 12px; line-height: 1.7; color: #9a3412; display: flex; flex-direction: column; gap: 2px; }
 .hint-banner.impact { background: #eef3fb; color: #1f3a8a; }
 </style>

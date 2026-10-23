@@ -5,7 +5,11 @@
   <el-card v-if="standard">
     <template #header>
       <div class="head">
-        <span class="card-title">需求要素{{ recogLabel ? `（${recogLabel}）` : '' }}</span>
+        <div class="head-left">
+          <span class="card-title">需求要素</span>
+          <!-- 需求层级（2026-10-23 调整）：与需求列表同一判定函数 + 同款 el-tag 颜色 -->
+          <el-tag v-if="levelMeta" :type="levelMeta.type" size="small">{{ levelMeta.label }}</el-tag>
+        </div>
         <span v-if="quality.length" class="count" :class="{ bad: missingCount > 0 }">{{ missingCount }} 项缺失</span>
         <span v-else class="count dim">提交后生成质量评估</span>
       </div>
@@ -58,8 +62,9 @@ import { ElMessage } from 'element-plus'
 import { demandApi } from '@/api'
 import type { DemandRow, ElementStatus, StandardDef, StandardField } from '@/api'
 import { ApiError } from '@/api/request'
+import { DEMAND_LEVEL_META, demandLevelOf } from '@/utils/status'
 import {
-  RECOGNITION_LABELS, ZONE_TITLES, displayValue, fieldPath, grayZones, readField, recognitionLevel,
+  ZONE_TITLES, displayValue, fieldPath, grayZones, readField,
 } from '@/utils/demand'
 
 const props = defineProps<{ demand: DemandRow; standard: StandardDef; quality: ElementStatus[] }>()
@@ -73,9 +78,10 @@ const LABEL_OVERRIDES: Record<string, string> = { proposedSolution: '提报人�
 const qualityMap = computed(() => new Map(props.quality.map(q => [q.key, q])))
 // 缺失口径：非到位即缺失（MISSING + VAGUE + SKIP）
 const missingCount = computed(() => props.quality.filter(q => q.status !== 'OK').length)
-const recogLabel = computed(() => {
-  const level = recognitionLevel(props.demand.ext?.typeRecognition)
-  return level ? RECOGNITION_LABELS[level] : ''
+// 需求层级（2026-10-23 调整）：复用列表判定（轻量提报→微需求；常规按判型），无判型数据不显示
+const levelMeta = computed(() => {
+  const level = demandLevelOf(props.demand.ext)
+  return level ? DEMAND_LEVEL_META[level] : null
 })
 
 const gray = computed(() => grayZones(props.demand.ext?.typeRecognition))
@@ -157,6 +163,7 @@ function statusText(s: ElementStatus['status']): string {
 <style scoped>
 .card-title { font-weight: 600; }
 .head { display: flex; align-items: center; justify-content: space-between; }
+.head-left { display: flex; align-items: center; gap: 8px; }
 .count { font-size: 13px; color: #909399; font-weight: 600; }
 .count.bad { color: #b45309; }
 .count.dim { font-weight: 400; }

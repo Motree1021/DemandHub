@@ -112,8 +112,9 @@ describe('需求详情页布局', () => {
     mocks.detail.mockResolvedValue(bundle(techDemand({ typeRecognition: { confirmed: 'function' } })))
     const wrapper = mountDetail()
     await flushPromises()
-    expect(wrapper.text()).toContain('需求要素（功能需求）') // 标题带判型
     const card = wrapper.findComponent(ElementsCard)
+    expect(card.text()).toContain('需求要素')
+    expect(card.text()).toContain('功能需求') // 标题旁层级 tag（与列表同款颜色口径）
     const zones = card.findAll('.zone')
     expect(zones[0].classes()).toContain('gray')  // B
     expect(zones[1].classes()).toContain('gray')  // C

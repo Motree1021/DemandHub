@@ -111,6 +111,64 @@ async def test_other_400_is_not_thinking_compatibility_retry(respx_mock, llm_set
     await client.close()
 
 
+def completion_body(content):
+    return json.dumps({"id": "x", "object": "chat.completion", "created": 0, "model": "fake",
+                       "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]})
+
+
+async def test_complete_vision_disables_thinking_without_json_mode(respx_mock, llm_settings):
+    # 2026-10-23 实测：Seed 端点默认开启深度思考，转写任务 92.5s→5.3s；必须显式关闭
+    route = respx_mock.post("https://ark.test/v3/chat/completions").respond(200, text=completion_body("转写文本"))
+    client = mocked_client(llm_settings.model_copy(update={"llm_vision_model": "ep-vision"}), respx_mock)
+    out = await client.complete_vision([{"role": "user", "content": [{"type": "text", "text": "读图"}]}])
+    assert out == "转写文本"
+    body = json.loads(route.calls[0].request.content)
+    assert body["thinking"] == {"type": "disabled"} and body["model"] == "ep-vision"
+    assert "response_format" not in body and body["stream"] is False
+    await client.close()
+
+
+async def test_complete_vision_thinking_rejected_retries_once_without(respx_mock, llm_settings):
+    # 端点不支持 thinking 参数时省略后即时重试一次（400 快速返回，非超时重试）
+    route = respx_mock.post("https://ark.test/v3/chat/completions")
+    route.side_effect = [httpx.Response(400, json={"error": {"message": "thinking is not supported"}}), httpx.Response(200, text=completion_body("转写文本"))]
+    client = mocked_client(llm_settings.model_copy(update={"llm_vision_model": "ep-vision"}), respx_mock)
+    out = await client.complete_vision([{"role": "user", "content": "x"}])
+    assert out == "转写文本" and route.call_count == 2
+    assert "thinking" in json.loads(route.calls[0].request.content)
+    assert "thinking" not in json.loads(route.calls[1].request.content)
+    await client.close()
+
+
+async def test_complete_vision_model_unconfigured_unavailable(llm_settings):
+    # 视觉模型配置位为空（未启用）→ LlmUnavailable，业务层降级为普通附件
+    client = ArkClient(llm_settings.model_copy(update={"llm_vision_model": ""}))
+    with pytest.raises(LlmUnavailable):
+        await client.complete_vision([{"role": "user", "content": "x"}])
+    await client.close()
+
+
+async def test_complete_vision_connection_error_retries_once(respx_mock, llm_settings):
+    # 连接级故障（网络抖动/瞬时不可达）秒级重试一次即恢复：不计失败、用户无感（2026-10-23 误杀复盘）
+    route = respx_mock.post("https://ark.test/v3/chat/completions")
+    route.side_effect = [httpx.ConnectError("connection reset"), httpx.Response(200, text=completion_body("转写文本"))]
+    client = mocked_client(llm_settings.model_copy(update={"llm_vision_model": "ep-vision"}), respx_mock)
+    out = await client.complete_vision([{"role": "user", "content": "x"}])
+    assert out == "转写文本" and route.call_count == 2 and client.consecutive_failures == 0
+    await client.close()
+
+
+async def test_complete_vision_connection_error_twice_counts_one_failure(respx_mock, llm_settings):
+    # 连续连接故障：重试后仍败 → 按一次请求级失败计入熔断，超时类不在此重试口径内
+    route = respx_mock.post("https://ark.test/v3/chat/completions")
+    route.side_effect = [httpx.ConnectError("connection reset"), httpx.ConnectError("connection reset")]
+    client = mocked_client(llm_settings.model_copy(update={"llm_vision_model": "ep-vision"}), respx_mock)
+    with pytest.raises(LlmUnavailable):
+        await client.complete_vision([{"role": "user", "content": "x"}])
+    assert route.call_count == 2 and client.consecutive_failures == 1
+    await client.close()
+
+
 async def test_blank_key_unavailable_before_http(llm_settings):
     client = ArkClient(llm_settings.model_copy(update={"llm_api_key": ""}))
     assert not client.available()

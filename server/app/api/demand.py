@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 from typing import Any, Literal
 from urllib.parse import quote
@@ -7,13 +8,15 @@ from fastapi.responses import FileResponse, Response
 from pydantic import Field, field_validator
 
 from app.agent.overview import schedule_overview_rewrite
-from app.core.deps import get_current_user, get_db, require_role
+from app.core.deps import get_current_user, get_db, require_admin, require_role
 from app.core.errors import BizError, ErrorCode
 from app.core.result import ApiModel, ok
 from app.services import attachment_service, flow_service, rag_service
 from app.services import demand_service as service
 from app.services.attachment_service import MAX_SIZE
 from app.services.export import to_markdown
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/demand")
 
@@ -141,6 +144,19 @@ async def close(
     return ok(result)
 
 
+# 删除草稿需求（2026-10-22 拍板）：仅 ADMIN、仅 DRAFT 态，物理删除不可恢复
+@router.delete("/{demand_id}")
+async def remove_draft(demand_id: int, user=Depends(require_admin), db=Depends(get_db)):
+    async with db.begin():
+        snapshot = await service.delete_draft(db, user, demand_id)
+    # 附件物理文件在事务提交后清理，避免回滚时文件先丢、记录还在的不一致
+    service.purge_draft_attachments(demand_id)
+    # 服务端留痕（拍板方案②A）：操作人 + 需求快照
+    logger.info("删除草稿需求 operator=%s(%s) demand_id=%s title=%s",
+                user.id, user.name, snapshot["id"], snapshot["title"])
+    return ok()
+
+
 # 提报口径改判（2026-10-11 方案④）：轻量↔常规双向；2026-10-20 拍板打回期间不再锁口径；响应同 PUT /demand 便于前端 applyDemand 刷新
 @router.post("/{demand_id}/mode")
 async def change_mode(
@@ -175,13 +191,20 @@ async def detail(demand_id: int, user=Depends(get_current_user), db=Depends(get_
 async def upload_attachment(
     demand_id: int, file: UploadFile = File(...),
     biz_type: str = Query("DEMAND", alias="bizType"), biz_id: int | None = Query(None, alias="bizId"),
+    purpose: str = Query("archive"),
     user=Depends(get_current_user), db=Depends(get_db)
 ):
     # 读取上限+1 字节：超大文件不必整份载入内存即可拒绝
     payload = await file.read(MAX_SIZE + 1)
     async with db.begin():
         row = await attachment_service.save_attachment(
-            db, user, demand_id, file.filename, payload, biz_type=biz_type, biz_id=biz_id)
+            db, user, demand_id, file.filename, payload, biz_type=biz_type, biz_id=biz_id, purpose=purpose)
+    # AI 图片识别（2026-10-22 拍板）：附件落库提交后再同步解析（最长 60s 兜底，大图已压缩正常秒级），
+    # 避免视觉等待期间持有需求行锁/会话锁；失败/无字在编排内降级为普通附件，不影响本请求结果
+    if row.purpose == "parse":
+        from app.services import vision_service
+        await vision_service.run_vision_parse(db, user, demand_id, row.id, payload)
+        await db.refresh(row)
     return ok(attachment_service.serialize_attachment(row))
 
 

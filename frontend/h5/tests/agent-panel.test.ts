@@ -188,13 +188,16 @@ describe('附件消息卡片与上传（阶段一）', () => {
     const { wrapper } = mountPanel(); await flushPromises()
     expect(wrapper.emitted('complete')?.[0][0]).toMatchObject({ revision: 2 })
   })
-  it('「＋」面板含多模态提示，选择来源后直传文件：先保草稿再上传，成功后刷新历史并播报 busy', async () => {
+  it('「＋」面板三入口与脱敏提示，选择来源后直传文件：先保草稿再上传，成功后刷新历史并播报 busy', async () => {
     const { wrapper, prepare } = mountPanel(); await flushPromises()
     await wrapper.find('.attach-btn').trigger('click'); await flushPromises()
     const sheet = wrapper.find('[data-sheet]')
     expect(sheet.exists()).toBe(true)
-    expect(sheet.text()).toContain('AI 暂不支持识别附件内容')
-    // 第三项「从微信/企微选择文件」为分期预留位：点击仅提示即将支持，不触发上传
+    // 三入口（2026-10-22 拍板）：AI 读懂图片 / 仅作为附件存档 / 上传文档；弹层说明含脱敏提示与存档口径
+    expect(sheet.text()).toContain('让 AI 读懂图片')
+    expect(sheet.text()).toContain('其他方式仅存档随需求提交，AI 不看内容')
+    expect(sheet.text()).toContain('敏感信息请先遮盖')
+    // 第四项「从微信/企微选择文件」为分期预留位：点击仅提示即将支持，不触发上传
     const wechat = sheet.findAll('[data-action]').find(button => button.text().includes('微信'))!
     await wechat.trigger('click'); await flushPromises()
     expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining('即将支持'))
@@ -204,16 +207,45 @@ describe('附件消息卡片与上传（阶段一）', () => {
     await docAction.trigger('click')
     const file = new File(['demo'], '验收说明.pdf', { type: 'application/pdf' })
     const inputs = wrapper.findAll('input[type="file"]')
-    expect(inputs).toHaveLength(2)
-    Object.defineProperty(inputs[1].element, 'files', { value: [file], configurable: true })
-    await inputs[1].trigger('change'); await flushPromises()
+    expect(inputs).toHaveLength(3)
+    Object.defineProperty(inputs[2].element, 'files', { value: [file], configurable: true })
+    await inputs[2].trigger('change'); await flushPromises()
     expect(prepare).toHaveBeenCalledTimes(1)
-    expect(mocks.uploadAtt).toHaveBeenCalledWith(1, file)
+    expect(mocks.uploadAtt).toHaveBeenCalledWith(1, file, 'archive')
     expect(mocks.messages).toHaveBeenCalledTimes(2) // 挂载时一次 + 上传成功刷新一次
     const busy = wrapper.emitted('busy')!
     expect(busy[0]).toEqual([true])
     expect(busy[busy.length - 1]).toEqual([false])
     expect(wrapper.find('.uploading-hint').exists()).toBe(false)
+  })
+  it('「让 AI 读懂图片」入口：图片直传带 purpose=parse，识别期间提示「AI 识别中」', async () => {
+    let resolveUpload!: (value: unknown) => void
+    mocks.uploadAtt.mockImplementationOnce(() => new Promise(resolve => { resolveUpload = resolve }))
+    const { wrapper, prepare } = mountPanel(); await flushPromises()
+    await wrapper.find('.attach-btn').trigger('click'); await flushPromises()
+    const sheet = wrapper.find('[data-sheet]')
+    const parseAction = sheet.findAll('[data-action]').find(button => button.text().includes('让 AI 读懂图片'))!
+    await parseAction.trigger('click')
+    const file = new File(['png-bytes'], '聊天截图.png', { type: 'image/png' })
+    const inputs = wrapper.findAll('input[type="file"]')
+    expect(inputs).toHaveLength(3)
+    Object.defineProperty(inputs[1].element, 'files', { value: [file], configurable: true })
+    await inputs[1].trigger('change'); await flushPromises()
+    // 识别期间（上传 Promise 挂起中）loading 文案为「AI 识别中」，落定后消失并刷新历史
+    expect(wrapper.find('.uploading-hint').text()).toContain('AI 识别中')
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(mocks.uploadAtt).toHaveBeenCalledWith(1, file, 'parse')
+    resolveUpload({ id: 9 })
+    await flushPromises()
+    expect(mocks.messages).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.uploading-hint').exists()).toBe(false)
+  })
+  it('识别成功的图片附件气泡带「AI 已读取」标签（parsed=true）', async () => {
+    mocks.messages.mockResolvedValue([
+      { id: 1, sessionId: 11, role: 'USER', content: '[上传附件] 聊天截图.png', structuredPayload: JSON.stringify({ kind: 'attachment', attachmentId: 8, fileName: '聊天截图.png', fileKind: 'IMAGE', size: 1024, purpose: 'parse', parsed: true }), createdAt: '2026-10-10T10:00:00' },
+    ])
+    const { wrapper } = mountPanel(); await flushPromises()
+    expect(wrapper.find('.attach-parsed').text()).toBe('AI 已读取')
   })
 })
 

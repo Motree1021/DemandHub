@@ -28,6 +28,8 @@ BIZ_TYPES = {"DRAFT", "DEMAND", "SOLUTION", "COMMENT"}
 IMAGE_EXTS = {"png", "jpg", "jpeg", "webp"}
 DOC_EXTS = {"md", "pdf", "doc", "docx", "ppt", "pptx"}
 KIND_LABELS = {"IMAGE": "图片", "DOC": "文档"}
+# 附件用途（2026-10-22 拍板）：archive=存档（AI 不看内容，默认口径）；parse=让 AI 读懂图片（仅图片+提报侧）
+PURPOSES = {"archive", "parse"}
 
 
 def detect_image_ext(head: bytes) -> str | None:
@@ -82,6 +84,8 @@ def serialize_attachment(row: DemandAttachment) -> dict:
         "size": row.size,
         "bizType": row.biz_type,
         "bizId": row.biz_id,
+        "purpose": row.purpose,
+        "parseStatus": row.parse_status,
         "createdAt": encode(row.created_at),
     }
 
@@ -138,12 +142,30 @@ async def _resolve_biz_target(db, user, demand: Demand, biz_type: str, biz_id: i
     return "COMMENT", biz_id
 
 
+async def archive_receipt(db, user, demand: Demand, row: DemandAttachment, note: str) -> None:
+    """附件回执+流程接续（2026-10-22 拍板抽出共用）：archive 上传与 vision 降级（失败/无字/整理失败）
+    走同一条「固定话术回执（不调模型）→ 规则层接续追问」链路；request_id 固定 attach-{附件id}，
+    删除附件时连带清掉会话里的气泡与回执。"""
+    await session_service.append(
+        db,
+        demand.session_id,
+        "ASSISTANT",
+        note,
+        {"kind": "attachmentReceipt", "attachmentId": row.id, "fileName": row.file_name},
+        request_id=f"attach-{row.id}",
+    )
+    from app.services.demand_service import append_conversation_follow_up
+    await append_conversation_follow_up(db, user, demand, trigger="attachment")
+
+
 async def save_attachment(
     db, user, demand_id: int, filename: str | None, payload: bytes,
-    biz_type: str = "DEMAND", biz_id: int | None = None,
+    biz_type: str = "DEMAND", biz_id: int | None = None, purpose: str = "archive",
 ) -> DemandAttachment:
     if biz_type not in BIZ_TYPES:
         raise BizError(ErrorCode.PARAM_INVALID, "附件类型无效")
+    if purpose not in PURPOSES:
+        raise BizError(ErrorCode.PARAM_INVALID, "附件用途无效")
     demand = (await db.execute(
         select(Demand).where(Demand.id == demand_id).with_for_update()
     )).scalar_one_or_none()
@@ -166,6 +188,13 @@ async def save_attachment(
             )
         base = name.rsplit(".", 1)[0] if "." in name else name
         name, ext, kind = f"{base[:250]}.{detected}", detected, "IMAGE"
+    # AI 图片识别校验（2026-10-22 拍板）：仅图片可识别；仅提报侧（草稿/待补充）可用——
+    # 识别要走提报对话链路整理要素，流转中会话已关闭、交付物仅供受理方查阅
+    if purpose == "parse":
+        if kind != "IMAGE":
+            raise BizError(ErrorCode.PARAM_INVALID, "仅图片支持 AI 识别，文档请直接上传存档")
+        if demand.status not in ("DRAFT", "NEED_INFO"):
+            raise BizError(ErrorCode.ILLEGAL_STATE_TRANSITION, "仅草稿或待补充状态可使用 AI 图片识别")
     if not payload:
         raise BizError(ErrorCode.PARAM_INVALID, "文件内容为空")
     if len(payload) > MAX_SIZE:
@@ -197,11 +226,14 @@ async def save_attachment(
         uploaded_by=user.id,
         biz_type=biz_type,
         biz_id=biz_id,
+        purpose=purpose,
     )
     db.add(row)
     await db.flush()
-    # AI 固定回执（不调模型）：上传动作写入会话上下文，模型只知文件名不知内容
-    # 仅提报侧（草稿/待补充）注入；流转中交付物上传不打扰已关闭会话
+    # 上传动作写入会话上下文（仅提报侧注入；流转中交付物上传不打扰已关闭会话）：
+    # archive 走「气泡+固定回执（AI 不看内容）+规则接续」；parse 只注入气泡，
+    # 会话由 vision 编排接管（API 层提交后调 vision_service.run_vision_parse）——
+    # 识别成功注入转写文本与整理回复，失败/无字降级为 archive 同口径回执
     if demand.session_id is not None and demand.status in ("DRAFT", "NEED_INFO"):
         request_id = f"attach-{row.id}"
         await session_service.append(
@@ -215,21 +247,15 @@ async def save_attachment(
                 "fileName": name,
                 "fileKind": kind,
                 "size": row.size,
+                "purpose": purpose,
             },
             request_id=request_id,
         )
-        await session_service.append(
-            db,
-            demand.session_id,
-            "ASSISTANT",
-            f"已收到附件「{name}」，会随需求一并提交给受理方。注意：我暂时看不了图片或文档里的内容，有需要请用文字补充说明。",
-            {"kind": "attachmentReceipt", "attachmentId": row.id, "fileName": name},
-            request_id=request_id,
-        )
-        # 附件回执后的流程接续（2026-10-19 拍板，与手改同套逻辑）：回执完不停顿，
-        # 规则层续上下一追问/完成话术（2026-10-20：附件动作专用简短话术），对话不中断
-        from app.services.demand_service import append_conversation_follow_up
-        await append_conversation_follow_up(db, user, demand, trigger="attachment")
+        if purpose == "archive":
+            await archive_receipt(
+                db, user, demand, row,
+                f"已收到附件「{name}」，会随需求一并提交给受理方。注意：我暂时看不了图片或文档里的内容，有需要请用文字补充说明。",
+            )
     return row
 
 

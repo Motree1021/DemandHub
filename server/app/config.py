@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     llm_thinking: Literal["disabled", "enabled", "auto"] | None = None
     llm_read_timeout_s: float = Field(default=60, gt=0)
     llm_embedding_model: str = ""
+    # AI 图片识别（2026-10-22 拍板）：视觉模型独立于 chat 模型配置——同步解析最长 60s
+    # （2026-10-23 实测真机照片原图需 30s+，送模型前已压缩长边到 1600px，正常秒级返回，60s 为兜底）、
+    # 转写输出上限 4096（长截图多轮对话转写实测足够）；模型为空即未启用，上传自动降级为普通附件
+    llm_vision_model: str = ""
+    llm_vision_timeout_s: float = Field(default=60, gt=0)
+    llm_vision_max_tokens: int = Field(default=4096, ge=1)
     llm_failure_threshold: int = Field(default=3, ge=1)
     llm_failure_cooldown_s: float = Field(default=60, gt=0)
     attachment_dir: str = "storage/attachments"

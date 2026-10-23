@@ -49,6 +49,36 @@ export const SOLUTION_STATUS_META: Record<string, { label: string; type: TagType
   REJECTED: { label: '已打回', type: 'danger' },
 }
 
+/** 需求层级四分类（2026-10-22 拍板）：口径优先——轻量提报（ext.mode.level='light'）一律「微需求」；
+ *  常规口径再按判型分业务/用户/功能。判型口径与 H5 FormSnapshotCard 完全一致：
+ *  confirmed 人工确认优先；否则 business≥0.5 且严格最高→业务需求，user>function→用户需求，其余（含并列）→功能需求。
+ *  无判型数据（老数据/未走 AI 流程）返回 null，列表显示「—」。 */
+export type DemandLevel = 'business' | 'user' | 'function' | 'micro'
+
+export const DEMAND_LEVEL_META: Record<DemandLevel, { label: string; type: TagType }> = {
+  business: { label: '业务需求', type: 'danger' },
+  user: { label: '用户需求', type: 'warning' },
+  function: { label: '功能需求', type: 'primary' },
+  micro: { label: '微需求', type: 'success' },
+}
+
+export function demandLevelOf(ext: Record<string, unknown> | null | undefined): DemandLevel | null {
+  if (!ext) return null
+  const mode = ext.mode as { level?: string } | undefined
+  if (mode?.level === 'light') return 'micro'
+  const recognition = ext.typeRecognition as {
+    confirmed?: string | null; business?: number; user?: number; function?: number
+  } | undefined
+  if (!recognition) return null
+  const confirmed = recognition.confirmed
+  if (confirmed === 'business' || confirmed === 'user' || confirmed === 'function') return confirmed
+  const business = recognition.business ?? 0
+  const user = recognition.user ?? 0
+  const fn = recognition.function ?? 0
+  if (business >= 0.5 && business > Math.max(user, fn)) return 'business'
+  return user > fn ? 'user' : 'function'
+}
+
 export const RELATION_TYPE_META: Record<string, string> = {
   PARENT: '父子',
   DEPENDS: '依赖',

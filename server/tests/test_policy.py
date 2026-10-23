@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import pytest
 
 from app.agent.policy import (
@@ -558,9 +560,13 @@ def test_proposed_solution_first_extraction_announced():
                          elements=[], mode_signal=ModeSignalOutput(level="standard", evidence="平台迁移+域名备案，实现路径有分量"))
     result = process(output, form(), {}, [], None, {}, "期望的解决方案：1.迁移到公司H5服务器用fenhang域名；2.在火山为coze申请企业域名并备案。2选1")
     assert result["structured"]["elements"]["D"]["proposedSolution"] == COZE_SOLUTION
-    # 引述式：话术中含 proposedSolution 原文片段（超长截 30 字加省略号），且整句提醒位于回复末尾（追问在前）
+    # 引述式：话术中含 proposedSolution 原文片段（超长截 30 字加省略号）；
+    # 多段拼接排版（2026-10-23 拍板）：播报去尾精简、置于追问之前空行成段，行动项（追问）沉底
     assert "你说的「方案1：将系统从coze平台迁移到公司自己的H5服务器" in result["reply"]
-    assert result["reply"].endswith("记到「建议方案」里了，会随需求一起给受理方参考——最终做法由产品和技术评估后再定。")
+    notice = "我先记到「建议方案」里，随需求给受理方参考。"
+    assert notice in result["reply"]
+    paragraphs = result["reply"].split("\n\n")
+    assert notice in paragraphs[0] and paragraphs[-1].startswith("这个需求主要给谁用")
     assert result["askedTarget"] != "proposedSolution"
 
 
@@ -865,24 +871,53 @@ def test_resume_matl_content_still_required_and_asked():
     assert follow["reply"] != DESC_INVITE and follow["askedTarget"] is not None
 
 
+def test_missing_required_beats_vague_quality():
+    """先补"没有"再修"不好"（2026-10-23 拍板）：D 区验收有值但笼统（VAGUE）时，
+    真空着（MISSING）的必填整体优先被问——图片解析/大段粘贴一次性填满 D 区长文本曾让
+    验收质检抢在 4 个空必填前面；组内顺序不变：B 区沉底、紧急程度最后。"""
+    standard = get("TECH")
+    value = acd_filled_form()
+    value["elements"]["D"]["acceptanceCriteria"] = "好用就行"  # VAGUE
+    value["urgency"] = None  # MISSING
+    # 非业务：紧急程度（MISSING）优先于验收质检（VAGUE），哪怕它排序沉底
+    follow = resume_follow_up(standard, value, None)
+    assert follow["askedTarget"] == "urgency"
+    # 业务确认 + B 区业务目标空缺：B 区 MISSING 也优先于 D 区 VAGUE（B 沉底但仍早于紧急程度）
+    business_value = acd_filled_form()
+    business_value["ext"] = {"typeRecognition": {"business": 0.9, "user": 0.2, "function": 0.3}}
+    business_value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    business_value["urgency"] = "NORMAL"
+    follow_b = resume_follow_up(standard, business_value, None)
+    assert follow_b["askedTarget"] == "businessGoal"
+    # 全部 MISSING 问满放过（attempts 达上限）后才轮到 VAGUE 质检追问
+    exhausted = [{"key": "urgency", "status": "MISSING", "attempts": standard.max_attempts}]
+    follow_v = resume_follow_up(standard, value, {"structured": value, "elements": exhausted})
+    assert follow_v["askedTarget"] == "acceptanceCriteria"
+
+
 def test_resume_counts_manual_attempts_and_quotes_reask():
     """手改计数+引述重问（2026-10-19 拍板）：手填的验收标准仍笼统——引原话+说差距地再问一次，
-    记 1 次；再改仍不达标记满 2 次放过（不再选中），没碰的要素不记。"""
+    记 1 次；再改仍不达标记满 2 次放过（不再选中），没碰的要素不记。
+    2026-10-23 优先级拍板后：VAGUE 想被选中须 MISSING 先问满放过（先补"没有"再修"不好"）。"""
     standard = get("TECH")
-    # 仅验收标准笼统 + 紧急度空缺：can_submit=False，验收标准排在沉底的紧急度之前被选中
     value = acd_filled_form()
     value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
     value["urgency"] = None
-    first = resume_follow_up(standard, value, None, changed_keys={"acceptanceCriteria"})
+    # 紧急度（MISSING）问满 2 次仍空着才轮到验收质检：构造 attempts 达上限的历史快照；
+    # 计数认"值有变化"——历史快照里的验收还是旧值（原合格文本），本轮手改成"好用就行"才记 1 次
+    exhausted = [{"key": "urgency", "status": "MISSING", "attempts": standard.max_attempts}]
+    first = resume_follow_up(standard, value, {"structured": acd_filled_form(), "elements": exhausted},
+                             changed_keys={"acceptanceCriteria"})
     assert first["askedTarget"] == "acceptanceCriteria"
     assert first["reply"].startswith("你填的「验收标准」『好用就行』我记下了，不过")
     assert next(e for e in first["elements"] if e["key"] == "acceptanceCriteria")["attempts"] == 1
-    # 第二次手改仍不达标：记满 2 次放过，目标落到紧急度
+    # 第二次手改仍不达标：记满 2 次放过；紧急度与验收均问满，无目标可问（不纠缠）
+    previous_form = deepcopy(value)
     value["elements"]["D"]["acceptanceCriteria"] = "好用"
-    previous = {"structured": acd_filled_form(), "elements": first["elements"]}
+    previous = {"structured": previous_form, "elements": first["elements"]}
     second = resume_follow_up(standard, value, previous, changed_keys={"acceptanceCriteria"})
     assert next(e for e in second["elements"] if e["key"] == "acceptanceCriteria")["attempts"] == 2
-    assert second["askedTarget"] == "urgency"
+    assert second["askedTarget"] is None
 
 
 def test_resume_untouched_fields_not_counted():

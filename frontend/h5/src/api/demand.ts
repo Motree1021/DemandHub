@@ -58,7 +58,8 @@ export function parseManualChange(raw: string | null | undefined): ManualChangeP
   } catch { return null }
 }
 // 附件消息（阶段一）：USER 上传动作 + AI 固定回执，不参与质量快照回放
-export interface AttachmentPayload { kind: 'attachment' | 'attachmentReceipt'; attachmentId: number; fileName: string; fileKind?: 'IMAGE' | 'DOC'; size?: number }
+// purpose（2026-10-22 拍板）：parse=「让 AI 读懂图片」入口上传，识别成功后后端回写 parsed=true（「AI 已读取」标签）
+export interface AttachmentPayload { kind: 'attachment' | 'attachmentReceipt'; attachmentId: number; fileName: string; fileKind?: 'IMAGE' | 'DOC'; size?: number; purpose?: 'archive' | 'parse'; parsed?: boolean }
 export function parseAttachmentPayload(raw: string | null | undefined): AttachmentPayload | null {
   if (!raw) return null
   try {
@@ -97,12 +98,15 @@ export function parseTypeChange(raw: string | null | undefined): TypeChangePaylo
 export function isReplayablePayload(raw: string | null | undefined): boolean {
   return !!raw && !parseManualChange(raw) && !parseAttachmentPayload(raw) && !parseReturnNotice(raw) && !parseModeChange(raw) && !parseTypeChange(raw)
 }
-export interface DemandAttachment { id: number; demandId: number; fileName: string; kind: 'IMAGE' | 'DOC'; kindLabel: string; size: number; createdAt: string }
+export interface DemandAttachment { id: number; demandId: number; fileName: string; kind: 'IMAGE' | 'DOC'; kindLabel: string; size: number; purpose?: 'archive' | 'parse'; parseStatus?: 'PARSED' | 'NO_TEXT' | 'FAILED' | null; createdAt: string }
 export const listAttachments = (demandId: number): Promise<DemandAttachment[]> => get(`/demand/${demandId}/attachments`)
-export function uploadAttachment(demandId: number, file: File): Promise<DemandAttachment> {
+// purpose=parse（2026-10-22 拍板）：「让 AI 读懂图片」——后端同步调视觉模型转写（最长约 30s），
+// 识别失败/无字自动降级为普通附件；timeout 放宽到 90s 覆盖解析等待
+export function uploadAttachment(demandId: number, file: File, purpose: 'archive' | 'parse' = 'archive'): Promise<DemandAttachment> {
   const form = new FormData()
   form.append('file', file)
-  return post(`/demand/${demandId}/attachments`, form, { timeout: 60000 })
+  const query = purpose === 'parse' ? '?purpose=parse' : ''
+  return post(`/demand/${demandId}/attachments${query}`, form, { timeout: 90000 })
 }
 export const deleteAttachment = (demandId: number, attachmentId: number): Promise<unknown> => del(`/demand/${demandId}/attachments/${attachmentId}`)
 /** 图片缩略图：鉴权拉 blob 转 objectURL（组件卸载时须 revokeObjectURL）。 */

@@ -32,12 +32,15 @@
         :description="`打回人：${returnReason.returnedBy || '—'} · ${returnReason.returnedAt || ''}`"
       />
 
-      <!-- A · 公共要素（横向表单） → 需求概述（横向） → 左要素表单 / 右回放附件 -->
+      <!-- A · 公共要素（横向表单） → 左列（概述 + 要素表单） / 右栏（回放·附件·扩展信息） -->
       <CommonZoneCard :demand="demand" :standard="standard" :quality="quality" />
-      <OverviewCard :demand="demand" :messages="messages" />
+      <!-- 非科技需求（无要素表单列）：概述全宽独占一行，保持原布局 -->
+      <OverviewCard v-if="!(isTech && standard)" :demand="demand" :messages="messages" />
 
       <el-row :gutter="16">
-        <el-col v-if="isTech && standard" :xs="24" :lg="15">
+        <!-- 2026-10-23 调整：概述挪进左列与要素表单同宽，右栏回放因此与概述顶部对齐 -->
+        <el-col v-if="isTech && standard" :xs="24" :lg="15" class="main-col">
+          <OverviewCard :demand="demand" :messages="messages" />
           <ElementsCard :demand="demand" :standard="standard" :quality="quality" @updated="onElementsUpdated" />
         </el-col>
         <el-col :xs="24" :lg="isTech && standard ? 9 : 24" class="side-col" :class="{ solo: !(isTech && standard) }">
@@ -477,6 +480,7 @@ onMounted(reload)
 .full { width: 100%; }
 .p-desc { margin-bottom: 16px; }
 /* 右栏跟随左栏：el-col 拉伸为行高后变纵向 flex 容器，回放卡（.grow）吃掉剩余高度 */
+.main-col { display: flex; flex-direction: column; gap: 16px; }
 .side-col { display: flex; flex-direction: column; gap: 16px; }
 .side-col > .grow { flex: 1 1 auto; min-height: 0; }
 /* 整行独占模式（物料/培训无左栏）：回放卡回归自然高度并限高，避免长对话撑爆页面 */

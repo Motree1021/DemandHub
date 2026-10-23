@@ -195,6 +195,16 @@ class DemandAttachment(Timestamps, Base):
     # P2：附件归属扩展（DRAFT/DEMAND/SOLUTION/COMMENT），DEMAND 时 biz_id 同 demand_id
     biz_type: Mapped[str] = mapped_column(String(16), default="DEMAND", server_default="DEMAND")
     biz_id: Mapped[int | None] = mapped_column(BigInteger)
+    # AI 图片识别（2026-10-22 拍板）：purpose=parse 时由视觉模型转写图片文字走对话链路整理；
+    # 默认 archive 维持「AI 不看附件内容」口径。解析状态/转写文本供受理方追溯
+    purpose: Mapped[str] = mapped_column(
+        String(20), default="archive", server_default="archive", comment="用途：archive 存档 / parse AI 图片识别"
+    )
+    parse_status: Mapped[str | None] = mapped_column(
+        String(20), comment="解析状态：PARSED/NO_TEXT/FAILED（purpose=parse 时才有值）"
+    )
+    parsed_text: Mapped[str | None] = mapped_column(Text, comment="视觉模型转写文本（供受理方追溯）")
+    parsed_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3), comment="解析完成时间")
 
 
 class AgentSession(Timestamps, Base):

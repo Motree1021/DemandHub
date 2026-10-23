@@ -7,7 +7,7 @@ from functools import lru_cache
 
 from httpx import AsyncClient as HttpxAsyncClient
 from httpx import HTTPError
-from openai import APIError, APIStatusError, AsyncOpenAI
+from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from app.config import get_settings
 
@@ -81,9 +81,9 @@ class ArkClient:
     @staticmethod
     def _thinking_rejected(error):
         # 仅明确指出参数不支持才降级；其他400绝不能被当成兼容问题。
-        if error.status_code != 400:
+        if getattr(error, "status_code", None) != 400:  # 网络类异常（超时/连接失败）无 status_code，不算参数拒绝
             return False
-        body = str(error.body).lower()
+        body = str(getattr(error, "body", "")).lower()
         return "thinking" in body and any(term in body for term in ("not supported", "unsupported", "unknown parameter", "unrecognized", "不支持"))
 
     @staticmethod
@@ -170,6 +170,49 @@ class ArkClient:
     async def complete_json(self, messages):
         response = await self._with_retry(lambda: self._create(messages, stream=False))
         return StreamEvent(kind="final", raw=response.choices[0].message.content or "", usage=response.usage.model_dump() if response.usage else {})
+
+    async def complete_vision(self, messages):
+        """视觉模型单次调用（图→文本转写，2026-10-22 拍板）：独立模型/超时/max_tokens，
+        不做自动重试——用户同步等待（上限见 llm_vision_timeout_s），重试会倍增等待；瞬时故障由业务层降级为普通附件。
+        输出为纯文本约定（转写文本或 NO_TEXT），不带 JSON 模式；
+        显式关闭深度思考（2026-10-23 实测：Seed 系列端点默认开启 thinking，转写任务思考纯属浪费——
+        同一张长截图 92.5s → 5.3s），端点不支持该参数时省略后重试一次（400 即时返回，非超时重试）；
+        连接级故障（网络抖动/端点瞬时不可达，通常秒级返回）重试一次——2026-10-23 实测连接抖动
+        12s 快速失败误杀真实解析；超时（APITimeoutError）不重试，用户已等满上限重试会倍增等待；
+        llm_vision_model 为空（未启用）即抛 LlmUnavailable，业务层按降级兜底。
+        熔断计数与 chat/embed 共用（同一上游服务）；on_success 由业务层在校验输出有效后调用。"""
+        if not self.available() or not self.settings.llm_vision_model:
+            raise LlmUnavailable
+        options = dict(
+            model=self.settings.llm_vision_model,
+            messages=messages,
+            temperature=0.1,  # 转写任务求稳不求活
+            max_tokens=self.settings.llm_vision_max_tokens,
+            stream=False,
+            timeout=self.settings.llm_vision_timeout_s,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        try:
+            response = await self.client.chat.completions.create(**options)
+        except (APIError, HTTPError) as error:
+            if self._thinking_rejected(error):
+                options.pop("extra_body")
+                try:
+                    response = await self.client.chat.completions.create(**options)
+                except (APIError, HTTPError) as retry_error:
+                    self._fail("LLM视觉解析失败", retry_error)
+            elif isinstance(error, APIConnectionError) and not isinstance(error, APITimeoutError):
+                # 连接级故障重试一次（秒级返回，不倍增等待）；第二次失败按统一口径计一次失败
+                try:
+                    response = await self.client.chat.completions.create(**options)
+                except (APIError, HTTPError) as retry_error:
+                    self._fail("LLM视觉解析失败", retry_error)
+            else:
+                kind = self._classify(error)
+                if kind == "rejected":
+                    self._reject(error)
+                self._fail("LLM视觉解析失败", error)
+        return response.choices[0].message.content or ""
 
     async def embed(self, text: str) -> list[float]:
         """文本向量化（P3 RAG）：与 chat 同口径的可用性闸门与熔断（3 次失败冷却 60s）。

@@ -120,7 +120,9 @@ class GuideService:
     def _messages(self, prepared, req):
         return build_prompt(prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.history, req.message)
 
-    async def execute(self, req):
+    async def execute(self, req, *, trigger: str = "dialog"):
+        """trigger（2026-10-22 拍板）：dialog=用户对话（默认）；vision=AI 图片识别转写文本走同一链路，
+        仅完成话术口径与回复前缀不同（policy 层分流），判型/口径/要素抽取/追问零改动。"""
         async with session_lock(req.session_id):
             prepared = await self.prepare(req)
             if prepared.replay:
@@ -136,13 +138,13 @@ class GuideService:
                     if final is None:
                         raise ValueError("上游流未返回完整输出")
                     output = parse_model_output(final.raw)
-                    result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry, trigger="dialog", return_quoted=prepared.return_quoted)
+                    result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry, trigger=trigger, return_quoted=prepared.return_quoted)
                 except (ValueError, TypeError, KeyError):
                     # 完整格式错误最多修复一次，不重复发送任何模型措辞。
                     repaired = await self.llm.complete_json([*model_messages, {"role": "user", "content": "上次输出格式不符合契约。请重新输出合法JSON，structured闭集字段及当前类型完整elements；不要提问。"}])
                     try:
                         output = parse_model_output(repaired.raw)
-                        result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry, trigger="dialog", return_quoted=prepared.return_quoted)
+                        result = process(output, prepared.form, prepared.sources, prepared.prev_elements, prepared.prev_target, prepared.previous_form, req.message, standards=registry, trigger=trigger, return_quoted=prepared.return_quoted)
                     except (ValueError, TypeError, KeyError):
                         self.llm.on_failure()
                         # 记尾部而非头部：截断类故障病灶在结尾（头部 80 字符看不出，2026-10-16 拍板）

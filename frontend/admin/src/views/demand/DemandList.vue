@@ -23,6 +23,12 @@
       <el-table-column label="类型" width="110">
         <template #default="{ row }">{{ typeLabel(row.demandTypeCode) }}</template>
       </el-table-column>
+      <el-table-column label="需求层级" width="100">
+        <template #default="{ row }">
+          <el-tag v-if="row.level" :type="levelMeta(row.level).type" size="small">{{ levelMeta(row.level).label }}</el-tag>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="紧急度" width="90">
         <template #default="{ row }"><UrgencyTag :urgency="row.urgency" /></template>
       </el-table-column>
@@ -37,6 +43,13 @@
       </el-table-column>
       <el-table-column prop="submittedAt" label="提交时间" width="165" />
       <el-table-column prop="updatedAt" label="更新时间" width="165" />
+      <!-- 删除草稿（2026-10-22 拍板）：仅 ADMIN 可见、仅 DRAFT 态可删；@click.stop 避免触发行点击跳详情 -->
+      <el-table-column v-if="isAdmin" label="操作" width="80" fixed="right">
+        <template #default="{ row }">
+          <el-button v-if="row.status === 'DRAFT'" type="danger" link size="small"
+                     @click.stop="confirmDelete(row)">删除</el-button>
+        </template>
+      </el-table-column>
     </el-table>
     <el-pagination class="pager" layout="total, sizes, prev, pager, next, jumper" :total="total"
                    :page-sizes="[10, 20, 50, 100]" :page-size="query.size" :current-page="query.page"
@@ -45,20 +58,29 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { triageApi } from '@/api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { demandApi, triageApi } from '@/api'
 import type { DemandRow } from '@/api'
 import { ApiError } from '@/api/request'
-import { FLOW_STATUS_OPTIONS, statusLabel, URGENCY_META, TYPE_META, typeLabel } from '@/utils/status'
+import { useAuthStore } from '@/stores/auth'
+import { FLOW_STATUS_OPTIONS, statusLabel, URGENCY_META, TYPE_META, typeLabel, DEMAND_LEVEL_META, demandLevelOf, type DemandLevel } from '@/utils/status'
 import StatusTag from '@/components/StatusTag.vue'
 import UrgencyTag from '@/components/UrgencyTag.vue'
 const router = useRouter()
+const auth = useAuthStore()
+const isAdmin = computed(() => auth.roles.includes('ADMIN'))
 const loading = ref(false)
-const rows = ref<DemandRow[]>([])
+// level 为前端预计算的需求层级（ext.mode/typeRecognition 组合判定），避免模板里重复判定
+const rows = ref<(DemandRow & { level: DemandLevel | null })[]>([])
 const total = ref(0)
 const query = reactive({ page: 1, size: 20, status: '', urgency: '', typeCode: '', includeDrafts: false })
+
+// 插槽 row 为 any，经显式类型签名取值避免 any 直接索引 META
+function levelMeta(level: DemandLevel) {
+  return DEMAND_LEVEL_META[level]
+}
 
 /** 每页条数变化：回到第 1 页重新查询，避免"大页码 × 大页容"越界空页 */
 function onSizeChange(size: number) {
@@ -77,7 +99,7 @@ async function load(page = query.page) {
       typeCode: query.typeCode || undefined,
       includeDrafts: query.includeDrafts || undefined,
     })
-    rows.value = data.records
+    rows.value = data.records.map(row => ({ ...row, level: demandLevelOf(row.ext) }))
     total.value = data.total
   } catch (e) {
     ElMessage.error(e instanceof ApiError ? e.message : '加载失败')
@@ -88,6 +110,26 @@ async function load(page = query.page) {
 
 function goDetail(row: DemandRow) {
   router.push(`/demands/${row.id}`)
+}
+
+/** 删除草稿（2026-10-22 拍板③A）：标准确认框 + 固定警示文案，确认后物理删除并重载当前页 */
+async function confirmDelete(row: DemandRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除草稿「${row.title || `#${row.id}`}」吗？删除后将无法恢复，请谨慎操作！`,
+      '删除草稿',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return // 取消/关闭：不操作
+  }
+  try {
+    await demandApi.remove(row.id)
+    ElMessage.success('草稿已删除')
+    load(query.page)
+  } catch (e) {
+    ElMessage.error(e instanceof ApiError ? e.message : '删除失败')
+  }
 }
 
 onMounted(() => load(1))

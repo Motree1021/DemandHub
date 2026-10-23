@@ -215,6 +215,8 @@ export const demandApi = {
   // GET /demand/{id} 返回包装体 {demand, quality, standard, messages, attachments}（与 H5 提报端同结构）
   detail: (id: number) => get<DemandDetailBundle>(`/demand/${id}`),
   close: (id: number, reason: string) => post<DemandRow>(`/demand/${id}/close`, { reason }),
+  // 删除草稿需求（2026-10-22 拍板）：仅 ADMIN、仅 DRAFT 态，物理删除不可恢复
+  remove: (id: number) => del<void>(`/demand/${id}`),
   // 管理端改要素（详情页双击编辑）：乐观锁 expectedRevision；返回最新 demand + 重算后的 quality
   updateElements: (id: number, data: { expectedRevision: number; elements: Record<string, Record<string, unknown>> }) =>
     patch<{ demand: DemandRow; quality: ElementStatus[] }>(`/demand/${id}/elements`, data),
