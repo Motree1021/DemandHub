@@ -1,5 +1,5 @@
 /** 需求要素/扩展字段/附件的读取与展示辅助（口径与 H5 提报端 utils/form.ts 一致）。 */
-import type { DemandRow, MessageRow, StandardDef, StandardField } from '@/api'
+import type { DemandRow, ElementStatus, MessageRow, StandardDef, StandardField } from '@/api'
 
 export const fieldPath = (field: StandardField): string => field.path || field.key
 
@@ -87,7 +87,20 @@ export function grayZones(recognition: unknown): Set<'B' | 'C'> {
 }
 
 /** 服务端保留的 ext 键（已有专属展示位：概述/打回原因/预判拆分等），补充信息兜底展示时排除 */
-export const RESERVED_EXT_KEYS = ['typeRecognition', 'pendingSplits', 'overview', 'mode', 'returnReason']
+export const RESERVED_EXT_KEYS = ['typeRecognition', 'pendingSplits', 'overview', 'mode', 'returnReason', 'qualityBatchDone']
+
+/** 受理兜底（2026-10-25 拍板，质量治理三段防线③）：必填且质检模糊（VAGUE）的要素标签清单——
+ *  受理前汇总提醒与打回预填共用；过滤条件与提报侧「合并一问」一致
+ *  （必填交互项，不含系统快照 requester/dept、自动提取 title、底稿 content），
+ *  扫描范围为全字段组（提报侧只追问主要素，受理提醒宁宽勿漏；当前可选/公共/子类型组为空，二者结果相同） */
+export function vagueRequiredLabels(standard: StandardDef | null | undefined, quality: ElementStatus[]): string[] {
+  if (!standard) return []
+  const statusOf = new Map(quality.map(item => [item.key, item.status]))
+  return allFields(standard)
+    .filter(field => field.required && !field.system && !field.autoFill && field.key !== 'content'
+      && statusOf.get(field.key) === 'VAGUE')
+    .map(field => field.label)
+}
 
 /** 操作记录类消息（附件上传/手工改动/打回播报等带结构化工单的），不算提报人原话 */
 function isActionMessage(message: MessageRow): boolean {

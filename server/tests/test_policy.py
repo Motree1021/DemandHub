@@ -185,7 +185,7 @@ def test_urgent_delivery_gate_cases():
 
 def test_no_soft_quality_followup_once_submittable():
     # 口径一A（2026-10-12）：必填已齐（can_submit=True）后，有值但被判"不够量化"的非空必填项
-    # 不再主动追问——完成话术承诺「不太完整不影响提交、以后能补」，继续追问即前后矛盾。
+    # 不再主动追问——完成话术承诺「不太完整不影响提交、产品经理调研后补」，继续追问即前后矛盾。
     # B1 白话一问（2026-10-24 拍板）属治理型必问（与急单门控同性质），不受「可提交即停问」限制：
     # B1 空时先问 B1；问过一次（attempts 用尽）后才回到软质量/无目标口径
     standard = get("TECH")
@@ -1027,3 +1027,169 @@ def test_light_gate_not_blocked_by_missing_content():
     value["ext"] = {"mode": {"level": "light", "evidence": "换logo"}}
     follow = resume_follow_up(standard, value, None)
     assert follow["canSubmit"] and follow["guidanceComplete"]
+
+
+# ---- 质量治理三段防线（2026-10-25 拍板）：①趁热打铁 ②合并一问（③受理兜底在管理后台） ----
+
+
+def test_fresh_vague_chased_immediately_even_when_submittable():
+    """趁热打铁①：本轮刚答的必填项被判笼统（VAGUE）时，豁免「可提交即停问」闸门当轮追一次。"""
+    standard = get("TECH")
+    before = b1_filled(acd_filled_form())
+    after = deepcopy(before)
+    after["elements"]["D"]["acceptanceCriteria"] = "好用就行"  # 恰这 1 个必填项本轮变笼统
+    elements = assess(standard, after)
+    target = pick_follow_up(standard, elements, form=after, can_submit=True, previous_form=before)
+    assert target is not None and target.key == "acceptanceCriteria"
+
+
+def test_fresh_vague_chase_stops_at_max_attempts():
+    """趁热打铁占 attempts 计数：问满（max_attempts 次）即放过，不因豁免无限纠缠。"""
+    standard = get("TECH")
+    before = b1_filled(acd_filled_form())
+    after = deepcopy(before)
+    after["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    exhausted = [e.model_copy(update={"attempts": standard.max_attempts}) if e.key == "acceptanceCriteria" else e
+                 for e in assess(standard, after)]
+    assert pick_follow_up(standard, exhausted, form=after, can_submit=True, previous_form=before) is None
+
+
+def test_paste_multi_change_not_fresh_chased():
+    """粘贴/图片解析等多字段同变不算「刚答」：豁免不生效、当场不挑刺，遗留笼统项交合并一问兜底。"""
+    standard = get("TECH")
+    pasted = b1_filled(acd_filled_form())
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    pasted["elements"]["C"]["userGoal"] = "查持仓"
+    # 首轮粘贴：previous_form 为空，多个必填同时从空变有 → fresh_key=None
+    assert pick_follow_up(standard, assess(standard, pasted), form=pasted, can_submit=True, previous_form={}) is None
+
+
+def test_fresh_vague_chased_end_to_end_in_dialog():
+    """趁热打铁端到端：刚答的验收标准被判笼统，即便必填已齐也当轮白话追一次（话术带「不清楚」出口）。"""
+    standard = get("TECH")
+    before = b1_filled(acd_filled_form())
+    pasted = deepcopy(before)
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    prev = [ElementStatus.model_validate(e.model_dump(by_alias=True)) for e in assess(standard, before)]
+    result = process(ModelOutput(structured={}, elements=[]), pasted, {}, prev, "acceptanceCriteria", before, "好用就行")
+    assert result["askedTarget"] == "acceptanceCriteria"
+    assert "回复「不清楚」" in result["reply"] and "不补也能提交" not in result["reply"]
+
+
+def test_vague_batch_asked_once_with_plain_exit():
+    """合并一问②：必填补齐但遗留笼统必填项（从没被问过 attempts==0）→ 替代「可以提交」合并问一次，
+    明说「不补也能提交」并给「不清楚」出口；当场记账 ext.qualityBatchDone。"""
+    pasted = b1_filled(acd_filled_form())
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    pasted["elements"]["C"]["userGoal"] = "查持仓"
+    result = process(ModelOutput(structured={}, elements=[]), pasted, {}, [], None, {}, "就这些")
+    assert result["askedTarget"] is None and result["canSubmit"] is True
+    assert "不补也能提交" in result["reply"] and "回复「不清楚」" in result["reply"]
+    assert "「用户目标」" in result["reply"] and "「验收标准」" in result["reply"]
+    # 「不清楚」不再给快捷回复 chip（2026-10-25 拍板）：话术里已有文字出口，不再多占一个按钮
+    assert result["quickReplies"] == []
+    assert result["structured"]["ext"]["qualityBatchDone"]
+
+
+def test_vague_batch_only_once_then_completion():
+    """合并一问全程只一次：记账随表单合并保留，下一轮自然出「可以提交」完成话术，不再重问。"""
+    pasted = b1_filled(acd_filled_form())
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    first = process(ModelOutput(structured={}, elements=[]), pasted, {}, [], None, {}, "就这些")
+    prev = [ElementStatus.model_validate(e) for e in first["elements"]]
+    second = process(ModelOutput(structured={}, elements=[]), first["structured"], {}, prev, None,
+                     first["structured"], "不清楚")
+    assert "可以提交" in second["reply"] and "不补也能提交" not in second["reply"]
+    assert second["quickReplies"] == []
+
+
+def test_vague_batch_skips_already_chased_fields():
+    """被趁热打铁追过（attempts>0）的笼统项不再被合并一问点名，只点从没被问过的。"""
+    pasted = b1_filled(acd_filled_form())
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    pasted["elements"]["C"]["userGoal"] = "查持仓"
+    prev = [ElementStatus(key="acceptanceCriteria", status="VAGUE", attempts=1)]
+    result = process(ModelOutput(structured={}, elements=[]), pasted, {}, prev, None, {}, "就这些")
+    assert "「用户目标」" in result["reply"] and "「验收标准」" not in result["reply"]
+
+
+def test_vague_batch_skipped_in_light_mode():
+    """light 口径最少打扰：合并一问不触发（VAGUE 本就不追问），直接出完成话术。"""
+    value = light_form(urgency="NORMAL", elements={"D": {"acceptanceCriteria": "好用"}})
+    value["ext"] = {"mode": {"level": "light", "evidence": "小改动"}}
+    result = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "就这些")
+    assert result["canSubmit"] is True and "不补也能提交" not in result["reply"]
+
+
+def test_vague_batch_skipped_when_returned():
+    """打回补充场景不触发合并一问：质量指引由打回说明承担（防线③），不叠加追问噪音。"""
+    value = b1_filled(acd_filled_form())
+    value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    value["ext"] = {"returnReason": {"reason": "验收标准再写具体点", "returnedBy": "产品经理", "returnedAt": "2026-10-25T10:00:00"}}
+    result = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "好的", return_quoted=False)
+    assert "不补也能提交" not in result["reply"]
+    assert result["reply"] == "补充的内容已记录好，点下方「确认提交」即可重新提交。"
+
+
+def test_vague_batch_skipped_on_submit_command():
+    """用户明说「提交吧」：尊重明确指令不叠加合并一问（提醒而非闸门），照常指引点提交按钮。"""
+    value = b1_filled(acd_filled_form())
+    value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    output = ModelOutput(structured={}, elements=[], intent=Intent(kind="command"))
+    result = process(output, value, {}, [], None, {}, "提交吧")
+    assert result["canSubmit"] is True
+    assert result["reply"] == "好的，信息都齐了，点下方「提交」按钮就能提报。"
+
+
+def test_resume_fires_vague_batch_with_ext_updates():
+    """对话外事件（手改/附件）把必填补齐时同样触发合并一问；extUpdates 记账由调用方落库。"""
+    value = b1_filled(acd_filled_form())
+    value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    follow = resume_follow_up(get("TECH"), value, None, trigger="manual")
+    assert follow["askedTarget"] is None and follow["canSubmit"]
+    assert "不补也能提交" in follow["reply"] and follow["quickReplies"] == []
+    assert follow["extUpdates"]["qualityBatchDone"]
+
+
+def test_vague_batch_single_field_quotes_original_with_specific_ask():
+    """合并一问 1 处形态（2026-10-25 拍板修订）：直点名不加「比如」，套用该要素 ask_l1——
+    带原文引述与针对性问题，不用「能补一句就补一句」万能句。"""
+    pasted = b1_filled(acd_filled_form())
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    result = process(ModelOutput(structured={}, elements=[]), pasted, {}, [], None, {}, "就这些")
+    reply = result["reply"]
+    assert "写得比较笼统，比如" not in reply  # 只 1 处时「比如」语义错误
+    assert "「验收标准」" in reply and "当前写的「好用就行」" in reply  # ask_l1 的 {snippet} 原文引述
+    assert "可逐条核对" in reply and "能补一句就补一句" not in reply  # 针对性问题而非万能句
+    assert "不补也能提交" in reply and "回复「不清楚」" in reply  # ask_l1 自带出口 + 外壳免责
+    assert result["quickReplies"] == []
+
+
+def test_vague_batch_two_fields_single_question_with_gaps():
+    """合并一问 2 处形态：每项一行「原文引述+实际缺陷」，末尾统一一个问句（保每条消息一个问句红线）。"""
+    pasted = b1_filled(acd_filled_form())
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    pasted["elements"]["C"]["userGoal"] = "查持仓"
+    result = process(ModelOutput(structured={}, elements=[]), pasted, {}, [], None, {}, "就这些")
+    reply = result["reply"]
+    assert "还有 2 处写得比较笼统：" in reply
+    assert "「验收标准」：你写的是『好用就行』" in reply
+    assert "「用户目标」：你写的是『查持仓』" in reply
+    assert "含歧义词" in reply  # 验收标准命中「好用」歧义词的实际质检 note（比 vague_hint 更贴切）
+    assert "能各补一句吗？不补也能提交" in reply
+    assert reply.count("？") == 1  # 统一问句：全文只有末尾一个问号
+    assert result["quickReplies"] == []
+
+
+def test_vague_batch_three_fields_truncates_to_two():
+    """合并一问 3 处起：详列前 2 处，其余只点标签名收尾，避免消息过长。"""
+    pasted = b1_filled(acd_filled_form())
+    pasted["elements"]["D"]["acceptanceCriteria"] = "好用就行"
+    pasted["elements"]["C"]["userGoal"] = "查持仓"
+    pasted["elements"]["C"]["userRole"] = "大家"  # 第三处：any_of 词表不命中 → VAGUE
+    result = process(ModelOutput(structured={}, elements=[]), pasted, {}, [], None, {}, "就这些")
+    reply = result["reply"]
+    assert "还有 3 处写得比较笼统：" in reply
+    # 详列按标准声明序取前 2（目标用户角色、用户目标），验收标准只点标签名
+    assert "「目标用户角色」：你写的是『大家』" in reply and "「用户目标」：你写的是『查持仓』" in reply
+    assert "另还有「验收标准」也偏笼统。" in reply and "「验收标准」：你写的是" not in reply

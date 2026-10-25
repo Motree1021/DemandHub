@@ -3,6 +3,7 @@ import re
 from copy import deepcopy
 
 from app.agent.schemas import ElementStatus, ModelOutput, ModeSignalOutput, TypeSignalsOutput
+from app.db.models import now
 from app.standards import loader as standard_loader
 from app.standards.rules import (
     LIGHT_REQUIRED_KEYS,
@@ -100,6 +101,9 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
     # ext.returnReason 打回原因（方案③）由管理员写入、系统管理，filter_form 会丢弃：从旧表单原样保留
     # （不读模型输出，防止模型伪造打回原因），否则对话一轮后 merged 里打回原因丢失、AI 无法引述
     old_return_reason = (form.get("ext") or {}).get("returnReason")
+    # ext.qualityBatchDone 合并一问记账（2026-10-25 三段防线②）由系统写入，filter_form 同样会丢弃：
+    # 从旧表单原样保留，否则下一轮守卫读不到标记，「全程只一次」会被破（每轮都再问一遍）
+    old_batch_done = (form.get("ext") or {}).get("qualityBatchDone")
     # 容错模式：模型输出的单个非法值（如日期写"本周"）丢弃而非整轮报错；demandTypeCode 已在上方单独严控
     result = filter_form(normalization_standard, result, validate=False)
     if isinstance(pending_splits, list) and pending_splits:
@@ -108,6 +112,8 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
         result.setdefault("ext", {})["overview"] = overview
     if isinstance(old_return_reason, dict) and old_return_reason:
         result.setdefault("ext", {})["returnReason"] = old_return_reason
+    if old_batch_done:
+        result.setdefault("ext", {})["qualityBatchDone"] = old_batch_done
     allowed = {f.field_path for f in normalization_standard.fields}
     sources = {k: v for k, v in sources.items() if k in allowed}
     if "pendingSplits" in (result.get("ext") or {}):
@@ -246,7 +252,8 @@ def compute_missing(standard, form):
     return [e.key for e in standard.elements if e.required and not e.system and not e.auto_fill and blank(get_value(form, e.field_path))]
 
 
-def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None = None, can_submit: bool = False):
+def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None = None, can_submit: bool = False,
+                   previous_form: dict | None = None):
     """选下一个追问目标。
 
     追问顺序：A/C/D 必填先问完（用户先补"给谁用、什么场景、痛点、验收"等具体信息），
@@ -271,7 +278,7 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
     可提交即停问软质量（2026-10-12 拍板）：一旦必填门槛达成（can_submit=True，AI 已说
     「可以提交」），除急单交付日期这种"承诺型追问"与 B1 白话一问这种"治理型追问"外，不再对
     "有值但被判不够量化/不够具体"的非空必填项主动发问——完成话术承诺了「不太完整的可选项不影响
-    提交、以后能补」，继续追问即前后矛盾；完善提示留在表单卡片由用户/产品经理自愿补，质量兜底
+    提交、由产品经理调研后补」，继续追问即前后矛盾；完善提示留在表单卡片由产品经理自愿补，质量兜底
     走打回机制。MISSING（真空着）不受此限：必填缺口仍需追问或拦提交。
 
     先补"没有"再修"不好"（2026-10-23 拍板）：追问目标选取拆两遍扫描——第一遍只在 MISSING
@@ -279,10 +286,25 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
     图片解析/大段粘贴会一次性把 D 区验收等填成长文本，原排序下 D 区 VAGUE 质检抢在 B 区与
     紧急程度的空必填前面，AI 先纠结"填得不好"而把"还没填"晾一边；轻重口径不变（light 本就
     只问 MISSING），急单门控插队仍最优先，组内顺序仍按 A/C/D→B1 白话一问→紧急程度最后。
+
+    趁热打铁（2026-10-25 拍板，质量治理三段防线①）：本轮刚答的必填项被判笼统（VAGUE）时
+    当轮白话追一次，豁免上面的「可提交即停问」闸门——答案还热乎，当场补一句成本最低，
+    且发生在「可以提交」说出口之前，不违背承诺。只认「恰有 1 个必填交互要素值变化」的轮次
+    （粘贴/图片解析/模型联动改写等多字段同变时不算，不当场挑刺，遗留项交合并一问兜底）；
+    占 attempts 计数，问满（max_attempts 次）放过；只覆盖必填交互项（B 区非必填天然不在列）。
     """
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
     required = [e.key for e in standard.elements if e.required and not e.system]
+    # 趁热打铁：与上一轮表单快照对比，恰有 1 个必填交互要素（非系统/非自动提取/非底稿）值变化时
+    # 视为「本轮刚答」；多字段同变（粘贴/图片解析/联动改写）不算，不当场挑刺
+    fresh_key = None
+    if previous_form is not None and form is not None:
+        changed = [e.key for e in standard.elements
+                   if e.required and not e.system and not e.auto_fill and e.key != "content"
+                   and get_value(previous_form, e.field_path) != get_value(form, e.field_path)]
+        if len(changed) == 1:
+            fresh_key = changed[0]
     # light 追问顺序固定（2026-10-15 拍板紧急度同步沉底；2026-10-20 拍板标题转系统提取项退出序列）：
     # 期望效果先问并连带标题确认，紧急度最后
     light_order = ["acceptanceCriteria", "urgency"]
@@ -310,8 +332,9 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
         element = by_key.get(key)
         if element is None or element.status in {"OK", "SKIP"} or element.attempts >= standard.max_attempts:
             return False
-        # 可提交后停问软质量：非空（VAGUE）的必填项不再主动追问；MISSING（真空着）仍追问
-        if can_submit and element.status != "MISSING":
+        # 可提交后停问软质量：非空（VAGUE）的必填项不再主动追问；MISSING（真空着）仍追问。
+        # 豁免（趁热打铁）：本轮刚答的必填项被判笼统时仍当轮追一次，问满已由上方 max_attempts 拦截
+        if can_submit and element.status != "MISSING" and not (key == fresh_key and element.status == "VAGUE"):
             return False
         return True
 
@@ -338,6 +361,56 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
         if eligible(key):
             return by_key[key]
     return None
+
+
+# 合并一问（2026-10-25 拍板，质量治理三段防线②）：必填补齐、确认提交弹出前，对遗留的笼统必填项
+# 合并白话问一次。与趁热打铁分工：①追「本轮刚答的」单项（答案热乎、逐轮当场），②兜「粘贴/图片解析
+# 一次性填入、从没被问过的」遗留项——attempts==0 才点名（被①追过或此前问过的不再点名，避免重复纠缠）。
+# 四条硬约束：全程只一次（ext.qualityBatchDone 记账）；最多点名 2 项；明说「不补也能提交」并给
+# 「不清楚」出口——是质量提醒而非提交闸门；light 口径不问（承诺最少打扰）。
+# 打回补充场景不触发：质量指引由打回说明承担（防线③受理兜底预填），不叠加追问噪音。
+def vague_batch_fields(standard: Standard, elements: list, form: dict, *, light: bool, can_submit: bool):
+    """返回合并一问要点名的要素定义列表（无需合并时返回 None）。"""
+    if light or not can_submit:
+        return None
+    ext = form.get("ext") or {}
+    if ext.get("qualityBatchDone") or _return_reason_of(form):
+        return None
+    by_key = {element.key: element for element in elements}
+    hits = [field for field in standard.elements
+            if field.required and not field.system and not field.auto_fill and field.key != "content"
+            and (element := by_key.get(field.key)) is not None and element.status == "VAGUE" and element.attempts == 0]
+    return hits or None
+
+
+def _vague_batch_reply(fields, form, elements) -> str:
+    """合并一问话术（2026-10-25 拍板修订）：按要素生成针对性内容，不再用"能补一句就补一句"万能句——
+    1 处：套用该要素 ask_l1 完整模板（自带具体问题 + {snippet} 原文引述 + 「不清楚」出口），
+         开头直点名不加"比如"（"比如"是举例用词，只有 1 处时语义错误）；
+    2 处：每项一行「原文引述 + 实际缺陷」，末尾统一一个问句（保「每条消息最多一个问句」红线）；
+    3 处起：详列前 2 处，其余只点标签名，避免消息过长。
+    缺陷说明取当次质检 note、兜底要素 vague_hint（均为白话，与手改重问话术同源）。"""
+    by_key = {element.key: element for element in elements}
+
+    def snippet_of(field) -> str:
+        value = str(get_value(form, field.field_path) or "").replace("\n", " ").strip()
+        return value[:20] + ("…" if len(value) > 20 else "")
+
+    if len(fields) == 1:
+        field = fields[0]
+        template = field.ask_l1 or field.ask_missing or f"请补充{field.label}，以便把需求记录清楚。"
+        return f"还有 1 处写得比较笼统——「{field.label}」：{template.replace('{snippet}', snippet_of(field))}不补也能提交。"
+    items = []
+    for field in fields[:2]:
+        element = by_key.get(field.key)
+        gap = (element.note if element and element.note else "") or field.vague_hint or "还不够具体"
+        items.append(f"「{field.label}」：你写的是『{snippet_of(field)}』，{gap}")
+    body = "；\n".join(items) + "。"
+    if len(fields) > 2:
+        rest = "、".join(f"「{field.label}」" for field in fields[2:])
+        body += f"\n另还有{rest}也偏笼统。"
+    return (f"还有 {len(fields)} 处写得比较笼统：\n{body}\n"
+            "能各补一句吗？不补也能提交；不好具象化的话，回复「不清楚」就行。")
 
 
 def user_said_skip(standard, text):
@@ -391,7 +464,7 @@ def _return_reason_of(form: dict) -> str | None:
 
 
 # 完成话术按触发场景区分（2026-10-20 拍板）：打回补充单要素本就齐全，
-# 不再播「可选项以后能补、产品经理调研后可补」的新手引导长话术；附件/手改/进页面各自给简短行动指引
+# 不再播「可选项不影响提交、产品经理调研后补」的新手引导长话术；附件/手改/进页面各自给简短行动指引
 RETURN_QUOTE_PREFIX = "这条需求之前被打回过，打回原因是「{reason}」。按这个说明改好后就能重新提交。"
 _RETURN_DONE = {
     "attachment": "可以点「确认提交」重新提交。",
@@ -462,7 +535,7 @@ def reply_for(standard, target, form, *, light: bool = False, trigger: str = "di
                 return _RETURN_DONE.get(trigger, _RETURN_DONE["dialog"])
             if trigger == "dialog":
                 return ("都记好了，请核对一下表单。该填的都齐了，可以提交。" if light
-                        else "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，以后能补；产品经理调研后也可以补。")
+                        else "都记好了，请核对一下表单。该填的都齐了，可以提交。没填或不太完整的可选项会在表单里标出来，不影响提交，后续产品经理调研后可以补。")
             return _DRAFT_DONE.get(trigger, _DRAFT_DONE["event"])
         return _incomplete_reply(light=light, trigger=trigger, return_reason=return_reason)
     field = next(e for e in standard.elements if e.key == target.key)
@@ -565,7 +638,7 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
         target = None
         reply = CHITCHAT_GREET_FIRST
     else:
-        target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit)
+        target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit, previous_form=previous_form)
         reply = CHITCHAT_GUIDE
         if target is not None:
             reply += " " + reply_for(standard, target, merged, light=light)
@@ -638,7 +711,13 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
     # 追问顺序与提交门槛同口径（2026-10-24 拍板）：A/C/D 必填先问完，再必问一次 B1 白话问题；
     # light 模式只按最小集追问（每项一次）并按最小集放行提交，B 区不问
-    target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit)
+    target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit, previous_form=previous_form)
+    # 合并一问（三段防线②）：无单项追问目标且必填已齐时，对从没被问过的笼统必填项合并问一次。
+    # command（用户明说「提交吧」）尊重明确指令不叠加——确认提交弹窗仍在，合并一问属提醒而非闸门
+    batch_fields = vague_batch_fields(standard, curr, merged, light=light, can_submit=can_submit) if target is None and kind != "command" else None
+    if batch_fields:
+        merged.setdefault("ext", {})["qualityBatchDone"] = now().isoformat(timespec="seconds")
+        field_sources["ext.qualityBatchDone"] = "agent"
     granularity = detect_granularity(standard, merged, text)
     impacts = impact_hints(previous_form, merged)
     # D9 建议方案首次抽取播报（2026-10-12 拍板）：用户设想的候选方案/实现路径此前被五区白名单
@@ -670,6 +749,9 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         # 手改要素仍不达标被选中重问时换引述式话术（2026-10-19 拍板）：引原话+说差距，避免「我不是填了吗」
         if target is not None and manual_keys and target.key in manual_keys and target.status == "VAGUE":
             reply = _quoted_reask(standard, target, merged)
+        elif batch_fields:
+            # 合并一问（三段防线②）：替代「可以提交」完成话术——问完这一轮，下轮自然出完成话术
+            reply = _vague_batch_reply(batch_fields, merged, curr)
         else:
             reply = reply_for(standard, target, merged, light=light, trigger=trigger)
         # 意图前缀（2026-10-19 拍板）：补充引述确认/提问要素级解释后桥接回当前问题——
@@ -745,8 +827,9 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
     light = (mode.get("level") if isinstance(mode, dict) else None) == "light"
     curr = list(assess(standard, form, light=light))
     prev_elements = [ElementStatus.model_validate(e) for e in ((previous or {}).get("elements") or [])]
+    prev_structured = (previous or {}).get("structured") or {}
     curr = inherit_and_count(prev_elements, curr, None, False, standard=standard,
-                             previous_form=(previous or {}).get("structured") or {}, form=form,
+                             previous_form=prev_structured, form=form,
                              count_keys=changed_keys)
     if light:
         can_submit = not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS)
@@ -766,9 +849,14 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
             "canSubmit": can_submit, "guidanceComplete": False,
             "quickReplies": quick_replies(standard, content_status),
         }
-    target = pick_follow_up(standard, curr, light=light, form=form, can_submit=can_submit)
+    target = pick_follow_up(standard, curr, light=light, form=form, can_submit=can_submit, previous_form=prev_structured)
+    # 合并一问（三段防线②）：对话外事件（手改/附件/进页）把必填补齐时同样兜底问一次；
+    # extUpdates 由调用方落库 demand.ext——本函数为纯规则接续，不直接碰库
+    batch_fields = vague_batch_fields(standard, curr, form, light=light, can_submit=can_submit) if target is None else None
     if target is not None and changed_keys and target.key in changed_keys and target.status == "VAGUE":
         reply = _quoted_reask(standard, target, form)
+    elif batch_fields:
+        reply = _vague_batch_reply(batch_fields, form, curr)
     else:
         reply = reply_for(standard, target, form, light=light, trigger=trigger)
     # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次，由调用方按历史消息判定 return_quoted
@@ -778,5 +866,8 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
         "askedTarget": target.key if target else None,
         "elements": [e.model_dump(by_alias=True) for e in curr],
         "canSubmit": can_submit, "guidanceComplete": target is None,
+        # 合并一问不再附带「不清楚」快捷回复 chip（2026-10-25 拍板）：话术里已有文字出口，
+        # 不再多占一个按钮；batch 轮 target=None 时 quick_replies 天然返回空
         "quickReplies": quick_replies(standard, target),
+        "extUpdates": {"qualityBatchDone": now().isoformat(timespec="seconds")} if batch_fields else None,
     }

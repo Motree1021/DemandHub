@@ -198,7 +198,7 @@ import type {
 } from '@/api'
 import { ApiError } from '@/api/request'
 import { TYPE_META } from '@/utils/status'
-import { RECOGNITION_LABELS, recognitionLevel } from '@/utils/demand'
+import { RECOGNITION_LABELS, recognitionLevel, vagueRequiredLabels } from '@/utils/demand'
 import StatusTag from '@/components/StatusTag.vue'
 import UrgencyTag from '@/components/UrgencyTag.vue'
 import SolutionPanel from './panels/SolutionPanel.vue'
@@ -303,8 +303,13 @@ const CONFIRM_EVENTS: Record<string, string> = {
 
 async function promptReason(event: string): Promise<string | null> {
   const cfg = REASON_EVENTS[event]
+  // 受理兜底（2026-10-25 三段防线③）：打回时预填笼统必填项清单作为补充说明草稿，管理员可删改——
+  // 清单口径与提报侧「合并一问」一致，省得逐条手敲；没有笼统项时保持空白不预填
+  const vague = event === 'RETURN' ? vagueRequiredLabels(standard.value, quality.value) : []
+  const prefill = vague.length ? `请补充以下写得比较笼统的内容：${vague.map(label => `「${label}」`).join('、')}。` : ''
   try {
     const { value } = await ElMessageBox.prompt(cfg.placeholder, cfg.title, {
+      inputValue: prefill,
       inputPlaceholder: cfg.placeholder,
       inputValidator: (v: string) => (v && v.trim() ? true : '原因必填'),
       confirmButtonText: '确定',
@@ -350,8 +355,17 @@ async function onAction(event: string) {
     }
   }
   if (event in CONFIRM_EVENTS) {
+    // 受理兜底（2026-10-25 三段防线③）：受理前若仍有笼统必填项，前置汇总提醒，让受理人知情后再确认
+    let message: string = CONFIRM_EVENTS[event]
+    if (event === 'ACCEPT') {
+      const vague = vagueRequiredLabels(standard.value, quality.value)
+      if (vague.length) {
+        const names = vague.slice(0, 3).map(label => `「${label}」`).join('、') + (vague.length > 3 ? ' 等' : '')
+        message = `该需求还有 ${vague.length} 项必填内容写得比较笼统（${names}），受理后需补充调研。` + message
+      }
+    }
     try {
-      await ElMessageBox.confirm(CONFIRM_EVENTS[event], '操作确认',
+      await ElMessageBox.confirm(message, '操作确认',
         { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
     } catch { return }
     if (event === 'ACCEPT') return run(event, () => triageApi.accept(id), '已受理')

@@ -230,6 +230,11 @@ export interface StandardField {
   kind: 'text' | 'enum' | 'number' | 'date' | 'list'
   zone?: 'A' | 'B' | 'C' | 'D' | null
   options?: Record<string, string>
+  // 服务端 standard dump 全字段携带（此前类型未声明）：必填/系统快照/自动提取标记，
+  // 受理兜底（2026-10-25 三段防线③）按此过滤「必填且模糊」的提醒清单
+  required?: boolean
+  system?: boolean
+  autoFill?: boolean
 }
 export interface StandardDef {
   type: string

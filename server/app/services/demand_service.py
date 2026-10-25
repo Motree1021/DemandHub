@@ -48,8 +48,8 @@ TOP_FIELDS = {"title": "title", "demandTypeCode": "demand_type_code", "content":
               "urgency": "urgency", "expectDeliveryAt": "expect_delivery_at"}
 
 # ext 保留位：判型结果（FR-03）、实例切分建议（BR-T11，一期打标）、轻重模式（2026-10-11 方案②）、
-# 打回原因（2026-10-11 方案③ NEED_INFO 闭环）不走标准要素白名单，全程保留
-RESERVED_EXT_KEYS = ("typeRecognition", "pendingSplits", "overview", "mode", "returnReason")
+# 打回原因（2026-10-11 方案③ NEED_INFO 闭环）、合并一问记账（2026-10-25 三段防线②）不走标准要素白名单，全程保留
+RESERVED_EXT_KEYS = ("typeRecognition", "pendingSplits", "overview", "mode", "returnReason", "qualityBatchDone")
 
 
 def fingerprint(value: dict) -> str:
@@ -195,8 +195,9 @@ def assert_editable(demand: Demand, expected_revision: int) -> None:
 def write_change_logs(db, demand: Demand, before: dict, after: dict, sources: dict, user_id: int) -> None:
     """要素级修改留痕（FR-06/E7）：before/after 均为规范化表单，逐路径比对，有变化写一行。"""
     for path, new in paths(after).items():
-        # ext.overview 是 AI 每轮重写的派生摘要，留痕会刷噪音；原文与要素留痕已足够追溯
-        if path == "ext.overview":
+        # ext.overview 是 AI 每轮重写的派生摘要、ext.qualityBatchDone 是合并一问的内部记账标记，
+        # 留痕会刷噪音；原文与要素留痕已足够追溯
+        if path in ("ext.overview", "ext.qualityBatchDone"):
             continue
         old = rules.get_value(before, path)
         if old == new:
@@ -467,6 +468,13 @@ async def append_conversation_follow_up(db, user, demand: Demand, *, changed_key
     else:
         follow = resume_follow_up(std, form, previous, changed_keys=keys,
                                   trigger=trigger, return_quoted=return_quoted)
+        # 合并一问记账（2026-10-25 三段防线②）：纯规则接续路径不经 apply_agent_patch，
+        # ext.qualityBatchDone 在此直接落库并同步进播报快照，保证「全程只一次」
+        if follow.get("extUpdates"):
+            ext = dict(demand.ext or {})
+            ext.update(follow["extUpdates"])
+            demand.ext = ext
+            form = {**form, "ext": ext}
     # payload 须含 fieldSources（2026-10-21 修复）：前端回放时按对话结果结构整体应用表单，
     # 缺 fieldSources 会把 form.fieldSources 覆盖成 undefined，下一次手改要素即抛 TypeError
     await session_service.append(db, demand.session_id, "ASSISTANT", follow["reply"], {
