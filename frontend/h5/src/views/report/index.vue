@@ -99,14 +99,15 @@ async function copyExample() {
   }
   showToast(ok ? '已复制，粘贴到输入框后可随意改' : '复制失败，请长按示例文字手动复制')
 }
-// FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；业务占优才激活 B 区必填门槛（对齐服务端 business_confirmed）
+// FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；判型标签仅作归类展示
+// （2026-10-24 拍板：判型与 B 区解耦不拦提交 + 层级倾斜 business>user>function + 档位对齐——
+// business≥0.7（主句级起点）即业务需求，从句级信号（封顶 0.6）天然不过线；三票是证据强度而非互斥概率，对齐服务端）
 const typeRecognition = computed(() => form.ext.typeRecognition as TypeRecognition | undefined)
 const businessConfirmed = computed(() => {
   const recognition = typeRecognition.value
   if (!recognition) return false
   if (recognition.confirmed != null) return recognition.confirmed === 'business'
-  const business = recognition.business ?? 0
-  return business >= 0.5 && business > Math.max(recognition.user ?? 0, recognition.function ?? 0)
+  return (recognition.business ?? 0) >= 0.7
 })
 // 微需求快速通道（方案②）：AI 判 mode=light 时提交门槛/拦截文案走轻量口径（对齐服务端 demand_mode）
 const isLight = computed(() => demandModeOf(form) === 'light')
@@ -260,7 +261,7 @@ async function onConfirmType(confirmed: 'business' | 'user' | 'function' | null)
   form.ext.typeRecognition = { ...(typeRecognition.value || {}), confirmed }
   form.fieldSources['ext.typeRecognition'] = 'user'
   dirty.value = true
-  showToast(confirmed === 'business' ? '已确认为业务需求，「业务目标/背景/价值」纳入必填' : confirmed === 'user' ? '已确认为用户需求' : confirmed === 'function' ? '已确认为功能需求' : '已恢复 AI 自动判断')
+  showToast(confirmed === 'business' ? '已确认为业务需求' : confirmed === 'user' ? '已确认为用户需求' : confirmed === 'function' ? '已确认为功能需求' : '已恢复 AI 自动判断')
   // 归类改判保存后服务端当场按新归类重算并接续追问（2026-10-20 拍板）：刷新聊天回放最新质量快照
   try { await save(); void panelRef.value?.refreshHistory?.().catch(() => { /* 历史刷新失败不影响归类保存结果 */ }) } catch { /* 错误已展示，判型结果保留在表单中可重试 */ }
 }
@@ -299,10 +300,8 @@ async function submit() {
       error.value += ' 轻量提报只需四项：标题、你的原话、紧急程度、期望效果（即卡片里的「验收标准」，做完后能看见的变化）。点开「需求要素表单」卡片补齐即可提交。'
       return
     }
-    // 逃生口：AI 自动判型（未人工确认）被 B 区必填拦截时，指引改判入口（light 不问 B 区，不适用此逃生口）
-    if (businessConfirmed.value && typeRecognition.value?.confirmed == null) {
-      error.value += ' 若本需求不涉及业务目标/考核，可点开聊天里的「需求要素表单」卡片，点「归类」标签改判为用户需求或功能需求。'
-    }
+    // 判型与 B 区解耦（2026-10-24 拍板）：B 区不再拦提交，常规提报被拦只会是 A/C/D 必填缺口，
+    // 按服务端返回的缺项文案补齐即可，无附加指引
   }
   finally { submitting.value = false }
 }

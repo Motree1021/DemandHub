@@ -267,8 +267,9 @@ _TYPE_CONFIRM_LABELS = {"business": "业务需求", "user": "用户需求", "fun
 
 
 def _describe_type_change(before: dict | None, after: dict | None) -> str | None:
-    """归类改判播报文案（2026-10-20 拍板）：只关注 confirmed——提报人确认/改判/恢复 AI 判断，
-    影响 B 区必填门槛；AI 侧的 judgedType/置信度变化归对话链路播报，不在此重复。"""
+    """归类改判播报文案（2026-10-20 拍板）：只关注 confirmed——提报人确认/改判/恢复 AI 判断。
+    判型与 B 区解耦（2026-10-24 拍板）：判型标签仅作归类展示，不再驱动 B 区必填门槛，
+    播报不再宣称「纳入必填」；AI 侧的 judgedType/置信度变化归对话链路播报，不在此重复。"""
     before_confirmed = before.get("confirmed") if isinstance(before, dict) else None
     after_confirmed = after.get("confirmed") if isinstance(after, dict) else None
     if before_confirmed == after_confirmed:
@@ -276,8 +277,7 @@ def _describe_type_change(before: dict | None, after: dict | None) -> str | None
     if after_confirmed is None:
         return "你已恢复由 AI 自动判断需求归类，我会按对话内容重新分析。"
     label = _TYPE_CONFIRM_LABELS.get(after_confirmed, after_confirmed)
-    suffix = "，「业务目标/背景/价值」纳入必填" if after_confirmed == "business" else "，「业务目标/背景/价值」不再作必填" if before_confirmed == "business" else ""
-    return f"你已确认为{label}{suffix}。"
+    return f"你已确认为{label}。"
 
 
 def with_legacy_elements(payload: dict) -> dict:
@@ -332,6 +332,11 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
         merged["ext"]["typeRecognition"] = {**old_recognition, **new_recognition}
     if "elements" in patch:
         merged["elements"] = merge_elements(before["elements"], patch.get("elements"))
+    # B1 落库即判业务（2026-10-24 拍板）：手改补齐 B1 与对话答出同口径翻转（对话链路在 policy.process 内处理）；
+    # 放在 elements 深合并之后——merged 须为完整新表单才能正确判定「空→有」
+    promoted = rules.promote_business_on_b1(merged["ext"].get("typeRecognition"), before, merged)
+    if promoted is not None:
+        merged["ext"]["typeRecognition"] = promoted
     form, std = normalized(merged)
     sources = dict(demand.field_sources or {})
     requested = payload.get("fieldSources") or {}
@@ -741,9 +746,10 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
         # C/D 其余 12 项模板要素对换 logo/调样式这类轻量需求会语义性误伤，不作为提交门槛
         errors = rules.schema_errors(std, form, required=True, required_keys=rules.LIGHT_REQUIRED_KEYS)
     else:
-        # B 区必填按判型门槛生效（FR-03/PRD §4.3）：判型或确认为业务需求时全量四区，否则 A/C/D
-        active_zones = {"A", "C", "D"} | ({"B"} if rules.business_confirmed((demand.ext or {}).get("typeRecognition")) else set())
-        errors = rules.schema_errors(std, form, required=True, active_zones=active_zones)
+        # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区——
+        # 组织级理由（B1）是受理方分析产物，提报侧只保留「B1 白话一问」治理动作，不再拦提交；
+        # 受理侧兜底：standard 缺 B1 拒绝受理（triage_service.accept）
+        errors = rules.schema_errors(std, form, required=True, active_zones={"A", "C", "D"})
     if errors:
         raise BizError(ErrorCode.PARAM_INVALID, errors[0])
     version = await ensure_snapshot(db, std)

@@ -4,7 +4,7 @@
       <van-icon name="description" />
       <span>需求要素表单（实时）</span>
       <small v-if="collapsed && isLight"><i class="mode-pill">轻量</i>必填 {{ lightFilled }}/{{ LIGHT_FIELD_KEYS.length }}</small>
-      <small v-else-if="collapsed">必填 {{ baseFilled }}/{{ baseTotal }}<template v-if="businessConfirmed"> · 业务 {{ bizFilled }}/{{ bizTotal }}</template></small>
+      <small v-else-if="collapsed">必填 {{ baseFilled }}/{{ baseTotal }}</small>
       <small v-else>{{ isLight ? '轻量提报 · ' : '' }}点任意一项可直接修改</small>
       <van-icon :name="collapsed ? 'arrow-down' : 'arrow-up'" class="fold" />
     </div>
@@ -19,7 +19,10 @@
       <div class="zone-title" :data-zone="group.zone">
         <span class="zone-pill">{{ group.title }}</span>
         <small>{{ group.note }}</small>
-        <van-tag v-if="group.zone === 'B' && businessConfirmed" type="danger" plain>业务需求 · 必填</van-tag>
+        <!-- B 区空缺标记（2026-10-24 拍板）：判型与 B 区解耦——B 区不再必填不拦提交，
+             组织层面信息（为什么做/有什么好处）空缺时灰字提示「先空着，不影响提交」，
+             不挂待办不标红、不说「会补」；填上后标记消失 -->
+        <van-tag v-if="group.zone === 'B' && bizGoalEmpty" type="default" plain>先空着，不影响提交</van-tag>
       </div>
       <button v-for="field in group.fields" :key="fieldPath(field)" type="button" class="el" :disabled="disabled" @click="emit('edit-field', field)">
         <span class="nm">
@@ -47,14 +50,16 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (event: 'edit-field', field: StandardField): void; (event: 'edit-type'): void }>()
 // 默认折叠：要素区与归类行是专业视图，普通用户只看"必填 X/Y"进度，点标题栏展开后改判入口可见
 const collapsed = ref(!props.defaultExpanded)
-// 基础必填（A/C/D 12 项，所有需求都要）与 B 区业务必填（仅业务需求激活）分开计数，
-// 折叠态头部分别显示「必填 X/12 · 业务 Y/4」，与后端追问顺序（先 A/C/D 后 B）口径一致
+// 基础必填（A/C/D 12 项，所有需求都要）分开计数，折叠态头部显示「必填 X/12」；
+// 判型与 B 区解耦（2026-10-24 拍板）：B 区不再必填，不再计「业务 Y/4」
 const baseRequiredFields = computed(() => groups.value.flatMap(group => group.fields).filter(field => field.required && !field.system && field.zone !== 'B'))
-const bizRequiredFields = computed(() => groups.value.flatMap(group => group.fields).filter(field => field.required && !field.system && field.zone === 'B'))
 const baseTotal = computed(() => baseRequiredFields.value.length)
 const baseFilled = computed(() => baseRequiredFields.value.filter(field => filled(field)).length)
-const bizTotal = computed(() => bizRequiredFields.value.length)
-const bizFilled = computed(() => bizRequiredFields.value.filter(field => filled(field)).length)
+// B 区空缺判定：业务目标（B1）未填即视为 B 区空缺，驱动「先空着，不影响提交」灰字标记
+const bizGoalEmpty = computed(() => {
+  const goal = groups.value.flatMap(group => group.fields).find(field => field.key === 'businessGoal')
+  return goal ? !filled(goal) : false
+})
 // 微需求快速通道（方案②）：AI 判 mode=light（换 logo/调样式等小需求）时折叠态显示「轻量提报 X/3」，
 // 最小集只数（标题/紧急程度/期望效果），其余要素不标星不算进度，与后端 LIGHT_REQUIRED_KEYS 同口径；
 // 2026-10-19 拍板：原文（content）移出最小集——系统提取项，非用户提供项
@@ -66,7 +71,9 @@ const lightFilled = computed(() => LIGHT_FIELD_KEYS.filter(key => {
 }).length)
 // 判型归类标签（方案A：AI 自动判型生效，用户可点开改判）；未产生判型数据时不渲染
 const recognition = computed(() => ((props.form.ext?.typeRecognition as TypeRecognition | undefined) || null))
-// 归类标签三档（2026-10-10 用户拍板）：confirmed 定稿优先；否则按置信度占优层显示（business 占优→业务需求，user 最高→用户需求，function 最高/并列→功能需求）
+// 归类标签三档：confirmed 定稿优先；层级倾斜 + 档位对齐（2026-10-24 拍板 business>user>function，判线=主句级起点 0.7）——
+// business≥0.7 → 业务需求（父组件按层级规则算好 businessConfirmed 传入，不再要求占优）；
+// business<0.7 时 user≥0.7 → 用户需求，否则 → 功能需求（function 不参与比较，从句级信号封顶 0.6 天然不过线）
 const typeLabel = computed(() => {
   const value = recognition.value
   if (!value) return ''
@@ -75,9 +82,7 @@ const typeLabel = computed(() => {
   if (confirmed === 'user') return '用户需求'
   if (confirmed === 'function') return '功能需求'
   if (props.businessConfirmed) return '业务需求'
-  const user = value.user ?? 0
-  const fn = value.function ?? 0
-  return user > fn ? '用户需求' : '功能需求'
+  return (value.user ?? 0) >= 0.7 ? '用户需求' : '功能需求'
 })
 // A/B/C/D 分区（术语+白话注释）；无分区的标准（MATL/TRAIN）退化为单组平铺；system 快照要素不渲染
 const groups = computed(() => {
@@ -90,14 +95,14 @@ const groups = computed(() => {
 })
 const qualityMap = computed(() => new Map(props.quality.map(element => [element.key, element.status])))
 // 红星标记必填项：A/C/D 基础 12 项（标题/类型/子类/紧急程度/原文 + C 区 4 项 + D 区 3 项）始终标星；
-// B 区 4 项仅在业务需求（businessConfirmed）时同为必填、也标星，与后端提交门槛同口径；
+// 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，不再标星不拦提交，空缺灰字提示；
 // light 模式只标最小集 4 项（C/D 其余不追问不标星，2026-10-11 方案②拍板）。
 // 胶囊三态同口径（2026-10-11 拍板）：必填未填=「待补充」琥珀时钟（系统在等）；选填未填=「选填」灰铅笔
 // （想填就点，不催促），避免选填项挂假待办、与打回状态「待补充」角标撞词
 function isRequired(field: StandardField): boolean {
   if (!field.required || field.system) return false
   if (isLight.value) return LIGHT_FIELD_KEYS.includes(field.key)
-  return field.zone === 'B' ? props.businessConfirmed : true
+  return true
 }
 function filled(field: StandardField): boolean {
   const status = qualityMap.value.get(field.key)

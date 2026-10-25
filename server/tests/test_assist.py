@@ -19,6 +19,8 @@ from app.db.models import Solution, User
 BASE = "/demandhub-api"
 
 ACD = {"A": {"techSubtype": "DATA_RPT"},
+       # B1 业务目标（2026-10-24 拍板受理侧强校验兜底）：常规科技需求受理前必填，fixture 预置
+       "B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"},
        "C": {"userRole": "客户经理", "userGoal": "晨会前快速查看各机构持仓汇总",
              "useScenario": "客户经理每天晨会前查看各机构持仓", "painPoint": "手工汇总20多个机构持仓每次近1小时"},
        "D": {"functionDescription": "按机构汇总前一交易日持仓并展示", "inputOutput": "输入交易流水输出持仓汇总报表",

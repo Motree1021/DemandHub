@@ -18,9 +18,9 @@ def test_five_zone_element_count_and_codes():
 def test_required_set_and_system_snapshot():
     standard = get("TECH")
     interactive_required = {e.key for e in standard.elements if e.required and not e.system}
-    # 2026-10-19 拍板：content（A8原话底稿）改为系统提取项，移出必填集
+    # 2026-10-19 拍板：content（A8原话底稿）改为系统提取项，移出必填集；
+    # 2026-10-24 拍板判型与 B 区解耦：B 区四件套（businessGoal/Background/Value/stakeholders）全量非必填
     assert interactive_required == {"title", "demandTypeCode", "urgency",
-                                    "businessGoal", "businessBackground", "businessValue", "stakeholders",
                                     "userRole", "userGoal", "useScenario", "painPoint",
                                     "functionDescription", "inputOutput", "acceptanceCriteria"}
     system = {e.key for e in standard.elements if e.system}
@@ -59,16 +59,13 @@ def _base_form():
                                "acceptanceCriteria": "8:30前可查且对账误差为0"}}}
 
 
-def test_zone_b_conditional_required():
+def test_zone_b_no_longer_required():
+    # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全量非必填——active_zones 即便含 B，
+    # B 区空缺也不再产生必填缺口报错（B1 改走提报侧白话一问 + 受理侧 accept 强校验兜底）
     standard = get("TECH")
     form = _base_form()
-    # B 区未激活：A/C/D 必填满足即可提交（P1 阶段判型未上线）
     assert not schema_errors(standard, form, required=True, active_zones={"A", "C", "D"})
-    # B 区激活（判型为业务需求）：B 区必填缺口全部报出
-    errors = schema_errors(standard, form, required=True, active_zones={"A", "B", "C", "D"})
-    assert {"业务目标未填写", "业务背景未填写", "业务价值未填写", "干系人未填写"} <= set(errors)
-    # B 区可空要素不强制
-    assert "业务规则/合规约束未填写" not in errors and "所属战略目标未填写" not in errors and "关联需求未填写" not in errors
+    assert not schema_errors(standard, form, required=True, active_zones={"A", "B", "C", "D"})
 
 
 def test_type_signals_and_granularity_configured():

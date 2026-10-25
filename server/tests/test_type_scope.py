@@ -196,7 +196,9 @@ async def test_change_type_requires_both_types_in_scope(session_factory, submitt
 @pytest.mark.asyncio
 async def test_admin_bypasses_type_scope(session_factory, submitter):
     admin = await make_user(session_factory, "管理员", "ts-admin2", role="ADMIN")
-    tech_id = await insert_demand(session_factory, submitter, "TECH")
+    # B1 业务目标（2026-10-24 拍板受理侧强校验兜底）：常规科技需求受理前必填，fixture 预置
+    tech_id = await insert_demand(session_factory, submitter, "TECH",
+                                  elements={"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"}})
     async with session_factory() as db:
         async with db.begin():
             await triage_service.accept(db, admin, tech_id, None)

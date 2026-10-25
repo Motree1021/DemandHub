@@ -132,6 +132,16 @@ async def _get(db: AsyncSession, demand_id: int) -> Demand:
 async def accept(db: AsyncSession, user: User, demand_id: int, comment: str | None) -> Demand:
     demand = await _get(db, demand_id)
     role_service.assert_type_allowed(user, demand.demand_type_code)
+    # 受理侧强校验兜底（2026-10-24 拍板）：常规（standard）科技需求受理前 B1 业务目标必填——
+    # 提报侧已放行「答不出先空着」（组织级理由是受理方分析产物），受理时由产品经理补齐：
+    # 缺 B1 拒绝受理，提示详情页补录或打回；微需求（light）与非科技需求（无 B 区要素）不受限
+    if demand.demand_type_code == "TECH":
+        mode = (demand.ext or {}).get("mode") or {}
+        is_light = isinstance(mode, dict) and mode.get("level") == "light"
+        goal = ((demand.elements or {}).get("B") or {}).get("businessGoal")
+        if not is_light and (goal is None or not str(goal).strip()):
+            raise BizError(ErrorCode.PARAM_INVALID,
+                           "该常规需求缺「业务目标」（B 区），受理前请先补录：可在详情页直接补录后受理，或打回让提报人补充")
     await engine.transition(db, demand_id, "ACCEPT", user, comment=comment)
     return await _get(db, demand_id)
 

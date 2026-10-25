@@ -25,6 +25,8 @@ from app.services import demand_service, notification_service, session_service
 from tests.test_guide import FakeArk
 
 ACD = {"A": {"techSubtype": "DATA_RPT"},
+       # B1 业务目标（2026-10-24 拍板）：提报不拦，但打回开场快照/受理等场景要求 B1 已答出，fixture 预置
+       "B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"},
        "C": {"userRole": "客户经理", "userGoal": "晨会前快速查看各机构持仓汇总",
              "useScenario": "客户经理每天晨会前查看各机构持仓", "painPoint": "手工汇总20多个机构持仓每次近1小时"},
        "D": {"functionDescription": "按机构汇总前一交易日持仓并展示", "inputOutput": "输入交易流水输出持仓汇总报表",

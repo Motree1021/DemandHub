@@ -143,16 +143,21 @@ describe('report 判型改判（方案A）', () => {
       ext: expect.objectContaining({ typeRecognition: expect.objectContaining({ confirmed: null }) })
     }))
   })
-  it('业务不占优不激活B区（function更高）；业务占优才传businessConfirmed=true', async () => {
-    // 真实样本：「辅助管理层决策」把 business 推到 0.7，但 function=0.8 最高，按「业务占优才激活」不激活 B 区
+  it('判型层级倾斜 + 档位对齐（2026-10-24 拍板）：business≥0.7（主句级起点）即传 businessConfirmed=true，不再要求占优', async () => {
+    // 「辅助管理层决策」类真实样本：business 0.7、function 0.8 更高也照判业务——
+    // 三票是证据强度非互斥概率，判型仅作归类展示，往高层级倾斜（覆盖 2026-10-10 占优口径）
     route.query = { draftId: 1 }
     mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { business: 0.7, user: 0.7, function: 0.8 } } }), quality: [], messages: [] })
     const wrapper = createWrapper(); await flushPromises()
-    expect(wrapper.findComponent(PanelStub).props('businessConfirmed')).toBe(false)
-    // 业务明显占优（≥0.5 且高于 user/function）才激活
-    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { business: 0.9, user: 0.3, function: 0.4 } } }), quality: [], messages: [] })
-    const dominant = createWrapper(); await flushPromises()
-    expect(dominant.findComponent(PanelStub).props('businessConfirmed')).toBe(true)
+    expect(wrapper.findComponent(PanelStub).props('businessConfirmed')).toBe(true)
+    // 从句级顶格 0.6（收益从句封顶）不过 0.7 判线——档位对齐的隔离带效应
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { business: 0.6, user: 0.9, function: 0.6 } } }), quality: [], messages: [] })
+    const clause = createWrapper(); await flushPromises()
+    expect(clause.findComponent(PanelStub).props('businessConfirmed')).toBe(false)
+    // business<0.7 不判业务
+    mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, ext: { typeRecognition: { business: 0.4, user: 0.9, function: 0.4 } } }), quality: [], messages: [] })
+    const low = createWrapper(); await flushPromises()
+    expect(low.findComponent(PanelStub).props('businessConfirmed')).toBe(false)
   })
   it('保存进行中改判被拦截：不写confirmed、不保存、弹层关闭', async () => {
     route.query = { draftId: 1 }
@@ -332,14 +337,17 @@ describe('report 提交拦截文案（微需求快速通道）', () => {
     // light 不问 B 区：即使判型为业务需求也不给改判逃生口
     expect(wrapper.text()).not.toContain('改判为用户需求或功能需求')
   })
-  it('standard 业务草稿提交被拦：保留改判逃生口，不显示轻量指引', async () => {
+  it('standard 业务草稿提交被拦：只显示服务端缺项文案，无改判逃生口与轻量指引', async () => {
+    // 判型与 B 区解耦（2026-10-24 拍板）：B 区不再拦提交，常规提报被拦只会是 A/C/D 必填缺口——
+    // 按服务端返回的缺项文案提示即可，「改判为用户需求或功能需求」逃生口已拆除
     route.query = { draftId: 1 }
     mocks.getDemand.mockResolvedValue({ demand: demand(1, { sessionId: 11, title: '晨会持仓报表', content: '客户经理每天晨会前查看各机构持仓',
       ext: { typeRecognition: { business: 0.9 } } }), quality: [], messages: [] })
-    mocks.submitDemand.mockRejectedValueOnce(new ApiError(400, '业务目标未填写'))
+    mocks.submitDemand.mockRejectedValueOnce(new ApiError(400, '验收标准未填写'))
     const wrapper = createWrapper(); await flushPromises()
     wrapper.findComponent(PanelStub).vm.$emit('submit'); await flushPromises()
-    expect(wrapper.text()).toContain('改判为用户需求或功能需求')
+    expect(wrapper.text()).toContain('验收标准未填写')
+    expect(wrapper.text()).not.toContain('改判为用户需求或功能需求')
     expect(wrapper.text()).not.toContain('轻量提报只需四项')
   })
 })

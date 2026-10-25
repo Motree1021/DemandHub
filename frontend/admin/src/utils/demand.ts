@@ -62,18 +62,20 @@ export const RECOGNITION_LABELS: Record<RecognitionLevel, string> = {
 
 const LEVELS: RecognitionLevel[] = ['business', 'user', 'function']
 
-/** 生效判型：人工确认（confirmed）优先，否则取置信度最高层；无确认且置信度全零返回 null */
+/** 生效判型：人工确认（confirmed）优先；否则按层级倾斜 + 档位对齐（2026-10-24 拍板 business>user>function）——
+ *  business≥0.7（主句级起点）→ business；否则 user≥0.7 → user；否则 → function
+ * （function 不参与比较，从句级信号封顶 0.6 天然不过线，与 status.ts demandLevelOf、H5 FormSnapshotCard 同口径）；
+ *  无确认且置信度全零返回 null（置灰兜底：视为无判型不置灰） */
 export function recognitionLevel(recognition: unknown): RecognitionLevel | null {
   if (!recognition || typeof recognition !== 'object') return null
   const r = recognition as TypeRecognition
   if (r.confirmed && LEVELS.includes(r.confirmed)) return r.confirmed
-  let top: RecognitionLevel | null = null
-  let topScore = 0
-  for (const level of LEVELS) {
-    const score = Number(r[level]) || 0
-    if (score > topScore) { top = level; topScore = score }
-  }
-  return top
+  const business = Number(r.business) || 0
+  const user = Number(r.user) || 0
+  const fn = Number(r.function) || 0
+  if (!business && !user && !fn) return null
+  if (business >= 0.7) return 'business'
+  return user >= 0.7 ? 'user' : 'function'
 }
 
 /** 判型置灰（2026-10-13 拍板·向下兼容）：业务需求全亮；用户需求 B 灰；功能需求 B/C 灰；无判型不置灰 */

@@ -10,7 +10,7 @@ from app.standards.loader import get
 
 
 def payload(key):
-    # 五区标准下 TECH 提交需补齐 A/C/D 区必填（B 区 P1 阶段条件必填不生效）
+    # 五区标准下 TECH 提交需补齐 A/C/D 区必填（2026-10-24 拍板判型与 B 区解耦：B 区全量非必填，不拦提交）
     return {"clientRequestId": key, "title": "需求记录", "demandTypeCode": "TECH", "content": "整理需求并记录完整业务信息",
             "urgency": "NORMAL",
             "elements": {"A": {"techSubtype": "DATA_RPT"},
@@ -214,12 +214,13 @@ async def test_manual_change_follow_up_resume(session_factory, user):
                 "elements": {"C": {"userRole": None}}, "notifyChanges": True})
     follow = await _last_message(session_factory, user, session_id)
     assert follow.structured_payload["askedTarget"] == "userRole"
-    # 必填全填：接续给完成话术，引导结束
+    # 必填全填（含 B1 治理型一问的答出，2026-10-24 拍板：B1 答出落库即终结，不再追问）：接续给完成话术，引导结束
     async with session_factory() as db:
         async with db.begin():
             await service.update_draft(db, user, demand_id, {"expectedRevision": 2, "urgency": "NORMAL",
                 "content": "整理需求并记录完整业务信息",
-                "elements": {"C": {"userRole": "客户经理", "userGoal": "晨会前快速掌握各机构持仓汇总情况",
+                "elements": {"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"},
+                             "C": {"userRole": "客户经理", "userGoal": "晨会前快速掌握各机构持仓汇总情况",
                                    "useScenario": "客户经理每天晨会前查各机构持仓汇总",
                                    "painPoint": "手工汇总20个机构数据要40分钟且易出错"},
                              "D": {"functionDescription": "自动生成持仓汇总报表并推送到企微群",
@@ -269,8 +270,8 @@ async def test_manual_long_text_triggers_model_extraction(session_factory, user,
         assert (d.field_sources or {}).get("elements.C.userRole") == "agent"
     follow = await _last_message(session_factory, user, session_id)
     assert "kind" not in follow.structured_payload
-    assert "「目标用户角色」已按你补充的更新" in follow.content
-    assert "使用场景」已按你补充的更新" not in follow.content
+    assert "「目标用户角色」已更新" in follow.content
+    assert "使用场景」已更新" not in follow.content
 
 
 async def test_manual_extraction_failure_falls_back_to_rules(session_factory, user, monkeypatch):

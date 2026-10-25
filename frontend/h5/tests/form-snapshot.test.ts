@@ -16,7 +16,8 @@ const standard: Standard = {
     { key: 'urgency', label: '紧急程度', kind: 'enum', zone: 'A', required: true, options: { NORMAL: '普通', URGENT: '加急' } },
     { key: 'expectDeliveryAt', label: '期望完成时间', kind: 'date', zone: 'A', required: false },
     { key: 'snapshot', label: '快照要素', kind: 'text', zone: 'A', system: true },
-    { key: 'businessGoal', label: '业务目标', kind: 'text', zone: 'B', path: 'elements.B.businessGoal', required: true },
+    // 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，与后端 tech.yaml 口径一致
+    { key: 'businessGoal', label: '业务目标', kind: 'text', zone: 'B', path: 'elements.B.businessGoal', required: false },
     { key: 'userRole', label: '目标用户', kind: 'text', zone: 'C', path: 'elements.C.userRole', required: true },
     { key: 'functionDescription', label: '功能描述', kind: 'text', zone: 'D', path: 'elements.D.functionDescription', required: true }
   ],
@@ -54,7 +55,7 @@ describe('FormSnapshotCard 要素实时卡', () => {
     const optional = pillOf('期望完成时间')
     expect(optional.text()).toBe('选填')
     expect(optional.classes()).toContain('optional')
-    // B 区在非业务需求下同为选填口径：业务目标未填显示「选填」
+    // B 区全量选填（2026-10-24 拍板判型解耦）：业务目标未填显示「选填」
     const plain = form()
     delete plain.elements.B
     const bWrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: plain }, global: { stubs } })
@@ -62,13 +63,21 @@ describe('FormSnapshotCard 要素实时卡', () => {
     expect(bPill.text()).toBe('选填')
     expect(bPill.classes()).toContain('optional')
   })
-  it('点击字段行emit edit-field，业务需求确认后B区带必填标记与星号', async () => {
-    const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: form(), businessConfirmed: true }, global: { stubs } })
-    expect(wrapper.text()).toContain('业务需求 · 必填')
+  it('点击字段行emit edit-field；B区不标星，B1空缺显示「先空着，不影响提交」灰标签', async () => {
+    // 判型与 B 区解耦（2026-10-24 拍板）：B 区全部非必填——不标星、不再挂「业务需求·必填」，
+    // B1 空缺时灰字提示「先空着，不影响提交」（不标红不催办）；填写后标记消失
+    const emptyB = form()
+    delete emptyB.elements.B
+    const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: emptyB, businessConfirmed: true }, global: { stubs } })
+    expect(wrapper.text()).toContain('先空着，不影响提交')
+    expect(wrapper.text()).not.toContain('业务需求 · 必填')
     const row = wrapper.findAll('.el').find(item => item.text().includes('业务目标'))!
-    expect(row.find('.req').exists()).toBe(true)
+    expect(row.find('.req').exists()).toBe(false)
     await row.trigger('click')
     expect(wrapper.emitted('edit-field')?.[0]?.[0]).toMatchObject({ key: 'businessGoal' })
+    // B1 已填：灰标签消失
+    const filledB = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: form(), businessConfirmed: true }, global: { stubs } })
+    expect(filledB.text()).not.toContain('先空着，不影响提交')
   })
   it('D9 建议方案选填：未填显示「选填」胶囊不标星，不计入必填分母', () => {
     // 方案⑤（2026-10-12 拍板）：提报人设想的候选方案/实现路径，选填供受理方评估、永不追问
@@ -120,18 +129,21 @@ describe('FormSnapshotCard 要素实时卡', () => {
     const fresh = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: form() }, global: { stubs } })
     expect(fresh.find('.type-row').exists()).toBe(false)
   })
-  it('非业务按置信度占优层三档显示：user最高→用户需求，function最高/并列→功能需求', () => {
+  it('非业务按层级兜底显示（2026-10-24 拍板档位对齐）：business<0.7 时 user≥0.7→用户需求，否则→功能需求', () => {
     const mountWith = (recognition: Record<string, unknown>) => {
       const value = form()
       value.ext = { typeRecognition: recognition }
-      return mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: value }, global: { stubs } }).text()
+      // 父组件（report 页）按层级规则算好 businessConfirmed 传入：business≥0.7（主句级起点）即 true
+      const businessConfirmed = ((recognition.business as number) ?? 0) >= 0.7
+      return mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: value, businessConfirmed }, global: { stubs } }).text()
     }
-    // 需求1 语音生成智能体：user 0.85 占优 → 用户需求
+    // 需求1 语音生成智能体：business 0.2<0.7 → 看 user 0.85≥0.7 → 用户需求
     expect(mountWith({ business: 0.2, user: 0.85, function: 0.6 })).toContain('归类：用户需求')
-    // 需求2 日均规模曲线：function 0.8 占优 → 功能需求
+    // 需求2 日均规模曲线：business 0.6 为收益从句顶格分，不过 0.7 判线；user 0.6 同为从句级也不过线 → 功能需求
+    // （口径演变：2026-10-10 占优→功能 / 2026-10-24 层级 0.5→业务 / 2026-10-24 档位对齐 0.7→功能）
     expect(mountWith({ business: 0.6, user: 0.6, function: 0.8 })).toContain('归类：功能需求')
-    // user/function 并列 → 功能需求
-    expect(mountWith({ business: 0.3, user: 0.7, function: 0.7 })).toContain('归类：功能需求')
+    // business/user 均 <0.7 → 功能需求兜底（function 不参与比较）
+    expect(mountWith({ business: 0.3, user: 0.4, function: 0.7 })).toContain('归类：功能需求')
   })
   it('无标准或无字段时不渲染卡片', () => {
     const wrapper = mount(FormSnapshotCard, { props: { standard: null, form: form() }, global: { stubs } })
@@ -164,11 +176,12 @@ describe('FormSnapshotCard 要素实时卡', () => {
     const value = form()
     value.ext = { typeRecognition: { business: 0.9 } }
     const wrapper = mount(FormSnapshotCard, { props: { standard, form: value, businessConfirmed: true }, global: { stubs } })
-    // 折叠态：要素区与归类行均不渲染；头部基础必填 3/5，业务需求时追加 B 区进度（fixture B 区仅 businessGoal 已填 1/1）
+    // 折叠态：要素区与归类行均不渲染；头部基础必填 3/5
+    // （2026-10-24 拍板判型解耦：B 区不再必填，折叠态不再追加「业务 Y/N」进度）
     expect(wrapper.find('.zone').exists()).toBe(false)
     expect(wrapper.find('.type-row').exists()).toBe(false)
     expect(wrapper.text()).toContain('必填 3/5')
-    expect(wrapper.text()).toContain('业务 1/1')
+    expect(wrapper.text()).not.toContain('业务 ')
     // 展开 → 归类行可见可点，要素区渲染
     await wrapper.find('.card-title').trigger('click')
     expect(wrapper.find('.zone').exists()).toBe(true)

@@ -25,7 +25,7 @@ from app.agent.schemas import (
     parse_model_output,
 )
 from app.standards.loader import get
-from app.standards.rules import assess
+from app.standards.rules import assess, business_confirmed
 
 
 def form():
@@ -43,6 +43,13 @@ def acd_filled_form():
                 "D": {"functionDescription": "按渠道汇总前一交易日持仓并支持导出",
                       "inputOutput": "输入交易流水，输出按渠道汇总的持仓报表",
                       "acceptanceCriteria": "每个交易日8:30前可查且与核心系统对账误差为0"}}}
+
+
+def b1_filled(form_value):
+    """填入合格 B1 业务目标（2026-10-24 拍板 B1 白话一问治理前置）：
+    让与 B1 无关的用例隔离「必问一次」追问，保持原断言聚焦自身语义。"""
+    form_value["elements"]["B"] = {"businessGoal": "帮部门省下专职整理岗，释放一个人力"}
+    return form_value
 
 
 @pytest.mark.parametrize("text,expected", [("跳过", True), ("后续补充。", True), ("请跳过", True), ("我选择后续补充", True), ("不要跳过这个问题", False), ("不是不知道，只是需要确认", False), ("用户说‘跳过’是指旧步骤", False), ("系统需要提供跳过按钮", False), ("不知道是否需要新报表", False)])
@@ -161,11 +168,12 @@ def test_urgent_quick_reply_inserts_delivery_date_question():
 
 def test_urgent_delivery_gate_cases():
     standard = get("TECH")
-    elements = assess(standard, acd_filled_form())
+    # B1 白话一问（2026-10-24 拍板）与急单门控无关：填 B1 隔离，专注急单门控语义
+    elements = assess(standard, b1_filled(acd_filled_form()))
     # 普通：不问日期（话术已说普通按常规排期），A/C/D 齐即正常完成
-    assert pick_follow_up(standard, elements, form=acd_filled_form()) is None
+    assert pick_follow_up(standard, elements, form=b1_filled(acd_filled_form())) is None
     # 紧急且日期空：插队最优先
-    urgent = {**acd_filled_form(), "urgency": "URGENT"}
+    urgent = {**b1_filled(acd_filled_form()), "urgency": "URGENT"}
     assert pick_follow_up(standard, elements, form=urgent).key == "expectDeliveryAt"
     # 紧急但日期已填：不问
     filled = {**urgent, "expectDeliveryAt": "2099-10-31"}
@@ -177,17 +185,22 @@ def test_urgent_delivery_gate_cases():
 
 def test_no_soft_quality_followup_once_submittable():
     # 口径一A（2026-10-12）：必填已齐（can_submit=True）后，有值但被判"不够量化"的非空必填项
-    # 不再主动追问——完成话术承诺「不太完整不影响提交、以后能补」，继续追问即前后矛盾
+    # 不再主动追问——完成话术承诺「不太完整不影响提交、以后能补」，继续追问即前后矛盾。
+    # B1 白话一问（2026-10-24 拍板）属治理型必问（与急单门控同性质），不受「可提交即停问」限制：
+    # B1 空时先问 B1；问过一次（attempts 用尽）后才回到软质量/无目标口径
     standard = get("TECH")
     # 必填齐全但验收标准被判 VAGUE（不够量化）的场景
     value = acd_filled_form()
     value["elements"]["D"]["acceptanceCriteria"] = "希望改得好一些"  # 空话 → VAGUE
     elements = assess(standard, value)
     assert next(e for e in elements if e.key == "acceptanceCriteria").status == "VAGUE"
-    # 未达可提交门槛（can_submit=False）时：VAGUE 必填项仍会追问（推动完善）
-    assert pick_follow_up(standard, elements, form=value, can_submit=False).key == "acceptanceCriteria"
+    # B1 空：先问 B1 白话一问（不论是否已达门槛）
+    assert pick_follow_up(standard, elements, form=value, can_submit=False).key == "businessGoal"
+    asked_b1 = [e.model_copy(update={"attempts": 1}) if e.key == "businessGoal" else e for e in elements]
+    # B1 问过后、未达可提交门槛（can_submit=False）时：VAGUE 必填项仍会追问（推动完善）
+    assert pick_follow_up(standard, asked_b1, form=value, can_submit=False).key == "acceptanceCriteria"
     # 已达可提交门槛（can_submit=True）时：不再追问非空 VAGUE，交给表单卡片/打回兜底
-    assert pick_follow_up(standard, elements, form=value, can_submit=True) is None
+    assert pick_follow_up(standard, asked_b1, form=value, can_submit=True) is None
     # MISSING（真空着）不受此限：必填缺口即使 can_submit 边界也仍应被追问/拦截
     value2 = acd_filled_form()
     del value2["elements"]["D"]["functionDescription"]
@@ -226,51 +239,102 @@ def test_missing_collection_cannot_fake_quality_complete():
 
 
 def test_business_recognition_follows_acd_before_zone_b():
-    # 业务需求：A/C/D 未齐时仍先追 A/C/D（userRole），B 区沉底
+    # A/C/D 未齐时仍先追 A/C/D（userRole），B1 白话一问沉底（2026-10-24 起与判型无关：重量级必问一次）
     value = form()
     value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
     result = process(ModelOutput(structured={"ext": {"typeRecognition": {"business": 0.9}}}, elements=[]), value, {}, [], None, {}, "报表")
     assert result["askedTarget"] == "userRole"
 
 
-def test_business_recognition_asks_zone_b_after_acd_complete():
-    # 业务需求且 A/C/D 已齐：才开始追问 B 区业务目标
-    value = acd_filled_form()
-    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
-    result = process(ModelOutput(structured={"ext": {"typeRecognition": {"business": 0.9}}}, elements=[]), value, {}, [], None, {}, "报表")
-    assert result["askedTarget"] == "businessGoal"
-    assert not result["canSubmit"]
-
-
-def test_non_business_never_asks_zone_b_and_can_submit_with_acd():
-    # 日常功能需求：A/C/D 齐即可提交，即使 B 区为空也不追问、可提交
+def test_b1_plain_ask_once_after_acd_complete_regardless_of_type():
+    # B1 白话一问（2026-10-24 拍板，判型与 B 区解耦）：standard 需求 A/C/D 必填问完后必问一次
+    # businessGoal——触发条件是重量级而非判型标签（无判型信号也问）；B 区不再拦提交（canSubmit=True）
     result = process(ModelOutput(structured={}, elements=[]), acd_filled_form(), {}, [], None, {}, "报表")
-    assert result["askedTarget"] is None and result["canSubmit"] is True
-
-
-def test_business_goal_first_ask_anchors_user_goal():
-    # 业务目标首次追问锚定已填的用户目标（B1←C2 上下游），避免用户感觉重复提问
-    value = acd_filled_form()
-    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
-    result = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "报表")
     assert result["askedTarget"] == "businessGoal"
-    assert "用户侧要完成「每天晨会前快速查各机构持仓」" in result["reply"]
-    assert "部门或团队层面想达成什么业务目标" in result["reply"]
-
-
-def test_stakeholders_first_ask_anchors_user_role_and_drops_beneficiary():
-    # 干系人首次追问锚定已填的目标用户（B4←C1），只问业务方/承接方，不再重复问受益方
+    assert result["canSubmit"] is True
+    assert "对部门或行里还有啥好处" in result["reply"] and "不清楚也没关系" in result["reply"]
+    # 业务判型信号下同一问法（判型只影响归类展示，不影响追问与门槛）
     value = acd_filled_form()
-    value["elements"]["B"] = {
-        "businessGoal": "把客户回访覆盖率从60%提升到80%",
-        "businessBackground": "目前回访靠人工统计，覆盖率仅60%，部门考核压力大",
-        "businessValue": "不做则20个网点回访达标无法跟踪，影响部门考核",
-    }
     value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
-    result = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "报表")
-    assert result["askedTarget"] == "stakeholders"
-    assert "主要使用方「机构业务部客户经理」" in result["reply"]
-    assert "谁是受益方" not in result["reply"]
+    result_b = process(ModelOutput(structured={"ext": {"typeRecognition": {"business": 0.9}}}, elements=[]), value, {}, [], None, {}, "报表")
+    assert result_b["askedTarget"] == "businessGoal" and result_b["canSubmit"] is True
+
+
+def test_b1_unanswerable_releases_with_fixed_wording():
+    # 答不出放行（2026-10-24 拍板）：B1 白话一问答「不清楚」→ 固定放行书 + SKIP 终结，
+    # 不追问第二次、不标质量问题、不拦提交；放行书不承诺「后续找谁补」
+    base = acd_filled_form()
+    first = process(ModelOutput(structured={}, elements=[]), base, {}, [], None, {}, "报表")
+    assert first["askedTarget"] == "businessGoal"
+    prev = [ElementStatus.model_validate(e) for e in first["elements"]]
+    second = process(ModelOutput(structured={}, elements=[]),
+                     first["structured"], first["fieldSources"], prev, "businessGoal",
+                     base, "不清楚")
+    assert "没事，这个先空着，不耽误提交，后面的产品经理会一起考虑。" in second["reply"]
+    assert "提报人" not in second["reply"] and "受理" not in second["reply"]  # 话术红线：禁用角色/流程术语
+    b1 = next(e for e in second["elements"] if e["key"] == "businessGoal")
+    assert b1["status"] == "SKIP" and b1["attempts"] == 0
+    assert second["askedTarget"] is None and second["canSubmit"] is True
+    # 下一轮：B1 已 SKIP，永久不再追问
+    prev2 = [ElementStatus.model_validate(e) for e in second["elements"]]
+    third = process(ModelOutput(structured={}, elements=[]),
+                    second["structured"], second["fieldSources"], prev2, None,
+                    second["structured"], "继续")
+    assert third["askedTarget"] is None and third["canSubmit"] is True
+
+
+def test_b1_answered_lands_and_not_reasked():
+    # 答出组织理由 → 如实落 B1（口径放宽：「释放产能」类非量化表述也算合格）；问过一次即终结
+    base = acd_filled_form()
+    first = process(ModelOutput(structured={}, elements=[]), base, {}, [], None, {}, "报表")
+    prev = [ElementStatus.model_validate(e) for e in first["elements"]]
+    output = ModelOutput(structured={"elements": {"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"}}}, elements=[])
+    second = process(output, first["structured"], first["fieldSources"], prev, "businessGoal",
+                     base, "能省下一个人力专门做整理")
+    assert second["structured"]["elements"]["B"]["businessGoal"] == "帮部门省下专职整理岗，释放一个人力"
+    b1 = next(e for e in second["elements"] if e["key"] == "businessGoal")
+    assert b1["status"] == "OK"
+    assert second["askedTarget"] is None and second["canSubmit"] is True
+
+
+def test_b1_landing_promotes_business_recognition():
+    # B1 落库即判业务（2026-10-24 拍板）：B1 从空答出落库 → business 票补足到 0.7 门槛（硬证据优先软分数，
+    # 判线=主句级起点，档位对齐），层级判定下即翻转为业务需求——#27 草稿类场景（user 0.85 天花板翻不动）的根治
+    base = acd_filled_form()
+    base["ext"] = {"typeRecognition": {"business": 0.3, "user": 0.85, "function": 0.6, "confirmed": None,
+                                       "evidence": {"user": "客户经理自己要用"}}}
+    output = ModelOutput(structured={"elements": {"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"}}}, elements=[])
+    result = process(output, base, {}, [], "businessGoal", base, "能省下一个人力")
+    recognition = result["structured"]["ext"]["typeRecognition"]
+    assert recognition["business"] == 0.7 and business_confirmed(recognition)
+    # 模型没给 business 依据时回填 B1 原文，其他票与 confirmed 原样保留
+    assert recognition["evidence"]["business"] == "帮部门省下专职整理岗，释放一个人力"
+    assert recognition["user"] == 0.85 and recognition["confirmed"] is None
+
+
+def test_b1_landing_respects_user_confirmed():
+    # 人工定稿优先（2026-10-24 拍板）：confirmed 非空时 B1 落库不翻转
+    base = acd_filled_form()
+    base["ext"] = {"typeRecognition": {"business": 0.3, "user": 0.85, "function": 0.6, "confirmed": "user"}}
+    output = ModelOutput(structured={"elements": {"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"}}}, elements=[])
+    result = process(output, base, {}, [], "businessGoal", base, "能省下一个人力")
+    recognition = result["structured"]["ext"]["typeRecognition"]
+    assert recognition["business"] == 0.3 and not business_confirmed(recognition)
+
+
+def test_b1_skip_or_reedit_does_not_promote():
+    # 答不出（SKIP 不落库）不翻转；B1 已有值的修改（非「空→有」）不重复提升——幂等
+    base = acd_filled_form()
+    base["ext"] = {"typeRecognition": {"business": 0.3, "user": 0.85, "function": 0.6, "confirmed": None}}
+    skipped = process(ModelOutput(structured={}, elements=[]), base, {}, [], "businessGoal", base, "不清楚")
+    recognition = skipped["structured"]["ext"]["typeRecognition"]
+    assert recognition["business"] == 0.3 and not business_confirmed(recognition)
+    # B1 已有值 → 再改内容：非「空→有」，不提升
+    base2 = b1_filled(acd_filled_form())
+    base2["ext"] = {"typeRecognition": {"business": 0.3, "user": 0.85, "function": 0.6, "confirmed": None}}
+    output = ModelOutput(structured={"elements": {"B": {"businessGoal": "改成另一个组织理由，覆盖旧值"}}}, elements=[])
+    edited = process(output, base2, {}, [], None, base2, "改一下业务目标")
+    assert edited["structured"]["ext"]["typeRecognition"]["business"] == 0.3
 
 
 def test_anchor_falls_back_to_normal_ask_when_reference_empty():
@@ -420,18 +484,19 @@ def test_light_reply_completion_follows_minimal_gate():
     assert "下方表单里补齐" in reply_for(standard, None, incomplete, light=True)
 
 
-def test_completion_reply_gates_b_zone_by_business():
-    # 打回冒烟暴露：未判业务需求时 B 区缺项不得把完成话术误报成「还有必填没填」——与提交门槛同一判型口径
+def test_completion_reply_ignores_b_zone_gap():
+    # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，完成话术不再按判型区分——
+    # B 区空缺的 A/C/D 齐表单直接给「可以提交」（原 business=True 时 B 区缺口报「必填没填」的门槛已拆除）
     standard = get("TECH")
-    base = acd_filled_form()
-    assert "可以提交" in reply_for(standard, None, base)
-    assert "把标红星※的必填项补齐" in reply_for(standard, None, base, business=True)
+    reply = reply_for(standard, None, acd_filled_form())
+    assert "可以提交" in reply and "把标红星※的必填项补齐" not in reply
 
 
 def test_return_reason_is_quoted_in_reply():
     # 打回闭环（方案③ + 2026-10-20 拍板）：补充会话首次对话前置白话引述打回原因，重提清除后引述自然消失；
-    # 完成话术是打回补充口径（「确认提交」重新提交），不再播新草稿的选填项长说明
-    base = acd_filled_form()
+    # 完成话术是打回补充口径（「确认提交」重新提交），不再播新草稿的选填项长说明；
+    # 填 B1 隔离「必问一次」治理型追问（2026-10-24 拍板），专注打回引述语义
+    base = b1_filled(acd_filled_form())
     base["ext"] = {"returnReason": {"reason": "缺少使用场景说明，请补充后重新提交"}}
     result = process(ModelOutput(structured={}, elements=[]), base, {}, [], None, {}, "我来看看还需要补充什么")
     assert result["reply"].startswith("这条需求之前被打回过")
@@ -456,8 +521,9 @@ def test_resume_follow_up_quotes_return_reason():
     assert result["reply"].startswith("这条需求之前被打回过")
     assert "打回原因是「缺少使用场景说明，请补充后重新提交」" in result["reply"]
     assert result["canSubmit"] is False and result["askedTarget"] == "userRole"
-    # 无缺口（打回原因与要素无关）：引述仍在，canSubmit=True → 重进即见「确认提交」
-    full = acd_filled_form()
+    # 无缺口（打回原因与要素无关）：引述仍在，canSubmit=True → 重进即见「确认提交」；
+    # 填 B1 隔离「必问一次」治理型追问（2026-10-24 拍板）
+    full = b1_filled(acd_filled_form())
     full["ext"] = {"returnReason": {"reason": "请把标题改得更准确些"}}
     done = resume_follow_up(standard, full, None, trigger="attachment")
     assert done["reply"].startswith("这条需求之前被打回过")
@@ -585,8 +651,8 @@ def test_proposed_solution_not_in_gates_or_follow_ups():
     standard = get("TECH")
     assert "proposedSolution" not in standard.follow_up_order
     assert not any(e.key == "proposedSolution" and e.required for e in standard.elements)
-    # A/C/D 12 项必填齐全、D9 为空：照常可提交
-    result = process(ModelOutput(structured={}, elements=[]), acd_filled_form(), {}, [], None, {}, "报表")
+    # A/C/D 12 项必填齐全、D9 为空：照常可提交；填 B1 隔离「必问一次」治理型追问（2026-10-24 拍板）
+    result = process(ModelOutput(structured={}, elements=[]), b1_filled(acd_filled_form()), {}, [], None, {}, "报表")
     assert result["canSubmit"] is True and result["askedTarget"] is None
 
 
@@ -624,8 +690,27 @@ def test_supplement_updates_and_returns_to_pending_question():
     # 回到当前问题节点，而非顺推到下一个缺口
     assert result["askedTarget"] == "userRole"
     # 引述式确认（引新值片段请用户当场纠错）+ 桥接回当前问题
-    assert "「使用场景」已按你补充的更新：客户经理每天晨会前查各渠道持仓" in result["reply"]
+    assert "「使用场景」已更新：客户经理每天晨会前查各渠道持仓" in result["reply"]
     assert "回到刚才的问题" in result["reply"]
+
+
+def test_supplement_many_changes_merged_into_summary():
+    """播报瘦身（2026-10-25 拍板）：改名类机械联动波及 ≥3 个字段时不再逐条引述截断长文，
+    合并为一句汇总（列字段名、不带值预览，细节看表单卡）；列表值不以 ['…'] 内部格式外泄。"""
+    standard = get("TECH")
+    base = form()
+    prev = assess(standard, base)
+    first = inherit_and_count(prev, prev, "urgency", False, standard=standard, previous_form=base, form=base)
+    output = ModelOutput(
+        structured={"elements": {
+            "B": {"businessBackground": "张铮一个人运营自媒体账号", "stakeholders": ["张铮（产品经理）"]},
+            "C": {"userRole": "产品经理张铮", "useScenario": "张铮运营自媒体账号"}},
+        },
+        elements=[], intent=Intent(kind="supplement", target_key="stakeholders"))
+    result = process(output, base, {}, first, "urgency", base, "名字不是张征，而是张铮")
+    reply = result["reply"]
+    assert "好的，已按你说的同步更新了 4 处：业务背景、干系人、目标用户角色、使用场景。" in reply
+    assert "已更新：" not in reply and "['" not in reply
 
 
 def test_supplement_without_changes_acknowledges():
@@ -726,7 +811,7 @@ def test_title_gap_skipped_to_next_real_gap():
 def test_title_blank_does_not_block_can_submit():
     """标题不占提交门槛（auto_fill，2026-10-20 拍板）：其余必填齐、标题空时仍可提交——
     提交前由 submit 整理链重拟/兜底，对话不再为标题发问。"""
-    base = {key: value for key, value in acd_filled_form().items() if key != "title"}
+    base = {key: value for key, value in b1_filled(acd_filled_form()).items() if key != "title"}
     output = ModelOutput(structured={}, elements=[])
     result = process(output, base, {}, [], None, base, "继续")
     assert result["canSubmit"] is True and result["askedTarget"] is None
@@ -799,8 +884,9 @@ def test_resume_follow_up_asks_next_gap():
 
 
 def test_resume_follow_up_all_filled_says_submittable():
-    """手改把最后缺口补齐：给完成话术告知可以提交，不再追问。"""
-    follow = resume_follow_up(get("TECH"), acd_filled_form(), None)
+    """手改把最后缺口补齐：给完成话术告知可以提交，不再追问。
+    （填 B1 隔离「必问一次」治理型追问，2026-10-24 拍板）"""
+    follow = resume_follow_up(get("TECH"), b1_filled(acd_filled_form()), None)
     assert follow["askedTarget"] is None
     assert follow["canSubmit"] and follow["guidanceComplete"]
     assert "可以提交" in follow["reply"]
@@ -859,7 +945,7 @@ def test_resume_invites_plain_description_when_draft_blank():
 def test_resume_invite_skipped_when_submittable():
     """底稿空但必填已齐 → 不发邀请，直接完成话术（底稿由提交兜底回填，不打断用户）。"""
     standard = get("TECH")
-    value = {**acd_filled_form(), "content": None}
+    value = {**b1_filled(acd_filled_form()), "content": None}  # 填 B1 隔离必问一次（2026-10-24 拍板）
     follow = resume_follow_up(standard, value, None)
     assert follow["askedTarget"] is None and follow["canSubmit"] and "可以提交" in follow["reply"]
 
@@ -882,15 +968,17 @@ def test_missing_required_beats_vague_quality():
     # 非业务：紧急程度（MISSING）优先于验收质检（VAGUE），哪怕它排序沉底
     follow = resume_follow_up(standard, value, None)
     assert follow["askedTarget"] == "urgency"
-    # 业务确认 + B 区业务目标空缺：B 区 MISSING 也优先于 D 区 VAGUE（B 沉底但仍早于紧急程度）
+    # B1 白话一问（2026-10-24 拍板，判型解耦）：B1 空缺的 MISSING 也优先于 D 区 VAGUE（不问判型直接问）
     business_value = acd_filled_form()
     business_value["ext"] = {"typeRecognition": {"business": 0.9, "user": 0.2, "function": 0.3}}
     business_value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
     business_value["urgency"] = "NORMAL"
     follow_b = resume_follow_up(standard, business_value, None)
     assert follow_b["askedTarget"] == "businessGoal"
-    # 全部 MISSING 问满放过（attempts 达上限）后才轮到 VAGUE 质检追问
-    exhausted = [{"key": "urgency", "status": "MISSING", "attempts": standard.max_attempts}]
+    # 全部 MISSING 问满放过（attempts 达上限）后才轮到 VAGUE 质检追问；
+    # B1 治理型一问同样问过一次（attempts=1）即终结
+    exhausted = [{"key": "urgency", "status": "MISSING", "attempts": standard.max_attempts},
+                 {"key": "businessGoal", "status": "MISSING", "attempts": 1}]
     follow_v = resume_follow_up(standard, value, {"structured": value, "elements": exhausted})
     assert follow_v["askedTarget"] == "acceptanceCriteria"
 
@@ -903,9 +991,11 @@ def test_resume_counts_manual_attempts_and_quotes_reask():
     value = acd_filled_form()
     value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
     value["urgency"] = None
-    # 紧急度（MISSING）问满 2 次仍空着才轮到验收质检：构造 attempts 达上限的历史快照；
+    # 紧急度（MISSING）问满 2 次仍空着才轮到验收质检：构造 attempts 达上限的历史快照
+    # （B1 治理型一问同样须已问过，2026-10-24 拍板：MISSING 整体优先于 VAGUE）；
     # 计数认"值有变化"——历史快照里的验收还是旧值（原合格文本），本轮手改成"好用就行"才记 1 次
-    exhausted = [{"key": "urgency", "status": "MISSING", "attempts": standard.max_attempts}]
+    exhausted = [{"key": "urgency", "status": "MISSING", "attempts": standard.max_attempts},
+                 {"key": "businessGoal", "status": "MISSING", "attempts": 1}]
     first = resume_follow_up(standard, value, {"structured": acd_filled_form(), "elements": exhausted},
                              changed_keys={"acceptanceCriteria"})
     assert first["askedTarget"] == "acceptanceCriteria"

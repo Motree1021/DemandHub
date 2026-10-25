@@ -20,9 +20,6 @@ ACD = {"A": {"techSubtype": "DATA_RPT"},
        "D": {"functionDescription": "按机构汇总前一交易日持仓并展示", "inputOutput": "输入交易流水输出持仓汇总报表",
              "acceptanceCriteria": "连续7天与核心系统对账误差为0"}}
 
-ZONE_B = {"businessGoal": "把晨会准备时长从40分钟压缩到5分钟", "businessBackground": "目前客户经理手工整理持仓效率低影响晨会质量",
-          "businessValue": "20名客户经理每天节省40分钟", "stakeholders": ["机构业务部", "科技中心"]}
-
 LONG_TEXT = ("机构业务部20名客户经理每天晨会前需要查看各机构前一交易日的持仓汇总，目前靠手工从核心系统导出再逐行整理成Excel，"
              "每次花费近40分钟还容易出错。希望系统每天早上8点前自动按机构汇总持仓并生成报表，支持导出Excel，"
              "连续7天与核心系统对账误差为0就算达标，这样每人每天能节省40分钟。")
@@ -56,11 +53,13 @@ def signals_output(business, user_conf, function):
 
 @pytest.mark.parametrize("business,user_conf,function,expected", [
     (0.9, 0.4, 0.3, True),      # 业务明显占优
-    (0.2, 0.9, 0.5, False),     # 低于 0.5 门槛
+    (0.2, 0.9, 0.5, False),     # 低于 0.7 门槛
     (0.1, 0.3, 0.8, False),
-    # 2026-10-10 口径：业务占优才激活——真实样本「辅助管理层做决策」收益表述推高 business，但 function 最高，不激活 B 区
-    (0.7, 0.7, 0.8, False),
-    (0.8, 0.3, 0.8, False),     # 与其他层并列最高（未严格占优）不激活，边界交改判逃生口
+    # 2026-10-24 拍板层级倾斜 + 档位对齐（覆盖 2026-10-10 占优口径）：business≥0.7（主句级起点）即业务需求，
+    # 不再要求严格占优——三票是证据强度而非互斥概率，判型仅作归类展示，往高层级倾斜
+    (0.7, 0.7, 0.8, True),
+    (0.8, 0.3, 0.8, True),
+    (0.6, 0.4, 0.4, False),     # 从句级顶格 0.6（收益从句封顶）天然不过 0.7 判线——档位对齐的隔离带效应
 ])
 def test_type_signals_three_layers_recognized(business, user_conf, function, expected):
     result = process(signals_output(business, user_conf, function), FORM, {}, [], None, {}, "部门年度考核指标需要系统支撑")
@@ -83,9 +82,11 @@ def signals(business, user_conf, function):
 
 
 @pytest.mark.parametrize("business,user_conf,function,expect_biz", [
-    # 需求1 语音生成智能体：用户故事句式（作为X…当…时我可以…），user 主句级占优 → 用户需求，不激活 B 区
+    # 需求1 语音生成智能体：用户故事句式（作为X…当…时我可以…），business 0.2 低于门槛 → 用户需求
     (0.2, 0.85, 0.6, False),
-    # 需求2 日均规模曲线：存量改动主句（新增X计算Y），function 占优 → 功能需求
+    # 需求2 日均规模曲线：business 0.6 为「辅助管理层决策」收益从句顶格分，档位对齐（2026-10-24 二次拍板）后
+    # 判线=主句级起点 0.7，从句级信号（封顶 0.6）天然不过线 → 不判业务（口径演变：2026-10-10 占优 False
+    # → 2026-10-24 层级 0.5 True → 2026-10-24 档位对齐 0.7 False；存量 0.6 挂账数据显示层自愈，不做迁移）
     (0.6, 0.6, 0.8, False),
     # 需求3 系统改名：纯功能语言 → 功能需求
     (0.1, 0.2, 0.9, False),
@@ -130,14 +131,15 @@ async def test_user_override_type_keeps_confidence_and_marks_user(session_factor
         assert logs and logs[-1].new_value["confirmed"] == "none"
 
 
-async def test_business_confirmed_submit_requires_zone_b(session_factory, user):
-    # 未判型：A/C/D 必填齐全即可提交（B 区不强制）
+async def test_business_confirmed_submit_no_longer_requires_zone_b(session_factory, user):
+    # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区——
+    # 判型确认业务的需求缺 B 区也照常提交成功（治理前置改为提报侧 B1 白话一问 + 受理侧 accept 强校验兜底）
     async with session_factory() as db:
         async with db.begin():
             plain = await demand_service.create_draft(db, user, {"clientRequestId": "p2-gate-1", "title": "晨会持仓报表", "demandTypeCode": "TECH",
                                                                  "content": "客户经理每天晨会前查看各机构持仓", "urgency": "NORMAL", "elements": ACD})
             assert (await demand_service.submit(db, user, plain.id, 0)).demand_no.startswith("TECH-")
-    # 判型确认为业务：B 区必填生效，缺 B 区提交报 400
+    # 判型确认为业务：缺 B 区不再 400 拦截，直接提交成功
     async with session_factory() as db:
         async with db.begin():
             demand = await demand_service.create_draft(db, user, {"clientRequestId": "p2-gate-2", "title": "晨会持仓报表", "demandTypeCode": "TECH",
@@ -147,18 +149,8 @@ async def test_business_confirmed_submit_requires_zone_b(session_factory, user):
         async with db.begin():
             await demand_service.update_draft(db, user, did, {"expectedRevision": 0, "ext": {"typeRecognition": {"confirmed": "business", "business": 0.9}}})
     async with session_factory() as db:
-        with pytest.raises(Exception) as error:
-            async with db.begin():
-                await demand_service.submit(db, user, did, 1)
-        assert error.value.code == 400 and "业务目标" in str(error.value)
-    # 补齐 B 区必填后提交成功
-    async with session_factory() as db:
         async with db.begin():
-            await demand_service.update_draft(db, user, did, {"expectedRevision": 1, "elements": {"B": ZONE_B}})
-    async with session_factory() as db:
-        async with db.begin():
-            submitted = await demand_service.submit(db, user, did, 2)
-            assert submitted.demand_no.startswith("TECH-") and submitted.elements["B"]["stakeholders"] == ["机构业务部", "科技中心"]
+            assert (await demand_service.submit(db, user, did, 1)).demand_no.startswith("TECH-")
 
 
 # ---- FR-02/D6 大段拆解与原文保真 ----
@@ -260,6 +252,21 @@ def test_impact_hint_only_on_filled_b_zone_change():
     assert impact_hints(previous, changed) == ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
     assert impact_hints({}, changed) == []  # 首轮填写不算修改
     assert impact_hints(previous, previous) == []
+
+
+def test_impact_hint_exempted_when_cd_zone_linked():
+    """豁免（2026-10-25 拍板）：B 区变化伴随 C/D 区同步联动（AI 已改完，如改名波及多字段）时不再提示——
+    联动已完成再问「请确认一下」属自相矛盾的噪音；只改 B 区、C/D 原封不动才提示。"""
+    previous = {"elements": {"B": {"businessBackground": "张征一个人运营自媒体账号"}, "C": {"userRole": "产品经理张征"}}}
+    # 改名联动：C 区已同步更新 → 豁免
+    linked = {"elements": {"B": {"businessBackground": "张铮一个人运营自媒体账号"}, "C": {"userRole": "产品经理张铮"}}}
+    assert impact_hints(previous, linked) == []
+    # D 区同步联动同样豁免
+    linked_d = {"elements": {"B": {"businessBackground": "张铮一个人运营自媒体账号"}, "D": {"functionDescription": "数字人口播平台"}}}
+    assert impact_hints(previous, linked_d) == []
+    # 只改 B 区、C/D 原封不动 → 仍提示（真正需要用户确认的场景）
+    only_b = {"elements": {"B": {"businessBackground": "为满足监管报送要求改造"}, "C": {"userRole": "产品经理张征"}}}
+    assert impact_hints(previous, only_b) != []
 
 
 # ---- 微需求快速通道（2026-10-11 方案②）：modeSignal 判定与最小集提交 ----

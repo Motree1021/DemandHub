@@ -1,4 +1,4 @@
-/** 判型识别与置灰规则（utils/demand.ts）：confirmed 优先、置信度兜底、向下兼容置灰。 */
+/** 判型识别与置灰规则（utils/demand.ts）：confirmed 优先、层级倾斜 + 档位对齐（判线 0.7）、向下兼容置灰。 */
 import { describe, expect, it } from 'vitest'
 import { grayZones, recognitionLevel } from '../src/utils/demand'
 
@@ -6,9 +6,11 @@ describe('recognitionLevel 生效判型', () => {
   it('人工确认优先于置信度', () => {
     expect(recognitionLevel({ confirmed: 'user', business: 0.9, user: 0.1, function: 0 })).toBe('user')
   })
-  it('无确认取置信度最高层', () => {
+  it('无确认按层级档位判定：business/user ≥0.7（主句级起点）才过线', () => {
     expect(recognitionLevel({ business: 0.2, user: 0.7, function: 0.1 })).toBe('user')
     expect(recognitionLevel({ business: 0.8, user: 0.1, function: 0.1 })).toBe('business')
+    // 从句级顶格 0.6 不过 0.7 判线（收益从句封顶天然隔离带）：business 0.6<0.7、user 0.6<0.7 → function
+    expect(recognitionLevel({ business: 0.6, user: 0.6, function: 0.8 })).toBe('function')
   })
   it('confirmed 为 null 时回落置信度', () => {
     expect(recognitionLevel({ confirmed: null, business: 0, user: 0, function: 0.6 })).toBe('function')

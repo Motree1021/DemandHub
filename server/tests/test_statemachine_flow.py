@@ -42,6 +42,8 @@ from app.services import (
 )
 
 ACD = {"A": {"techSubtype": "DATA_RPT"},
+       # B1 业务目标（2026-10-24 拍板受理侧强校验兜底）：常规科技需求受理前必填，fixture 预置
+       "B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"},
        "C": {"userRole": "客户经理", "userGoal": "晨会前快速查看各机构持仓汇总",
              "useScenario": "客户经理每天晨会前查看各机构持仓", "painPoint": "手工汇总20多个机构持仓每次近1小时"},
        "D": {"functionDescription": "按机构汇总前一交易日持仓并展示", "inputOutput": "输入交易流水输出持仓汇总报表",
@@ -260,6 +262,32 @@ async def test_role_guard_and_admin_bypass(session_factory, user, admin, handler
             await triage_service.claim(db, admin, did)
     demand = await get_demand(session_factory, did)
     assert demand.status == "ANALYZING" and demand.assignee_id == admin.id
+
+
+@pytest.mark.asyncio
+async def test_accept_requires_b1_for_standard_tech(session_factory, user, admin):
+    """受理侧强校验兜底（2026-10-24 拍板）：常规（standard）科技需求受理前 B1 业务目标必填——
+    缺 B1 拒绝受理（提示详情页补录或打回）；补齐 B1 受理成功；轻量（light）微需求不受限。"""
+    # standard 缺 B1：400 拦截
+    no_b1 = await insert_demand(session_factory, user)
+    async with session_factory() as db:
+        async with db.begin():
+            with pytest.raises(BizError) as error:
+                await triage_service.accept(db, admin, no_b1, None)
+            assert error.value.code == ErrorCode.PARAM_INVALID.code and "业务目标" in error.value.message
+    # 补齐 B1：受理成功转 TRIAGE
+    with_b1 = await insert_demand(session_factory, user,
+                                  elements={"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"}})
+    async with session_factory() as db:
+        async with db.begin():
+            await triage_service.accept(db, admin, with_b1, None)
+    assert (await get_demand(session_factory, with_b1)).status == "TRIAGE"
+    # light 微需求缺 B1：不受限，受理成功
+    light = await insert_demand(session_factory, user, ext={"mode": {"level": "light", "evidence": "小改动"}})
+    async with session_factory() as db:
+        async with db.begin():
+            await triage_service.accept(db, admin, light, None)
+    assert (await get_demand(session_factory, light)).status == "TRIAGE"
 
 
 # ---- 3. ON_HOLD 叠加态 ----

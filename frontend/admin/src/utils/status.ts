@@ -51,7 +51,8 @@ export const SOLUTION_STATUS_META: Record<string, { label: string; type: TagType
 
 /** 需求层级四分类（2026-10-22 拍板）：口径优先——轻量提报（ext.mode.level='light'）一律「微需求」；
  *  常规口径再按判型分业务/用户/功能。判型口径与 H5 FormSnapshotCard 完全一致：
- *  confirmed 人工确认优先；否则 business≥0.5 且严格最高→业务需求，user>function→用户需求，其余（含并列）→功能需求。
+ *  confirmed 人工确认优先；否则 business≥0.7→业务需求，user≥0.7→用户需求，其余→功能需求
+ * （2026-10-24 拍板层级倾斜 business>user>function + 档位对齐：判线=主句级起点 0.7，从句级封顶 0.6 天然不过线，function 不参与比较）。
  *  无判型数据（老数据/未走 AI 流程）返回 null，列表显示「—」。 */
 export type DemandLevel = 'business' | 'user' | 'function' | 'micro'
 
@@ -74,9 +75,10 @@ export function demandLevelOf(ext: Record<string, unknown> | null | undefined): 
   if (confirmed === 'business' || confirmed === 'user' || confirmed === 'function') return confirmed
   const business = recognition.business ?? 0
   const user = recognition.user ?? 0
-  const fn = recognition.function ?? 0
-  if (business >= 0.5 && business > Math.max(user, fn)) return 'business'
-  return user > fn ? 'user' : 'function'
+  // 判型层级倾斜 + 档位对齐（2026-10-24 拍板 business>user>function）：business≥0.7（主句级起点）即业务需求（不再要求占优）；
+  // business<0.7 时 user≥0.7 → 用户需求，否则 → 功能需求（function 不参与比较，从句级封顶 0.6 天然不过线）
+  if (business >= 0.7) return 'business'
+  return user >= 0.7 ? 'user' : 'function'
 }
 
 export const RELATION_TYPE_META: Record<string, string> = {

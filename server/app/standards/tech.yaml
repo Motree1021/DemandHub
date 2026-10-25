@@ -96,33 +96,31 @@ elements:
   required: false
   placeholder: 系统自动记录你说的原话，一般不用改
   ok_when: 用户原始描述完整保留，作为追溯底稿
-# ---- B 区：业务需求要素（Why——识别为业务需求时必填，提交按 active_zones 条件生效）----
+# ---- B 区：业务要素（Why——组织层面的投入理由）----
+# 判型与 B 区解耦（2026-10-24 拍板）：B 区四件套不再必填、不再拦提交、不再随判型整套追问——
+# 组织级理由是受理方分析产物，提报人可能答不出，不该由提报人背必填。
+# 治理前置收敛为「B1 白话一问」：standard（重量级）需求 C/D 必填问完后必问一次 businessGoal
+# （触发条件是重量级，不是判型标签；light 不问）；答不出（不清楚/说不好）放行不追问第二次，
+# 答出组织理由落 B1 且模型判型票自然翻转归类。受理侧兜底：standard 缺 B1 拒绝受理（triage_service.accept）。
 - key: businessGoal
   code: B1
   zone: B
   label: 业务目标
   kind: text
   path: elements.B.businessGoal
-  required: true
-  ok_when: 组织/部门要达成的可衡量目标，≥15 字，含量化词
+  # B1 口径放宽（2026-10-24 拍板）：从「组织/部门的量化指标」放宽为「组织批准这笔投入的理由」——
+  # 「释放 1 人产能」「省下专职整理岗」都算合格，不再强制量化词；质检标记保留（不追问不拦提交）
+  ok_when: 说清组织批准这笔投入的理由（对部门或行里的好处），如「释放 1 人产能」，≥10 字
   rule:
-    min_len: 15
-    any_of_regex:
-    - \d
-    - 提升|提高|降低|减少|增加|覆盖|达成|缩短
-  vague_hint: 目标不够可衡量，缺量化词
-  ask_missing: 这个需求背后，部门或团队要达成的业务目标是什么？尽量可衡量，比如「把客户回访覆盖率从 60% 提升到 80%」。
-  anchor_key: userGoal
-  ask_anchor: 用户侧要完成「{anchor}」——那部门或团队层面想达成什么业务目标？尽量可衡量，比如「把客户回访覆盖率从 60% 提升到 80%」。
-  ask_l1: 能补一个量化口径吗？比如比例、时长、次数。目前记的「{snippet}」还不太像可衡量的目标。
-  ask_l2: 参考句式：「把__（指标）从__提升/降低到__（量化值）」。
+    min_len: 10
+  vague_hint: 对部门或行里的好处还说得不具体
+  ask_missing: 这个需求做出来，除了你自己省事，对部门或行里还有啥好处不？不清楚也没关系，照实说就行。
 - key: businessBackground
   code: B2
   zone: B
   label: 业务背景
   kind: text
   path: elements.B.businessBackground
-  required: true
   ok_when: 说明现状与为什么现在要做，≥15 字
   rule:
     min_len: 15
@@ -136,7 +134,6 @@ elements:
   label: 业务价值
   kind: text
   path: elements.B.businessValue
-  required: true
   ok_when: 含量化事实（多少人/多少时间/不做的后果）
   rule:
     any_of_regex:
@@ -155,7 +152,6 @@ elements:
   label: 干系人
   kind: list
   path: elements.B.stakeholders
-  required: true
   ok_when: 列出业务方、承接方、受益方
   vague_hint: 看不出业务方/承接方/受益方
   ask_missing: 这个需求涉及哪些干系人？比如谁提出的业务方、谁承接建设、谁是受益方。
@@ -417,10 +413,10 @@ elements:
   assessed: false  # 提报人设想仅供受理方参考（2026-10-13 拍板）：不参与质量评估（2026-10-15 起计数 x/26，A3 亦退出评估）
   ok_when: 如实记录提报人设想的实现方式/候选方案及选择关系（如二选一），供受理方评估；非最终方案，可留空
 follow_up_order:
+# B 区收敛为 B1 白话一问（2026-10-24 拍板）：businessGoal 留序列首位（排在必填之后被选中，
+# 仅 standard、仅 MISSING、attempts<1 问一次，见 policy.py pick_follow_up）；
+# businessBackground/businessValue/stakeholders 退出追问序列——组织级信息由受理方分析补齐
 - businessGoal
-- businessBackground
-- businessValue
-- stakeholders
 - userRole
 - userGoal
 - useScenario
@@ -443,6 +439,7 @@ skip_phrases:
 - 再说吧
 - 以后再说
 - 不清楚
+- 说不好
 - 先这样
 # PRD §4.3 三层判型信号（供 LLM 判型提示词，P2 接入）
 type_signals:

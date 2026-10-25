@@ -114,18 +114,40 @@ def filter_form(standard: Standard | None, form: dict, *, validate: bool = True,
 
 
 def business_confirmed(recognition: dict | None) -> bool:
-    """判型结果是否按业务需求门槛生效（PRD §4.3；2026-10-10 口径：业务占优才激活）。
-    business 须 ≥0.5 且高于 user/function 两档——防止「辅助管理层决策」类收益表述把
-    function 为主的日常功能需求误触发 B 区四件套追问；用户确认/改判定稿优先于置信度。"""
+    """判型是否归为业务需求（2026-10-24 拍板层级倾斜 business>user>function + 档位对齐）：
+    business 票 ≥0.7 即判业务需求——判线贴在主句级起点，从句级信号（封顶 0.6）天然不过线，
+    不再要求严格占优；三票是「证据强度」而非互斥概率，归类按最高层级走；判型与 B 区解耦后仅作归类展示。
+    用户确认/改判定稿优先于置信度。"""
     if not recognition:
         return False
     confirmed = recognition.get("confirmed")
     if confirmed is not None:
         return confirmed == "business"
-    business = float(recognition.get("business") or 0)
-    if business < 0.5:
-        return False
-    return business > max(float(recognition.get(layer) or 0) for layer in ("user", "function"))
+    return float(recognition.get("business") or 0) >= 0.7
+
+
+B1_BUSINESS_FLOOR = 0.7  # B1 落库翻转时 business 票的补足底值（= 业务判线，主句级起点，与 business_confirmed 同档）
+
+
+def promote_business_on_b1(recognition: dict | None, before: dict, after: dict) -> dict | None:
+    """B1 落库即判业务（2026-10-24 拍板）：B1 业务目标「从空变为有值」（用户亲口答出或手填组织理由）——
+    硬证据优先于模型软分数，business 票补足到业务门槛 0.7，依据为空时回填 B1 原文。
+    幂等：business 已 ≥0.7、B1 非「空→有」变化时原样返回；confirmed 人工定稿优先，定稿后不动。"""
+    prev_b1 = ((before.get("elements") or {}).get("B") or {}).get("businessGoal")
+    curr_b1 = ((after.get("elements") or {}).get("B") or {}).get("businessGoal")
+    if str(prev_b1 or "").strip() or not str(curr_b1 or "").strip():
+        return recognition
+    if recognition is not None and recognition.get("confirmed") is not None:
+        return recognition
+    result = dict(recognition) if recognition else {}
+    if float(result.get("business") or 0) >= B1_BUSINESS_FLOOR:
+        return recognition
+    result["business"] = B1_BUSINESS_FLOOR
+    evidence = dict(result.get("evidence") or {})
+    if not evidence.get("business"):
+        evidence["business"] = str(curr_b1).strip()
+    result["evidence"] = evidence
+    return result
 
 
 # 微需求快速通道（2026-10-11 方案②）：light 最小必填集 = A1 标题 + A6 紧急度 + 期望效果（写 D8），

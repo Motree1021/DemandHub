@@ -199,9 +199,10 @@ FULL_NO_B = {"A": {"techSubtype": "SYS_DEV"},
 
 
 @pytest.mark.asyncio
-async def test_type_confirm_follows_up_with_business_gate(session_factory, user):
-    """确认业务需求 → B 区纳入必填：typeChange 播报 + 接续快照按新门槛拦截并追问 B 区；
-    恢复 AI 判断 → B 区门槛解除，A/C/D 齐备直接可提交。"""
+async def test_type_confirm_no_longer_gates_zone_b(session_factory, user):
+    """判型与 B 区解耦（2026-10-24 拍板）：确认业务需求 → typeChange 播报（不再宣称「纳入必填」）+
+    接续快照按 A/C/D 门槛重算——B 区不拦提交，A/C/D 齐备即可提交；
+    B1 白话一问（治理型必问）仍作为追问目标出现一次；恢复 AI 判断同口径。"""
     did = await make_draft(session_factory, user, session=True, elements=FULL_NO_B)
     async with session_factory() as db:
         async with db.begin():
@@ -211,10 +212,12 @@ async def test_type_confirm_follows_up_with_business_gate(session_factory, user)
     demand = await get_demand(session_factory, did)
     notice, snapshot = await last_messages(session_factory, demand.session_id, 2)
     assert notice.structured_payload["kind"] == "typeChange"
-    assert "业务需求" in notice.content and "纳入必填" in notice.content
+    assert "业务需求" in notice.content and "纳入必填" not in notice.content
     payload = snapshot.structured_payload
-    assert payload.get("kind") is None and payload["canSubmit"] is False and payload["askedTarget"] is not None
-    # 恢复 AI 判断：B 区不再必填 → A/C/D 齐备直接出「确认提交」
+    assert payload.get("kind") is None
+    # B 区不再拦提交：A/C/D 齐备直接可提交；B1 白话一问作为治理型追问目标出现
+    assert payload["canSubmit"] is True and payload["askedTarget"] == "businessGoal"
+    # 恢复 AI 判断：同口径可提交（B1 仍未问过，接续快照继续带治理型追问）
     async with session_factory() as db:
         async with db.begin():
             demand = await db.get(Demand, did)

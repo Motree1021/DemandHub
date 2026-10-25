@@ -8,9 +8,9 @@ from app.standards.rules import (
     LIGHT_REQUIRED_KEYS,
     assess,
     blank,
-    business_confirmed,
     filter_form,
     get_value,
+    promote_business_on_b1,
     schema_errors,
     set_value,
 )
@@ -25,6 +25,11 @@ CHITCHAT_GUIDE = "我在，咱们继续把需求记清楚。"
 # 无描述白话邀请（2026-10-19 拍板）：底稿（content）为空且未达提交门槛时的对话开场白——
 # 一句话同时喂饱底稿回填、要素抽取与轻重判定；替代此前「请补充原始提报文本」的术语追问
 DESC_INVITE = "请先用一句话描述一下你的需求，比如「报表想加个按机构导出」。"
+
+# B1 答不出放行书（2026-10-24 拍板）：B1 白话一问答「不清楚/说不好」类时的固定回应——
+# 不追问第二次、不标质量问题、不拦提交；绝不承诺「后续找谁补」（组织级目标是受理方分析产物，
+# 不是向某用户追来的答案）。话术红线：禁用「提报人/受理」等角色流程术语，受理侧统一称「产品经理」
+B1_RELEASE = "没事，这个先空着，不耽误提交，后面的产品经理会一起考虑。"
 
 
 def _numbers(text) -> set:
@@ -161,13 +166,25 @@ def detect_granularity(standard: Standard, form: dict, message: str) -> dict | N
 
 
 def impact_hints(previous_form: dict, merged: dict) -> list[str]:
-    """FR-06 影响分析：已填的 B 区业务要素被修改时，提示 C/D 区可能需联动调整。"""
+    """FR-06 影响分析：已填的 B 区业务要素被修改时，提示 C/D 区可能需联动调整。
+    豁免（2026-10-25 拍板）：本轮 C/D 区任一要素已被同步更新（AI 联动已完成）时不再提示——
+    改名类机械联动改完再问「请确认一下」属自相矛盾的噪音；只改 B 区、C/D 原封不动才提示。"""
+    b_changed = False
     for key in ("businessGoal", "businessBackground", "businessValue"):
         path = f"elements.B.{key}"
         old, new = get_value(previous_form, path), get_value(merged, path)
         if not blank(old) and old != new:
-            return ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
-    return []
+            b_changed = True
+            break
+    if not b_changed:
+        return []
+    for zone in ("C", "D"):
+        old_zone = ((previous_form.get("elements") or {}).get(zone)) or {}
+        new_zone = ((merged.get("elements") or {}).get(zone)) or {}
+        for key, new_v in new_zone.items():
+            if not blank(new_v) and old_zone.get(key) != new_v:
+                return []
+    return ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
 
 
 def complete_elements(standard: Standard, form: dict, model_elements: list[ElementStatus], *, light: bool = False):
@@ -229,12 +246,14 @@ def compute_missing(standard, form):
     return [e.key for e in standard.elements if e.required and not e.system and not e.auto_fill and blank(get_value(form, e.field_path))]
 
 
-def pick_follow_up(standard, elements, *, business: bool = False, light: bool = False, form: dict | None = None, can_submit: bool = False):
+def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None = None, can_submit: bool = False):
     """选下一个追问目标。
 
     追问顺序：A/C/D 必填先问完（用户先补"给谁用、什么场景、痛点、验收"等具体信息），
-    B 区业务要素次之；且 B 区仅在判型为业务需求（business=True）时才追问，
-    日常功能需求完全不问 B 区（与提交门槛 active_zones 口径一致）。
+    然后必问一次 B1 白话问题（2026-10-24 拍板，判型与 B 区解耦）：重量级（standard）需求
+    必然涉及组织投入产出，C/D 必填问完后必问一次 businessGoal——触发条件是重量级而非判型标签；
+    答不出（不清楚/说不好）SKIP 放行不追问第二次，答出组织理由落库且判型票自然翻转。
+    B 区其余要素（背景/价值/干系人）退出追问序列，由受理方分析补齐。
     紧急程度沉底最后问（2026-10-15 拍板）：排期类信息待需求本体问齐后再确认；
     答"紧急/特急"时急单门控承接追问期望交付时间，恰好收尾。
 
@@ -250,16 +269,16 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
     正常顺序。仅 TECH 生效（MATL/TRAIN 的期望时间在 common_fields、不在追问循环，无此场景）。
 
     可提交即停问软质量（2026-10-12 拍板）：一旦必填门槛达成（can_submit=True，AI 已说
-    「可以提交」），除急单交付日期这种"承诺型追问"外，不再对"有值但被判不够量化/不够具体"
-    的非空必填项主动发问——完成话术承诺了「不太完整的可选项不影响提交、以后能补」，继续
-    追问即前后矛盾；完善提示留在表单卡片由用户/产品经理自愿补，质量兜底走打回机制。
-    MISSING（真空着）不受此限：必填缺口仍需追问或拦提交。
+    「可以提交」），除急单交付日期这种"承诺型追问"与 B1 白话一问这种"治理型追问"外，不再对
+    "有值但被判不够量化/不够具体"的非空必填项主动发问——完成话术承诺了「不太完整的可选项不影响
+    提交、以后能补」，继续追问即前后矛盾；完善提示留在表单卡片由用户/产品经理自愿补，质量兜底
+    走打回机制。MISSING（真空着）不受此限：必填缺口仍需追问或拦提交。
 
     先补"没有"再修"不好"（2026-10-23 拍板）：追问目标选取拆两遍扫描——第一遍只在 MISSING
     （真空着）必填里按既有顺序选，全部问完才轮到 VAGUE（有值但质检不达标）的质检追问。
     图片解析/大段粘贴会一次性把 D 区验收等填成长文本，原排序下 D 区 VAGUE 质检抢在 B 区与
     紧急程度的空必填前面，AI 先纠结"填得不好"而把"还没填"晾一边；轻重口径不变（light 本就
-    只问 MISSING），急单门控插队仍最优先，组内顺序仍按 A/C/D→B 区沉底→紧急程度最后。
+    只问 MISSING），急单门控插队仍最优先，组内顺序仍按 A/C/D→B1 白话一问→紧急程度最后。
     """
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
@@ -282,8 +301,12 @@ def pick_follow_up(standard, elements, *, business: bool = False, light: bool = 
             # 只问真空着的项（2026-10-15）：有值但笼统（VAGUE）不追问——light 承诺最少打扰，
             # 与"可提交即停问软质量"同口径；也避免用户已答过（哪怕笼统）又被反问的观感
             return element is not None and element.status == "MISSING" and element.attempts < 1
-        if field.zone == "B" and not business:
-            return False
+        # B1 白话一问（2026-10-24 拍板）：businessGoal 是唯一保留在追问序列的 B 区要素——
+        # 仅真空着（MISSING）且从未问过才选中，问一次即终结（答出落库 / 答不出 SKIP 放行）；
+        # 非必填不占提交门槛，can_submit 后仍必问这一次（治理型追问，与急单门控同性质）
+        if key == "businessGoal":
+            element = by_key.get(key)
+            return element is not None and element.status == "MISSING" and element.attempts < 1
         element = by_key.get(key)
         if element is None or element.status in {"OK", "SKIP"} or element.attempts >= standard.max_attempts:
             return False
@@ -425,9 +448,10 @@ def return_quote_seen(texts) -> bool:
     return any(RETURN_QUOTE_MARK in (text or "") for text in texts)
 
 
-def reply_for(standard, target, form, *, light: bool = False, business: bool = False, trigger: str = "dialog"):
+def reply_for(standard, target, form, *, light: bool = False, trigger: str = "dialog"):
     if target is None:
-        active_zones = {"A", "C", "D"} | ({"B"} if business else set())
+        # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区
+        active_zones = {"A", "C", "D"}
         return_reason = _return_reason_of(form)
         if light:
             complete = not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS)
@@ -473,24 +497,37 @@ def _quoted_reask(standard: Standard, target: ElementStatus, form: dict) -> str:
     return f"你填的「{field.label}」『{snippet}』我记下了，不过{hint}——" + template
 
 
+def _display_text(value) -> str:
+    """播报用的值文本：list（如干系人）用「、」连接，不把 ['…'] 程序内部格式泄漏给提报人。"""
+    if isinstance(value, list):
+        return "、".join(str(v) for v in value)
+    return str(value).replace("\n", " ").strip()
+
+
 def _supplement_confirm(standard: Standard, previous_form: dict, merged: dict, prev_target: str | None, *, skip_keys=None) -> str:
     """补充/纠正的引述式确认（2026-10-19 拍板）：列出本轮值发生变化的非当前问题要素并引述
     新值片段请用户确认——与 C3 双锚定话术同风格，AI 听错/抽错时用户能当场发现并纠正。
     系统字段/底稿/标题/类型不做确认（content 为首轮回填、title/类型由系统判定）；
-    skip_keys（手改场景=用户手填的要素）已由手改播报告知，不再重复确认。"""
-    parts = []
+    skip_keys（手改场景=用户手填的要素）已由手改播报告知，不再重复确认。
+    播报瘦身（2026-10-25 拍板）：≤2 处保留引述式（防抽错仍靠预览）；≥3 处合并为一句汇总
+    （列字段名、不带截断预览）——改名类机械联动动辄波及 5 个字段，逐条罗列+「…」截断
+    密不透风，提报人真正想听的只是「改过来了」一句确认，细节看表单卡。"""
+    parts: list[tuple[str, str]] = []
     for field in standard.elements:
         if field.system or field.key in ("title", "demandTypeCode", "content") or field.key == prev_target or (skip_keys and field.key in skip_keys):
             continue
         new_v = get_value(merged, field.field_path)
         old_v = get_value(previous_form, field.field_path)
         if not blank(new_v) and old_v != new_v:
-            text = str(new_v).replace("\n", " ").strip()
+            text = _display_text(new_v)
             snippet = text if len(text) <= 20 else text[:20] + "…"
-            parts.append(f"「{field.label}」已按你补充的更新：{snippet}")
+            parts.append((field.label, snippet))
     if not parts:
         return "好的，补充的我记下了。"
-    return "；".join(parts) + "。"
+    if len(parts) >= 3:
+        labels = "、".join(label for label, _ in parts)
+        return f"好的，已按你说的同步更新了 {len(parts)} 处：{labels}。"
+    return "；".join(f"「{label}」已更新：{snippet}" for label, snippet in parts) + "。"
 
 
 def _clear_echo_backfill(merged: dict, field_sources: dict, text: str) -> None:
@@ -518,21 +555,20 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
     curr = [e for e in assess(standard, merged, light=light)]
     # prev_target 传 None：attempts/SKIP 只继承不计数——用户没作答当前问题，不能按答错惩罚
     curr = inherit_and_count(prev, curr, None, False, standard=standard, previous_form=previous_form, form=merged)
-    is_business = business_confirmed(recognition)
     if light:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
-        active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
-        can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
+        # 判型与 B 区解耦（2026-10-24 拍板）：提交门槛恒为 A/C/D 三区
+        can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
     if not prev:
         # 首轮闲聊：只引导不追问（单问题原则）——此前连发引导+标题确认两个问题，用户不知答哪个
         target = None
         reply = CHITCHAT_GREET_FIRST
     else:
-        target = pick_follow_up(standard, curr, business=is_business, light=light, form=merged, can_submit=can_submit)
+        target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit)
         reply = CHITCHAT_GUIDE
         if target is not None:
-            reply += " " + reply_for(standard, target, merged, light=light, business=is_business)
+            reply += " " + reply_for(standard, target, merged, light=light)
     return {
         "structured": merged, "fieldSources": field_sources,
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
@@ -562,6 +598,9 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
     # FR-01/FR-03 判型合并：confirmed（用户定稿）不被模型覆盖，模型票只更新置信度与依据
     recognition = merge_type_signals(output.type_signals, form)
+    # B1 落库即判业务（2026-10-24 拍板）：B1 业务目标本轮「空→有」（用户亲口答出组织理由）——
+    # 硬证据优先于模型软分数，business 票补足到业务门槛 0.7（主句级起点，档位对齐），层级判定下即翻转为业务需求
+    recognition = promote_business_on_b1(recognition, form, merged)
     if recognition:
         merged.setdefault("ext", {})["typeRecognition"] = recognition
         prev_confirmed = ((form.get("ext") or {}).get("typeRecognition") or {}).get("confirmed")
@@ -583,21 +622,23 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     # 仅 answer 才把 prev_target 按"答了没答好"计数；supplement/question/command 传 None——
     # 用户没回答当前问题（在补充别的/提问/发指令），不计 attempts，SKIP 状态照常继承
     counting = kind == "answer"
+    said_skip = user_said_skip(standard, text) if counting else False
     curr = inherit_and_count(prev, curr, prev_target if counting else None,
-                             user_said_skip(standard, text) if counting else False,
+                             said_skip,
                              standard=standard, previous_form=previous_form, form=merged,
                              count_keys=manual_keys)
-    # B 区必填按判型门槛生效（PRD §4.3、FR-03 分支）：业务需求全量四区，否则 A/C/D
-    is_business = business_confirmed(recognition)
-    # 先算提交门槛，再据"可提交即停问软质量"选追问目标：必填已齐便不再对不够量化的非空必填项发问
+    # B1 答不出放行（2026-10-24 拍板）：B1 白话一问答「不清楚/说不好」类 → SKIP 终结该问题，
+    # 回复带固定放行书（不追问第二次、不标质量问题、不拦提交、不承诺"后续找谁补"）
+    b1_released = said_skip and prev_target == "businessGoal"
+    # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区；
+    # 判型标签仅作归类展示与 B1 答出后的翻转确认，不再驱动必填与追问
     if light:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
-        active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
-        can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones=active_zones)
-    # 追问顺序与提交门槛共用同一判型口径：业务需求才追问 B 区，且 A/C/D 先问完再问 B；
-    # light 模式只按最小集追问（每项一次）并按最小集放行提交
-    target = pick_follow_up(standard, curr, business=is_business, light=light, form=merged, can_submit=can_submit)
+        can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
+    # 追问顺序与提交门槛同口径（2026-10-24 拍板）：A/C/D 必填先问完，再必问一次 B1 白话问题；
+    # light 模式只按最小集追问（每项一次）并按最小集放行提交，B 区不问
+    target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit)
     granularity = detect_granularity(standard, merged, text)
     impacts = impact_hints(previous_form, merged)
     # D9 建议方案首次抽取播报（2026-10-12 拍板）：用户设想的候选方案/实现路径此前被五区白名单
@@ -622,7 +663,7 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
             missing_labels = [f.label for f in standard.elements if f.key in compute_missing(standard, merged)]
             reply = "还差几项必填信息才能提交：" + "、".join(f"「{label}」" for label in missing_labels) + "。"
             if target is not None:
-                reply += " " + reply_for(standard, target, merged, light=light, business=is_business, trigger=trigger)
+                reply += " " + reply_for(standard, target, merged, light=light, trigger=trigger)
             else:
                 reply += " 请在下方表单里补齐后提交。"
     else:
@@ -630,7 +671,7 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         if target is not None and manual_keys and target.key in manual_keys and target.status == "VAGUE":
             reply = _quoted_reask(standard, target, merged)
         else:
-            reply = reply_for(standard, target, merged, light=light, business=is_business, trigger=trigger)
+            reply = reply_for(standard, target, merged, light=light, trigger=trigger)
         # 意图前缀（2026-10-19 拍板）：补充引述确认/提问要素级解释后桥接回当前问题——
         # 当前问题未被作答、仍是缺口首位时加「回到刚才的问题」衔接，观感接续而非各说各的
         bridge = " 回到刚才的问题——" if target is not None and prev_target and target.key == prev_target else " "
@@ -658,6 +699,9 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
             paragraphs.append(" ".join(impacts))
         if solution_notice:
             paragraphs.append(solution_notice)
+        if b1_released:
+            # B1 答不出放行书（2026-10-24 拍板）：对用户回答的直接回应，跟在播报类之后、行动项之前
+            paragraphs.append(B1_RELEASE)
         paragraphs.append(reply)  # 追问（含意图桥接/模式播报）始终末段，离输入框最近
         reply = "\n\n".join(paragraphs)
         # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次——调用方按历史消息判定是否首次；
@@ -699,8 +743,6 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
     ext = form.get("ext") or {}
     mode = ext.get("mode") or {}
     light = (mode.get("level") if isinstance(mode, dict) else None) == "light"
-    recognition = ext.get("typeRecognition") or {}
-    is_business = business_confirmed(recognition if isinstance(recognition, dict) else {})
     curr = list(assess(standard, form, light=light))
     prev_elements = [ElementStatus.model_validate(e) for e in ((previous or {}).get("elements") or [])]
     curr = inherit_and_count(prev_elements, curr, None, False, standard=standard,
@@ -709,8 +751,8 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
     if light:
         can_submit = not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
-        active_zones = {"A", "C", "D"} | ({"B"} if is_business else set())
-        can_submit = not schema_errors(standard, form, required=True, active_zones=active_zones)
+        # 判型与 B 区解耦（2026-10-24 拍板）：提交门槛恒为 A/C/D 三区
+        can_submit = not schema_errors(standard, form, required=True, active_zones={"A", "C", "D"})
     # 无描述白话邀请（2026-10-19 拍板）：底稿为空且未达门槛时，先请用户一句话描述需求——
     # 一句话同时喂饱底稿回填、要素抽取与轻重判定。仅非必填 content（科技标准）适用；
     # MATL/TRAIN 的 content 仍必填，维持原追问（待独立助手重建）
@@ -724,11 +766,11 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
             "canSubmit": can_submit, "guidanceComplete": False,
             "quickReplies": quick_replies(standard, content_status),
         }
-    target = pick_follow_up(standard, curr, business=is_business, light=light, form=form, can_submit=can_submit)
+    target = pick_follow_up(standard, curr, light=light, form=form, can_submit=can_submit)
     if target is not None and changed_keys and target.key in changed_keys and target.status == "VAGUE":
         reply = _quoted_reask(standard, target, form)
     else:
-        reply = reply_for(standard, target, form, light=light, business=is_business, trigger=trigger)
+        reply = reply_for(standard, target, form, light=light, trigger=trigger)
     # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次，由调用方按历史消息判定 return_quoted
     reply = _prefix_return_quote(reply, form, return_quoted=return_quoted)
     return {
