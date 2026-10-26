@@ -205,6 +205,21 @@ def test_vague_word_short_sentence_still_flagged():
     assert next(e for e in assess(get("TECH"), tech(C__painPoint="尽快好用")) if e.key == "painPoint").status == "VAGUE"
 
 
+@pytest.mark.parametrize("scenario", [
+    # 2026-10-26 修订：区间频率（每2~3天≠「每天」子串）与人名角色句式（作为…运营者）不再误判 VAGUE
+    "张征作为自媒体账号交行小张的运营者，每2~3天制作并发布一期口播短视频",
+    "运营专员每两周汇总渠道销量报表数据",
+    "客户经理隔天同步一次渠道数据情况",
+    "柜员两天一次核对库存并登记台账",
+    # 事件触发与按需声明（2026-10-26 补充）：收到任务/通知、领导交办、按需使用均为合法时机描述
+    "客户经理收到审批任务后3个工作日内处理完毕",
+    "运营专员接到监管报送通知后整理当季度数据",
+    "客户经理按需使用该平台制作口播短视频并发布",
+])
+def test_use_scenario_frequency_regex(scenario):
+    assert next(e for e in assess(get("TECH"), tech(C__useScenario=scenario)) if e.key == "useScenario").status == "OK"
+
+
 @pytest.mark.parametrize("criteria", [
     "客户经理在企微或微信中点击产品周报链接可直接打开，不再提示非法网页，无需复制到浏览器",
     "链接修复后可正常打开",
