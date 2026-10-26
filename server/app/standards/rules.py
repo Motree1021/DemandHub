@@ -132,6 +132,8 @@ B1_BUSINESS_FLOOR = 0.7  # B1 落库翻转时 business 票的补足底值（= �
 def promote_business_on_b1(recognition: dict | None, before: dict, after: dict) -> dict | None:
     """B1 落库即判业务（2026-10-24 拍板）：B1 业务目标「从空变为有值」（用户亲口答出或手填组织理由）——
     硬证据优先于模型软分数，business 票补足到业务门槛 0.7，依据为空时回填 B1 原文。
+    路径分流（2026-10-26 拍板）：补票升级打 b1Backfill 标记——带标记的业务需求为「升级型」，
+    B2~B4 放行提交、受理侧兜底补录；不带标记的业务判型为「原生型」，B1~B4 动态必填。
     幂等：business 已 ≥0.7、B1 非「空→有」变化时原样返回；confirmed 人工定稿优先，定稿后不动。"""
     prev_b1 = ((before.get("elements") or {}).get("B") or {}).get("businessGoal")
     curr_b1 = ((after.get("elements") or {}).get("B") or {}).get("businessGoal")
@@ -143,6 +145,7 @@ def promote_business_on_b1(recognition: dict | None, before: dict, after: dict) 
     if float(result.get("business") or 0) >= B1_BUSINESS_FLOOR:
         return recognition
     result["business"] = B1_BUSINESS_FLOOR
+    result["b1Backfill"] = True
     evidence = dict(result.get("evidence") or {})
     if not evidence.get("business"):
         evidence["business"] = str(curr_b1).strip()
@@ -163,11 +166,36 @@ def demand_mode(form: dict) -> str:
     return "light" if isinstance(mode, dict) and mode.get("level") == "light" else "standard"
 
 
+# B 区必填路径分流（2026-10-26 拍板，修订 10-24「判型与必填全解耦」口径）：
+# 原生业务需求（模型判型票自然涨过 0.7，或人工定稿 business）B1~B4 动态必填、缺了不能提交；
+# 升级业务需求（B1 答出后规则补票过线，带 b1Backfill 标记）放行提交，B2~B4 由受理侧兜底补录。
+# 判型只涨不跌 → 门槛只加不减，无反复；轻量（微需求）链路全程不启用 B 区。
+B_ZONE_DYNAMIC_KEYS = frozenset({"businessGoal", "businessBackground", "businessValue", "stakeholders"})
+
+
+def native_business(form: dict) -> bool:
+    """原生业务需求判定：判型归业务需求（含人工定稿）且非 B1 补票升级路径。"""
+    recognition = (form.get("ext") or {}).get("typeRecognition")
+    if not isinstance(recognition, dict) or recognition.get("b1Backfill"):
+        return False
+    return business_confirmed(recognition)
+
+
+def dynamic_required_keys(standard: Standard | None, form: dict) -> frozenset:
+    """动态必填 key 集：原生业务需求且非轻量时 B1~B4 启用（yaml 仍 required:false，启用归代码层）。"""
+    if standard is None or demand_mode(form) == "light" or not native_business(form):
+        return frozenset()
+    return frozenset(f.key for f in standard.elements if f.key in B_ZONE_DYNAMIC_KEYS)
+
+
 def schema_errors(standard: Standard | None, form: dict, *, required: bool = False, active_zones: set[str] | None = None, required_keys: set[str] | None = None) -> list[str]:
     """required=True 时按必填门槛校验；active_zones 限定必填生效的区（None=全部区生效，用于 B 区判型条件必填）；
-    required_keys 直接限定必填生效的要素 key（light 最小集口径），优先于 active_zones。"""
+    required_keys 直接限定必填生效的要素 key（light 最小集口径），优先于 active_zones。
+    动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 与 A/C/D 必填同权校验——
+    与区域/最小集口径正交，always 追加生效；升级型（b1Backfill）与轻量链路天然不命中。"""
     if standard is None:
         return ["需求类型未填写"] if required else []
+    dyn = dynamic_required_keys(standard, form) if required else frozenset()
     errors = []
     for field in standard.fields:
         if field.system:
@@ -175,9 +203,11 @@ def schema_errors(standard: Standard | None, form: dict, *, required: bool = Fal
         value = get_value(form, field.field_path)
         # auto_fill（2026-10-20 拍板）：系统兜底提取项不占必填门槛——标题/底稿由系统提取，
         # 空值不拦「可以提交」，提交前由 submit 兜底链保证非空；格式校验（如 60 字上限）照常生效
-        if required and field.required and not field.auto_fill and blank(value):
+        if required and (field.required or field.key in dyn) and not field.auto_fill and blank(value):
             gate = True
-            if required_keys is not None:
+            if field.key in dyn:
+                gate = True
+            elif required_keys is not None:
                 gate = field.key in required_keys
             elif active_zones is not None and field.zone is not None:
                 gate = field.zone in active_zones

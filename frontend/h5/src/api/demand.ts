@@ -19,7 +19,7 @@ export interface DemandForm {
   expectDeliveryAt: string | null; elements: ZoneElements; ext: Record<string, unknown>; fieldSources: FieldSources
 }
 export interface ChangeLog { id: number; fieldKey: string; oldValue: unknown; newValue: unknown; source: 'default' | 'agent' | 'user'; changedBy: number | null; createdAt: string }
-export interface TypeRecognition { business?: number; user?: number; function?: number; confirmed?: string | null; evidence?: Record<string, string> }
+export interface TypeRecognition { business?: number; user?: number; function?: number; confirmed?: string | null; evidence?: Record<string, string>; b1Backfill?: boolean }
 // 微需求快速通道（方案②）：AI 轻重判定，light 时表单卡显示「轻量提报 X/4」、红星只标最小集
 export interface DemandMode { level: 'light' | 'standard'; evidence?: string }
 export function demandModeOf(form: DemandForm): 'light' | 'standard' {

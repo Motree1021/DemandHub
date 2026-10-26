@@ -131,26 +131,53 @@ async def test_user_override_type_keeps_confidence_and_marks_user(session_factor
         assert logs and logs[-1].new_value["confirmed"] == "none"
 
 
-async def test_business_confirmed_submit_no_longer_requires_zone_b(session_factory, user):
-    # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区——
-    # 判型确认业务的需求缺 B 区也照常提交成功（治理前置改为提报侧 B1 白话一问 + 受理侧 accept 强校验兜底）
+async def test_business_confirmed_submit_zone_b_path_split(session_factory, user):
+    # B 区必填路径分流（2026-10-26 拍板，修订 10-24「判型与必填全解耦」口径）：
+    # 原生业务需求（判型确认 business 且无 b1Backfill 标记）B1~B4 动态必填，缺了提交拦截；
+    # 升级业务需求（B1 补票升级，带 b1Backfill 标记）B2~B4 放行提交，受理侧兜底补录
+    from app.core.errors import BizError, ErrorCode
+
+    async def create_acd_draft(request_id):
+        async with session_factory() as db:
+            async with db.begin():
+                draft = await demand_service.create_draft(db, user, {"clientRequestId": request_id, "title": "晨会持仓报表", "demandTypeCode": "TECH",
+                                                                     "content": "客户经理每天晨会前查看各机构持仓", "urgency": "NORMAL", "elements": ACD})
+                return draft.id
+
+    # 无判型：B 区不激活，缺 B 区照常提交成功
+    plain = await create_acd_draft("p2-gate-1")
     async with session_factory() as db:
         async with db.begin():
-            plain = await demand_service.create_draft(db, user, {"clientRequestId": "p2-gate-1", "title": "晨会持仓报表", "demandTypeCode": "TECH",
-                                                                 "content": "客户经理每天晨会前查看各机构持仓", "urgency": "NORMAL", "elements": ACD})
-            assert (await demand_service.submit(db, user, plain.id, 0)).demand_no.startswith("TECH-")
-    # 判型确认为业务：缺 B 区不再 400 拦截，直接提交成功
+            assert (await demand_service.submit(db, user, plain, 0)).demand_no.startswith("TECH-")
+
+    # 升级型：confirmed=business 且带 b1Backfill 标记 → 缺 B2~B4 放行提交成功
+    upgraded = await create_acd_draft("p2-gate-2")
     async with session_factory() as db:
         async with db.begin():
-            demand = await demand_service.create_draft(db, user, {"clientRequestId": "p2-gate-2", "title": "晨会持仓报表", "demandTypeCode": "TECH",
-                                                                  "content": "客户经理每天晨会前查看各机构持仓", "urgency": "NORMAL", "elements": ACD})
-            did = demand.id
+            await demand_service.update_draft(db, user, upgraded, {"expectedRevision": 0, "ext": {"typeRecognition": {"confirmed": "business", "business": 0.9, "b1Backfill": True}}})
     async with session_factory() as db:
         async with db.begin():
-            await demand_service.update_draft(db, user, did, {"expectedRevision": 0, "ext": {"typeRecognition": {"confirmed": "business", "business": 0.9}}})
+            assert (await demand_service.submit(db, user, upgraded, 1)).demand_no.startswith("TECH-")
+
+    # 原生型：confirmed=business 无 b1Backfill 标记 → 缺 B 区提交拦截（B1 未填写）
+    native = await create_acd_draft("p2-gate-3")
     async with session_factory() as db:
         async with db.begin():
-            assert (await demand_service.submit(db, user, did, 1)).demand_no.startswith("TECH-")
+            await demand_service.update_draft(db, user, native, {"expectedRevision": 0, "ext": {"typeRecognition": {"confirmed": "business", "business": 0.9}}})
+    async with session_factory() as db:
+        async with db.begin():
+            with pytest.raises(BizError) as error:
+                await demand_service.submit(db, user, native, 1)
+            assert error.value.code == ErrorCode.PARAM_INVALID.code and "未填写" in str(error.value)
+    # 补齐 B 区四要素后提交成功
+    async with session_factory() as db:
+        async with db.begin():
+            await demand_service.update_draft(db, user, native, {"expectedRevision": 1, "elements": {"B": {
+                "businessGoal": "达成部门年度考核指标", "businessBackground": "部门年度考核要求晨会材料自动化出具",
+                "businessValue": "20名客户经理每人每天节省40分钟", "stakeholders": ["机构业务部负责人"]}}})
+    async with session_factory() as db:
+        async with db.begin():
+            assert (await demand_service.submit(db, user, native, 2)).demand_no.startswith("TECH-")
 
 
 # ---- FR-02/D6 大段拆解与原文保真 ----

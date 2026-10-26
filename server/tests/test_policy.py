@@ -22,6 +22,7 @@ from app.agent.schemas import (
     Intent,
     ModelOutput,
     ModeSignalOutput,
+    TypeSignalsOutput,
     parse_model_output,
 )
 from app.standards.loader import get
@@ -253,11 +254,75 @@ def test_b1_plain_ask_once_after_acd_complete_regardless_of_type():
     assert result["askedTarget"] == "businessGoal"
     assert result["canSubmit"] is True
     assert "对部门或行里还有啥好处" in result["reply"] and "不清楚也没关系" in result["reply"]
-    # 业务判型信号下同一问法（判型只影响归类展示，不影响追问与门槛）
+    # 路径分流（2026-10-26 拍板）：判型票自然过线（无 b1Backfill 标记）= 原生业务需求——
+    # B1~B4 转动态必填拦提交（canSubmit=False），B1 进必填追问序列（B 区沉底，仍先问 B1）；
+    # 已升级过的（带 b1Backfill 标记）维持解耦口径：B2~B4 放行，仅 B1 白话一问
     value = acd_filled_form()
     value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
     result_b = process(ModelOutput(structured={"ext": {"typeRecognition": {"business": 0.9}}}, elements=[]), value, {}, [], None, {}, "报表")
-    assert result_b["askedTarget"] == "businessGoal" and result_b["canSubmit"] is True
+    assert result_b["askedTarget"] == "businessGoal" and result_b["canSubmit"] is False
+    assert "现在识别为业务需求" not in result_b["reply"]  # 进轮前已是业务判型，非本轮升级不播报
+    upgraded = acd_filled_form()
+    upgraded["ext"] = {"typeRecognition": {"business": 0.7, "b1Backfill": True, "confirmed": None}}
+    result_c = process(ModelOutput(structured={}, elements=[]), upgraded, {}, [], None, {}, "报表")
+    assert result_c["askedTarget"] == "businessGoal" and result_c["canSubmit"] is True
+
+
+def test_native_business_dynamic_required_full_gate():
+    # 原生业务需求动态必填（2026-10-26 拍板路径分流）：B1~B4 与 A/C/D 必填同权——
+    # 缺口进 missing 清单/拦提交；B1 答「不清楚」不再 SKIP 放行（按未答好计次）；
+    # B 区四项补齐后放行提交
+    value = acd_filled_form()
+    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
+    first = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "报表")
+    assert first["canSubmit"] is False
+    assert {"businessGoal", "businessBackground", "businessValue", "stakeholders"} <= set(first["missing"])
+    # B1 答不出：不播固定放行书、不打 SKIP，按常规必填记 1 次且继续拦提交
+    prev = [ElementStatus.model_validate(e) for e in first["elements"]]
+    second = process(ModelOutput(structured={}, elements=[]),
+                     first["structured"], first["fieldSources"], prev, "businessGoal",
+                     value, "不清楚")
+    assert "没事，这个先空着" not in second["reply"]
+    b1 = next(e for e in second["elements"] if e["key"] == "businessGoal")
+    assert b1["status"] == "MISSING" and b1["attempts"] == 1
+    assert second["canSubmit"] is False
+    # 动态必填项不提供「后续补充」逃逸出口
+    assert "后续补充" not in second["quickReplies"]
+    # B 区四项补齐 → 放行
+    filled = dict(second["structured"])
+    filled["elements"] = {**filled["elements"], "B": {
+        "businessGoal": "帮部门省下专职整理岗，释放一个人力",
+        "businessBackground": "目前靠人工逐机构汇总，旺季人力紧张，管理层要求压降手工活",
+        "businessValue": "影响20多个客户经理，每人每天省40分钟；不做会影响晨会决策时效",
+        "stakeholders": ["机构业务部", "客服中心"]}}
+    third = process(ModelOutput(structured={}, elements=[]), filled, second["fieldSources"], [], None, second["structured"], "继续")
+    assert third["canSubmit"] is True and third["askedTarget"] is None
+
+
+def test_native_business_flip_broadcast_mid_conversation():
+    # 对话中段自然升级为原生业务需求（2026-10-26 拍板）：判型票本轮自然涨过线 → 当场播报
+    # 「现在识别为业务需求，还需补充 N 项业务要素」并接续追问（B 区沉底序列自动接上 B1）
+    base = acd_filled_form()
+    base["ext"] = {"typeRecognition": {"business": 0.5, "user": 0.6, "function": 0.4, "confirmed": None}}
+    signals = TypeSignalsOutput.model_validate({"business": {"confidence": 0.8, "evidence": "部门年度考核指标"},
+                                                "user": {"confidence": 0.6, "evidence": ""}, "function": {"confidence": 0.4, "evidence": ""}})
+    result = process(ModelOutput(structured={}, elements=[], type_signals=signals), base, {}, [], None, base, "这是部门年度考核指标要求的")
+    assert result["typeRecognition"]["business"] == 0.8
+    assert "这条需求现在识别为业务需求，还需补充 4 项业务要素。" in result["reply"]
+    assert result["askedTarget"] == "businessGoal" and result["canSubmit"] is False
+    # 升级型补票翻转不播业务要素加码话术（B1 答案已被引述确认，且不加新门槛）
+    base2 = acd_filled_form()
+    base2["ext"] = {"typeRecognition": {"business": 0.3, "user": 0.85, "function": 0.6, "confirmed": None}}
+    output = ModelOutput(structured={"elements": {"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"}}}, elements=[])
+    result2 = process(output, base2, {}, [], "businessGoal", base2, "能省下一个人力")
+    assert result2["typeRecognition"]["b1Backfill"] is True
+    assert "现在识别为业务需求" not in result2["reply"] and result2["canSubmit"] is True
+    # 下一轮模型重建判型字典时 b1Backfill 标记不丢（merge_type_signals 保留），否则升级型被误判原生型突然加码
+    signals3 = TypeSignalsOutput.model_validate({"business": {"confidence": 0.9, "evidence": ""},
+                                                 "user": {"confidence": 0.5, "evidence": ""}, "function": {"confidence": 0.3, "evidence": ""}})
+    result3 = process(ModelOutput(structured={}, elements=[], type_signals=signals3),
+                      result2["structured"], result2["fieldSources"], [], None, result2["structured"], "继续")
+    assert result3["typeRecognition"]["b1Backfill"] is True and result3["canSubmit"] is True
 
 
 def test_b1_unanswerable_releases_with_fixed_wording():

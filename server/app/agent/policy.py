@@ -9,8 +9,10 @@ from app.standards.rules import (
     LIGHT_REQUIRED_KEYS,
     assess,
     blank,
+    dynamic_required_keys,
     filter_form,
     get_value,
+    native_business,
     promote_business_on_b1,
     schema_errors,
     set_value,
@@ -124,11 +126,15 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
 
 
 def merge_type_signals(signals: TypeSignalsOutput | None, form: dict) -> dict | None:
-    """模型判型票与既有 ext.typeRecognition 合并：置信度取历史最高，confirmed（用户定稿）不被模型覆盖。"""
+    """模型判型票与既有 ext.typeRecognition 合并：置信度取历史最高，confirmed（用户定稿）不被模型覆盖。
+    b1Backfill 路径标记（2026-10-26 拍板）随旧值原样保留——标记记录的是「是否经 B1 补票升级」的
+    历史事实，模型每轮重建判型字典时不得丢失，否则升级型会被误判成原生型而突然加码必填。"""
     prev = (form.get("ext") or {}).get("typeRecognition") or {}
     if signals is None:
         return prev or None
     result = {"confirmed": prev.get("confirmed")}
+    if prev.get("b1Backfill"):
+        result["b1Backfill"] = True
     evidence = dict(prev.get("evidence") or {})
     for layer in ("business", "user", "function"):
         vote = getattr(signals, layer)
@@ -224,6 +230,9 @@ def schema_errors_for_key(standard, form, key):
 def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_form, form, count_keys=None):
     previous = {e.key: e for e in prev}
     fields = {e.key: e for e in standard.elements}
+    # 动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 与 A/C/D 必填同权——
+    # 「答不出 SKIP 放行」只适用于真选填项，动态必填项答不出按未答好计数，不破提交门槛
+    dyn = dynamic_required_keys(standard, form)
     output = []
     for element in curr:
         old = previous.get(element.key)
@@ -232,7 +241,7 @@ def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_
         status, note = element.status, element.note
         if old and old.status == "SKIP" and not changed:
             status, note = "SKIP", "用户选择后续补充"
-        elif said_skip and element.key == prev_target and not fields[element.key].required and status != "OK":
+        elif said_skip and element.key == prev_target and not fields[element.key].required and element.key not in dyn and status != "OK":
             status, note = "SKIP", "用户选择后续补充"
         elif element.key == prev_target and status != "OK":
             attempts = min(standard.max_attempts, attempts + 1)
@@ -249,7 +258,9 @@ def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_
 def compute_missing(standard, form):
     # auto_fill（2026-10-20 拍板）：系统兜底提取项不算用户侧缺口——指令回复列缺项/缺失清单
     # 不把标题算进去（提交前系统重拟兜底，让用户补标题违背「系统提取」定位）
-    return [e.key for e in standard.elements if e.required and not e.system and not e.auto_fill and blank(get_value(form, e.field_path))]
+    # 动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 缺口同样算缺失
+    dyn = dynamic_required_keys(standard, form)
+    return [e.key for e in standard.elements if (e.required or e.key in dyn) and not e.system and not e.auto_fill and blank(get_value(form, e.field_path))]
 
 
 def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None = None, can_submit: bool = False,
@@ -291,17 +302,23 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
     当轮白话追一次，豁免上面的「可提交即停问」闸门——答案还热乎，当场补一句成本最低，
     且发生在「可以提交」说出口之前，不违背承诺。只认「恰有 1 个必填交互要素值变化」的轮次
     （粘贴/图片解析/模型联动改写等多字段同变时不算，不当场挑刺，遗留项交合并一问兜底）；
-    占 attempts 计数，问满（max_attempts 次）放过；只覆盖必填交互项（B 区非必填天然不在列）。
+    占 attempts 计数，问满（max_attempts 次）放过；只覆盖必填交互项。
+
+    B 区路径分流（2026-10-26 拍板，修订 10-24 全解耦口径）：原生业务需求（判型票自然过线、
+    无 b1Backfill 标记）的 B1~B4 转为动态必填——进追问序列（仍按 B 区沉底排序）、占提交门槛、
+    趁热打铁/合并一问同权覆盖，B1 不再走「只问一次」白话通道（答不出不放行，按常规必填计次）；
+    升级型业务需求（带 b1Backfill 标记）与其余判型维持 10-24 口径：仅 B1 白话一问，B2~B4 不问。
     """
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
-    required = [e.key for e in standard.elements if e.required and not e.system]
+    dyn = dynamic_required_keys(standard, form or {})
+    required = [e.key for e in standard.elements if (e.required or e.key in dyn) and not e.system]
     # 趁热打铁：与上一轮表单快照对比，恰有 1 个必填交互要素（非系统/非自动提取/非底稿）值变化时
     # 视为「本轮刚答」；多字段同变（粘贴/图片解析/联动改写）不算，不当场挑刺
     fresh_key = None
     if previous_form is not None and form is not None:
         changed = [e.key for e in standard.elements
-                   if e.required and not e.system and not e.auto_fill and e.key != "content"
+                   if (e.required or e.key in dyn) and not e.system and not e.auto_fill and e.key != "content"
                    and get_value(previous_form, e.field_path) != get_value(form, e.field_path)]
         if len(changed) == 1:
             fresh_key = changed[0]
@@ -325,8 +342,10 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
             return element is not None and element.status == "MISSING" and element.attempts < 1
         # B1 白话一问（2026-10-24 拍板）：businessGoal 是唯一保留在追问序列的 B 区要素——
         # 仅真空着（MISSING）且从未问过才选中，问一次即终结（答出落库 / 答不出 SKIP 放行）；
-        # 非必填不占提交门槛，can_submit 后仍必问这一次（治理型追问，与急单门控同性质）
-        if key == "businessGoal":
+        # 非必填不占提交门槛，can_submit 后仍必问这一次（治理型追问，与急单门控同性质）。
+        # 路径分流（2026-10-26 拍板）：原生业务需求下 B1 已转动态必填（在 dyn 内），
+        # 不再走「只问一次」通道，落到下方常规必填逻辑（答不出不放行、计次同 A/C/D）
+        if key == "businessGoal" and key not in dyn:
             element = by_key.get(key)
             return element is not None and element.status == "MISSING" and element.attempts < 1
         element = by_key.get(key)
@@ -377,8 +396,10 @@ def vague_batch_fields(standard: Standard, elements: list, form: dict, *, light:
     if ext.get("qualityBatchDone") or _return_reason_of(form):
         return None
     by_key = {element.key: element for element in elements}
+    # 动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 与 A/C/D 必填同权参与合并一问
+    dyn = dynamic_required_keys(standard, form)
     hits = [field for field in standard.elements
-            if field.required and not field.system and not field.auto_fill and field.key != "content"
+            if (field.required or field.key in dyn) and not field.system and not field.auto_fill and field.key != "content"
             and (element := by_key.get(field.key)) is not None and element.status == "VAGUE" and element.attempts == 0]
     return hits or None
 
@@ -419,12 +440,13 @@ def user_said_skip(standard, text):
     return any(normalized in {phrase, "我" + phrase, "请" + phrase, "这项" + phrase, "这个" + phrase, phrase + "吧", "我选择" + phrase} for phrase in standard.skip_phrases)
 
 
-def quick_replies(standard, target):
+def quick_replies(standard, target, form: dict | None = None):
     if target is None:
         return []
     field = next(e for e in standard.elements if e.key == target.key)
     result = list(field.options.values()) if field.kind == "enum" else []
-    if target.attempts >= 1 and not field.required:
+    # 动态必填项（2026-10-26 拍板路径分流）与真必填同权：不提供「后续补充」逃逸出口
+    if target.attempts >= 1 and not field.required and target.key not in dynamic_required_keys(standard, form or {}):
         result.append("后续补充")
     return result
 
@@ -523,7 +545,8 @@ def return_quote_seen(texts) -> bool:
 
 def reply_for(standard, target, form, *, light: bool = False, trigger: str = "dialog"):
     if target is None:
-        # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区
+        # B 区路径分流（2026-10-26 拍板）：完成判定 = A/C/D 必填 + 原生业务需求的 B1~B4
+        # 动态必填（schema_errors 内自动加码）；升级型/其余判型维持 A/C/D 门槛
         active_zones = {"A", "C", "D"}
         return_reason = _return_reason_of(form)
         if light:
@@ -554,7 +577,8 @@ def reply_for(standard, target, form, *, light: bool = False, trigger: str = "di
         template = anchored_template(standard, field, form) or (field.ask_missing or field.ask_l1 if target.status == "MISSING" else field.ask_l1 or field.ask_missing)
     template = template or f"请补充{field.label}，以便把需求记录清楚。"
     reply = template.replace("{snippet}", snippet)
-    if target.attempts >= 1 and not field.required:
+    # 动态必填项（2026-10-26 拍板路径分流）与真必填同权：追问不附「后续补充」话术出口
+    if target.attempts >= 1 and not field.required and field.key not in dynamic_required_keys(standard, form):
         reply += " 也可以说“后续补充”。"
     return reply
 
@@ -631,7 +655,7 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
     if light:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
-        # 判型与 B 区解耦（2026-10-24 拍板）：提交门槛恒为 A/C/D 三区
+        # B 区路径分流（2026-10-26 拍板）：提交门槛恒为 A/C/D 三区 + 原生业务需求 B1~B4 动态必填
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
     if not prev:
         # 首轮闲聊：只引导不追问（单问题原则）——此前连发引导+标题确认两个问题，用户不知答哪个
@@ -647,7 +671,7 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
         "askedTarget": target.key if target else None, "canSubmit": can_submit, "ready": can_submit,
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
-        "quickReplies": quick_replies(standard, target), "reply": reply,
+        "quickReplies": quick_replies(standard, target, merged), "reply": reply,
         "typeRecognition": recognition, "mode": mode, "granularityHint": None, "impactHints": [],
         "intent": "chitchat",
     }
@@ -701,14 +725,24 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
                              standard=standard, previous_form=previous_form, form=merged,
                              count_keys=manual_keys)
     # B1 答不出放行（2026-10-24 拍板）：B1 白话一问答「不清楚/说不好」类 → SKIP 终结该问题，
-    # 回复带固定放行书（不追问第二次、不标质量问题、不拦提交、不承诺"后续找谁补"）
-    b1_released = said_skip and prev_target == "businessGoal"
-    # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区；
-    # 判型标签仅作归类展示与 B1 答出后的翻转确认，不再驱动必填与追问
+    # 回复带固定放行书（不追问第二次、不标质量问题、不拦提交、不承诺"后续找谁补"）。
+    # 路径分流（2026-10-26 拍板）：原生业务需求下 B1 已转动态必填，答不出不放行、不播固定放行书
+    dyn = dynamic_required_keys(standard, merged)
+    b1_released = said_skip and prev_target == "businessGoal" and "businessGoal" not in dyn
+    # B 区路径分流（2026-10-26 拍板）：提交门槛 = A/C/D 必填 + 原生业务需求的 B1~B4 动态必填
+    # （schema_errors 内按 typeRecognition 路径自动加码）；升级型（b1Backfill）与其余判型维持 A/C/D 门槛
     if light:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
+    # 原生业务升级当轮播报（2026-10-26 拍板）：判型票本轮自然涨过线（非 B1 补票）时当场告知——
+    # B 区四要素转为必填，与 10-25「改归类立即重算质量卡并接续追问」先例同构；升级型补票翻转不播
+    # （B1 答案本身已被引述确认，且不加新门槛）；缺 0 项（大段粘贴已填满）时不播
+    business_notice = ""
+    if dyn and not native_business(form):
+        n_missing = sum(1 for e in standard.elements if e.key in dyn and blank(get_value(merged, e.field_path)))
+        if n_missing:
+            business_notice = f"这条需求现在识别为业务需求，还需补充 {n_missing} 项业务要素。"
     # 追问顺序与提交门槛同口径（2026-10-24 拍板）：A/C/D 必填先问完，再必问一次 B1 白话问题；
     # light 模式只按最小集追问（每项一次）并按最小集放行提交，B 区不问
     target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit, previous_form=previous_form)
@@ -784,6 +818,9 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         if b1_released:
             # B1 答不出放行书（2026-10-24 拍板）：对用户回答的直接回应，跟在播报类之后、行动项之前
             paragraphs.append(B1_RELEASE)
+        if business_notice:
+            # 原生业务升级播报（2026-10-26 拍板）：播报考量与放行书同位（播报类之后、行动项之前）
+            paragraphs.append(business_notice)
         paragraphs.append(reply)  # 追问（含意图桥接/模式播报）始终末段，离输入框最近
         reply = "\n\n".join(paragraphs)
         # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次——调用方按历史消息判定是否首次；
@@ -803,7 +840,7 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         "missing": compute_missing(standard, merged), "elements": [e.model_dump(by_alias=True) for e in curr],
         "askedTarget": target.key if target else None, "canSubmit": can_submit, "ready": can_submit,
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
-        "quickReplies": quick_replies(standard, target), "reply": reply,
+        "quickReplies": quick_replies(standard, target, merged), "reply": reply,
         "typeRecognition": recognition, "mode": mode, "granularityHint": granularity, "impactHints": impacts,
         # intent 落库（2026-10-20 拍板）：随 ASSISTANT 消息 payload 存档，提交时按 request_id 配对
         # 识别并排除闲聊/提问/指令轮的用户消息，保证底稿只拼接有效对话
@@ -834,7 +871,7 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
     if light:
         can_submit = not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
-        # 判型与 B 区解耦（2026-10-24 拍板）：提交门槛恒为 A/C/D 三区
+        # B 区路径分流（2026-10-26 拍板）：提交门槛恒为 A/C/D 三区 + 原生业务需求 B1~B4 动态必填
         can_submit = not schema_errors(standard, form, required=True, active_zones={"A", "C", "D"})
     # 无描述白话邀请（2026-10-19 拍板）：底稿为空且未达门槛时，先请用户一句话描述需求——
     # 一句话同时喂饱底稿回填、要素抽取与轻重判定。仅非必填 content（科技标准）适用；
@@ -868,6 +905,6 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
         "canSubmit": can_submit, "guidanceComplete": target is None,
         # 合并一问不再附带「不清楚」快捷回复 chip（2026-10-25 拍板）：话术里已有文字出口，
         # 不再多占一个按钮；batch 轮 target=None 时 quick_replies 天然返回空
-        "quickReplies": quick_replies(standard, target),
+        "quickReplies": quick_replies(standard, target, form),
         "extUpdates": {"qualityBatchDone": now().isoformat(timespec="seconds")} if batch_fields else None,
     }

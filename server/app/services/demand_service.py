@@ -754,9 +754,9 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
         # C/D 其余 12 项模板要素对换 logo/调样式这类轻量需求会语义性误伤，不作为提交门槛
         errors = rules.schema_errors(std, form, required=True, required_keys=rules.LIGHT_REQUIRED_KEYS)
     else:
-        # 判型与 B 区解耦（2026-10-24 拍板）：B 区要素全部非必填，提交门槛恒为 A/C/D 三区——
-        # 组织级理由（B1）是受理方分析产物，提报侧只保留「B1 白话一问」治理动作，不再拦提交；
-        # 受理侧兜底：standard 缺 B1 拒绝受理（triage_service.accept）
+        # B 区路径分流（2026-10-26 拍板）：提交门槛 = A/C/D 必填 + 原生业务需求的 B1~B4 动态必填
+        # （schema_errors 按 typeRecognition 路径自动加码）；升级型（b1Backfill 补票）B2~B4 放行提交，
+        # 受理侧兜底补录；受理强校验不变：standard 缺 B1 拒绝受理（triage_service.accept）
         errors = rules.schema_errors(std, form, required=True, active_zones={"A", "C", "D"})
     if errors:
         raise BizError(ErrorCode.PARAM_INVALID, errors[0])

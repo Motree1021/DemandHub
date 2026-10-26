@@ -46,6 +46,9 @@
         <template v-else>
           <span class="v" :class="{ empty: !row.value }">{{ row.value || '未填写' }}</span>
           <el-tag v-if="row.optional" size="small" type="info" effect="plain" class="st">选填·不参与评估</el-tag>
+          <!-- 升级型业务需求（2026-10-26 拍板路径分流）：B 区空缺属受理侧兜底补录项，
+               替换「缺失」为「待受理补充」，提示由受理产品经理补齐而非打回提报人 -->
+          <el-tag v-else-if="row.pendingTriage" size="small" type="warning" effect="plain" class="st">待受理补充</el-tag>
           <el-tag v-else-if="row.status" size="small" effect="plain" class="st"
                   :type="tagType(row.status)" :title="row.note || undefined">
             {{ statusText(row.status) }}
@@ -64,7 +67,7 @@ import type { DemandRow, ElementStatus, StandardDef, StandardField } from '@/api
 import { ApiError } from '@/api/request'
 import { DEMAND_LEVEL_META, demandLevelOf } from '@/utils/status'
 import {
-  ZONE_TITLES, displayValue, fieldPath, grayZones, readField,
+  ZONE_TITLES, backfilledBusiness, displayValue, fieldPath, grayZones, readField,
 } from '@/utils/demand'
 
 const props = defineProps<{ demand: DemandRow; standard: StandardDef; quality: ElementStatus[] }>()
@@ -85,6 +88,8 @@ const levelMeta = computed(() => {
 })
 
 const gray = computed(() => grayZones(props.demand.ext?.typeRecognition))
+// 升级型业务需求（B1 补票路径）：B 区空缺行标「待受理补充」而非「缺失」
+const backfilled = computed(() => backfilledBusiness(props.demand.ext?.typeRecognition))
 // D 区永不置灰（向下兼容只灰 B/C），此处断言仅为通过 Set<'B'|'C'> 的类型收窄
 const isGrayZone = (zone: 'B' | 'C' | 'D') => gray.value.has(zone as 'B' | 'C')
 
@@ -97,7 +102,7 @@ const saving = ref(false)
 interface ZoneRow {
   path: string; zone: string; key: string; label: string; value: string; raw: unknown
   kind: StandardField['kind']; options?: Record<string, string>
-  status?: ElementStatus['status']; note?: string; optional: boolean
+  status?: ElementStatus['status']; note?: string; optional: boolean; pendingTriage: boolean
 }
 
 const zoneGroups = computed(() => {
@@ -114,6 +119,7 @@ const zoneGroups = computed(() => {
         kind: f.kind, options: f.options,
         status: optional ? undefined : q?.status, note: q?.note,
         optional,
+        pendingTriage: zone === 'B' && backfilled.value && !optional && q?.status === 'MISSING',
       }
     })
     return {

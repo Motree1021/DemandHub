@@ -1,7 +1,7 @@
 /** 判型识别与置灰规则（utils/demand.ts）：confirmed 优先、层级倾斜 + 档位对齐（判线 0.7）、向下兼容置灰。 */
 import { describe, expect, it } from 'vitest'
 import type { ElementStatus, StandardDef, StandardField } from '../src/api'
-import { grayZones, recognitionLevel, vagueRequiredLabels } from '../src/utils/demand'
+import { backfilledBusiness, grayZones, recognitionLevel, vagueRequiredLabels } from '../src/utils/demand'
 
 describe('recognitionLevel 生效判型', () => {
   it('人工确认优先于置信度', () => {
@@ -41,6 +41,21 @@ describe('grayZones 判型置灰（向下兼容）', () => {
   })
   it('置信度判型同样生效', () => {
     expect([...grayZones({ business: 0.1, user: 0.2, function: 0.9 })].sort()).toEqual(['B', 'C'])
+  })
+})
+
+/** 升级型业务需求判定（2026-10-26 拍板路径分流）：判型归业务 + b1Backfill 补票标记 → B 区空缺受理兜底 */
+describe('backfilledBusiness 升级型业务需求', () => {
+  it('判型归业务且带 b1Backfill 标记 → true', () => {
+    expect(backfilledBusiness({ business: 0.9, b1Backfill: true })).toBe(true)
+    expect(backfilledBusiness({ confirmed: 'business', b1Backfill: true })).toBe(true)
+  })
+  it('无标记的原生业务需求 / 非业务判型 / 空值 → false', () => {
+    expect(backfilledBusiness({ business: 0.9 })).toBe(false)
+    expect(backfilledBusiness({ confirmed: 'business' })).toBe(false)
+    expect(backfilledBusiness({ user: 0.9, b1Backfill: true })).toBe(false)
+    expect(backfilledBusiness(null)).toBe(false)
+    expect(backfilledBusiness(undefined)).toBe(false)
   })
 })
 

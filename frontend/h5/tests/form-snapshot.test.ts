@@ -63,11 +63,12 @@ describe('FormSnapshotCard 要素实时卡', () => {
     expect(bPill.text()).toBe('选填')
     expect(bPill.classes()).toContain('optional')
   })
-  it('点击字段行emit edit-field；B区不标星，B1空缺显示「先空着，不影响提交」灰标签', async () => {
-    // 判型与 B 区解耦（2026-10-24 拍板）：B 区全部非必填——不标星、不再挂「业务需求·必填」，
+  it('点击字段行emit edit-field；升级型业务需求B区不标星，B1空缺显示「先空着，不影响提交」灰标签', async () => {
+    // B 区路径分流（2026-10-26 拍板）：升级型（b1Backfill 补票升级）B 区不标星不拦提交——
     // B1 空缺时灰字提示「先空着，不影响提交」（不标红不催办）；填写后标记消失
     const emptyB = form()
     delete emptyB.elements.B
+    emptyB.ext = { typeRecognition: { business: 0.9, b1Backfill: true } }
     const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: emptyB, businessConfirmed: true }, global: { stubs } })
     expect(wrapper.text()).toContain('先空着，不影响提交')
     expect(wrapper.text()).not.toContain('业务需求 · 必填')
@@ -76,8 +77,25 @@ describe('FormSnapshotCard 要素实时卡', () => {
     await row.trigger('click')
     expect(wrapper.emitted('edit-field')?.[0]?.[0]).toMatchObject({ key: 'businessGoal' })
     // B1 已填：灰标签消失
-    const filledB = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: form(), businessConfirmed: true }, global: { stubs } })
+    const filledBForm = form()
+    filledBForm.ext = { typeRecognition: { business: 0.9, b1Backfill: true } }
+    const filledB = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: filledBForm, businessConfirmed: true }, global: { stubs } })
     expect(filledB.text()).not.toContain('先空着，不影响提交')
+  })
+  it('原生业务需求（无 b1Backfill 标记）：B区动态必填标星计进度，B1空缺不显示「先空着」灰标签', () => {
+    // B 区路径分流（2026-10-26 拍板）：原生型 B1~B4 与 A/C/D 必填同权——
+    // 标星、「待补充」胶囊、计入折叠态必填分母，不再显示「先空着」灰标签
+    const emptyB = form()
+    delete emptyB.elements.B
+    emptyB.ext = { typeRecognition: { business: 0.9 } }
+    const wrapper = mount(FormSnapshotCard, { props: { defaultExpanded: true, standard, form: emptyB, businessConfirmed: true }, global: { stubs } })
+    const row = wrapper.findAll('.el').find(item => item.text().includes('业务目标'))!
+    expect(row.find('.req').exists()).toBe(true)
+    expect(row.find('.pill').text()).toBe('待补充')
+    expect(wrapper.text()).not.toContain('先空着，不影响提交')
+    // 折叠态必填进度计入 B 区动态必填：A 区 3 项已填 / 共 6 项（A3 + C1 + D1 + B1）
+    const collapsed = mount(FormSnapshotCard, { props: { standard, form: emptyB, businessConfirmed: true }, global: { stubs } })
+    expect(collapsed.text()).toContain('必填 3/6')
   })
   it('D9 建议方案选填：未填显示「选填」胶囊不标星，不计入必填分母', () => {
     // 方案⑤（2026-10-12 拍板）：提报人设想的候选方案/实现路径，选填供受理方评估、永不追问
@@ -174,10 +192,10 @@ describe('FormSnapshotCard 要素实时卡', () => {
   })
   it('默认折叠：只显示必填进度，归类行随要素区一起折叠，点击标题栏展开/收起', async () => {
     const value = form()
-    value.ext = { typeRecognition: { business: 0.9 } }
+    value.ext = { typeRecognition: { business: 0.9, b1Backfill: true } }
     const wrapper = mount(FormSnapshotCard, { props: { standard, form: value, businessConfirmed: true }, global: { stubs } })
     // 折叠态：要素区与归类行均不渲染；头部基础必填 3/5
-    // （2026-10-24 拍板判型解耦：B 区不再必填，折叠态不再追加「业务 Y/N」进度）
+    // （2026-10-26 拍板路径分流：升级型业务需求 B 区不计入必填分母；原生型才计入 B1~B4）
     expect(wrapper.find('.zone').exists()).toBe(false)
     expect(wrapper.find('.type-row').exists()).toBe(false)
     expect(wrapper.text()).toContain('必填 3/5')

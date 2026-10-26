@@ -52,6 +52,8 @@ export interface TypeRecognition {
   business?: number
   user?: number
   function?: number
+  /** B1 补票升级路径标记（2026-10-26 拍板）：true=升级型业务需求，B2~B4 放行提交由受理侧兜底补录 */
+  b1Backfill?: boolean
 }
 
 export const RECOGNITION_LABELS: Record<RecognitionLevel, string> = {
@@ -84,6 +86,15 @@ export function grayZones(recognition: unknown): Set<'B' | 'C'> {
   if (level === 'user') return new Set(['B'])
   if (level === 'function') return new Set(['B', 'C'])
   return new Set()
+}
+
+/** 升级型业务需求（2026-10-26 拍板路径分流）：判型归业务且带 b1Backfill 补票标记——
+ *  B2~B4 空缺不拦提交，受理页标「待受理补充」由受理产品经理兜底补齐；
+ *  原生型（无标记）B1~B4 在提报侧已动态必填拦截，受理页不命中本判定 */
+export function backfilledBusiness(recognition: unknown): boolean {
+  if (!recognition || typeof recognition !== 'object') return false
+  const r = recognition as TypeRecognition
+  return !!r.b1Backfill && recognitionLevel(r) === 'business'
 }
 
 /** 服务端保留的 ext 键（已有专属展示位：概述/打回原因/预判拆分等），补充信息兜底展示时排除 */
