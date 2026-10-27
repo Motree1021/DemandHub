@@ -1,0 +1,17 @@
+name: 混合句归槽（张征案例：组织价值与实现形态同句，价值半截必须拆入 B3）
+type: TECH
+turns:
+- user: 我想做个语音合成智能体，输入话术生成拟人mp3，替换现在机械化的提示音。这个系统其他银行渠道也可以复用，可以做成一个系统，添加我司的渠道赋能的新能力。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      elements.B.businessValue: 其他银行渠道也可以复用、添加我司的渠道赋能的新能力
+    evidence_from_user:
+    - elements.B.businessValue
+    elements_status:
+      businessValue: OK

@@ -215,11 +215,15 @@ async def test_manual_change_follow_up_resume(session_factory, user):
     follow = await _last_message(session_factory, user, session_id)
     assert follow.structured_payload["askedTarget"] == "userRole"
     # 必填全填（含 B1 治理型一问的答出，2026-10-24 拍板：B1 答出落库即终结，不再追问）：接续给完成话术，引导结束
+    # 2026-10-26 统一必填：B1 落库触发补票升级后 B2~B4 同为必填；手改链路不走模型代拟，需一并填齐才能 canSubmit
     async with session_factory() as db:
         async with db.begin():
             await service.update_draft(db, user, demand_id, {"expectedRevision": 2, "urgency": "NORMAL",
                 "content": "整理需求并记录完整业务信息",
-                "elements": {"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力"},
+                "elements": {"B": {"businessGoal": "帮部门省下专职整理岗，释放一个人力",
+                                   "businessBackground": "晨会数据目前靠专职整理岗手工汇总",
+                                   "businessValue": "释放专职整理岗的人力投入",
+                                   "stakeholders": ["部门晨会参与同事"]},
                              "C": {"userRole": "客户经理", "userGoal": "晨会前快速掌握各机构持仓汇总情况",
                                    "useScenario": "客户经理每天晨会前查各机构持仓汇总",
                                    "painPoint": "手工汇总20个机构数据要40分钟且易出错"},
@@ -231,8 +235,9 @@ async def test_manual_change_follow_up_resume(session_factory, user):
     assert follow.structured_payload["canSubmit"] is True
     assert follow.structured_payload["guidanceComplete"] is True
     assert follow.structured_payload["askedTarget"] is None
-    # 2026-10-20 拍板：手改完成话术收敛为简短确认（不再播选填项长说明）
-    assert follow.content == "修改已记录好，可以点「确认提交」提交。"
+    # 2026-10-20 拍板：手改完成话术收敛为简短确认（不再播选填项长说明）；
+    # 前缀可能带变更播报（如科技需求子类判定，依赖测试环境跨要素抽取是否降级），故只锚定结尾
+    assert follow.content.endswith("修改已记录好，可以点「确认提交」提交。")
 
 
 class _FakeManualArk:

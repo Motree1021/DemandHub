@@ -198,7 +198,7 @@ import type {
 } from '@/api'
 import { ApiError } from '@/api/request'
 import { TYPE_META } from '@/utils/status'
-import { RECOGNITION_LABELS, backfilledBusiness, recognitionLevel, vagueRequiredLabels } from '@/utils/demand'
+import { RECOGNITION_LABELS, recognitionLevel, vagueRequiredLabels } from '@/utils/demand'
 import StatusTag from '@/components/StatusTag.vue'
 import UrgencyTag from '@/components/UrgencyTag.vue'
 import SolutionPanel from './panels/SolutionPanel.vue'
@@ -243,13 +243,6 @@ const recogLevel = computed(() => recognitionLevel(typeRecognition.value))
 const recogConfirmed = computed(() => {
   const r = typeRecognition.value as { confirmed?: string | null } | undefined
   return !!r?.confirmed
-})
-// 升级型业务需求 B 区兜底提醒（2026-10-26 拍板路径分流）：B1 补票升级的需求 B2~B4 可空缺提交，
-// 受理确认前汇总提醒空缺项，受理人知情后兜底补录（仅提醒不拦截，与 B1 accept 强校验正交）
-const backfilledBMissing = computed(() => {
-  if (!backfilledBusiness(typeRecognition.value) || !standard.value) return []
-  const missing = new Set(quality.value.filter(q => q.status === 'MISSING').map(q => q.key))
-  return standard.value.elements.filter(f => f.zone === 'B' && !f.system && missing.has(f.key)).map(f => f.label)
 })
 
 function errorMessage(e: unknown, fallback: string) {
@@ -369,11 +362,6 @@ async function onAction(event: string) {
       if (vague.length) {
         const names = vague.slice(0, 3).map(label => `「${label}」`).join('、') + (vague.length > 3 ? ' 等' : '')
         message = `该需求还有 ${vague.length} 项必填内容写得比较笼统（${names}），受理后需补充调研。` + message
-      }
-      const bMissing = backfilledBMissing.value
-      if (bMissing.length) {
-        const names = bMissing.map(label => `「${label}」`).join('、')
-        message = `该需求为业务需求，还有 ${bMissing.length} 项业务要素（${names}）待补充，受理后请补录。` + message
       }
     }
     try {

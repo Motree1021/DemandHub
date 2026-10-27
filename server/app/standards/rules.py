@@ -113,43 +113,100 @@ def filter_form(standard: Standard | None, form: dict, *, validate: bool = True,
     return result
 
 
-def business_confirmed(recognition: dict | None) -> bool:
-    """判型是否归为业务需求（2026-10-24 拍板层级倾斜 business>user>function + 档位对齐）：
-    business 票 ≥0.7 即判业务需求——判线贴在主句级起点，从句级信号（封顶 0.6）天然不过线，
-    不再要求严格占优；三票是「证据强度」而非互斥概率，归类按最高层级走；判型与 B 区解耦后仅作归类展示。
-    用户确认/改判定稿优先于置信度。"""
-    if not recognition:
-        return False
+# 判型层级（2026-10-26 拍板派生制）：业务>用户>功能，「只涨不跌」取高时用
+LEVEL_RANK = {"function": 1, "user": 2, "business": 3}
+
+
+def effective_level(recognition: dict | None) -> str | None:
+    """读取生效判型层级：人工定稿（confirmed 三选一）最高优先；新结构 level 直读；
+    旧票数结构兼容折算（business/user ≥0.7 对应层级、有票即功能兜底，2026-10-24 档位对齐口径）。
+    confirmed="none"（历史人工消除标记）按无判型处理，不折算旧票。"""
+    if not isinstance(recognition, dict):
+        return None
     confirmed = recognition.get("confirmed")
+    if confirmed in LEVEL_RANK:
+        return confirmed
+    if confirmed == "none":
+        return None
+    level = recognition.get("level")
+    if level in LEVEL_RANK:
+        return level
+    if float(recognition.get("business") or 0) >= 0.7:
+        return "business"
+    if float(recognition.get("user") or 0) >= 0.7:
+        return "user"
+    if any(float(recognition.get(key) or 0) > 0 for key in LEVEL_RANK):
+        return "function"
+    return None
+
+
+def business_confirmed(recognition: dict | None) -> bool:
+    """判型是否归为业务需求（2026-10-26 拍板派生制）：生效层级为 business 即算——
+    来源可以是本轮素材派生、历史取高保留或人工定稿；判型仅作归类展示与 B 区必填闸门。"""
+    return effective_level(recognition) == "business"
+
+
+# C 区三件套：用户需求派生的充要素材（谁、什么场景、卡在哪）
+C_TRIO_KEYS = ("userRole", "useScenario", "painPoint")
+
+
+def derive_recognition(form: dict, field_sources: dict | None = None) -> dict | None:
+    """判型派生（2026-10-26 拍板派生制；2026-10-27 拍板 evidence 机制修订）：从表单素材直接推导层级，
+    不再让模型打分——B1（业务目标）非空且出处为 user → 业务需求；或 B3（业务价值）非空且出处为 user
+    → 业务需求。「出处为 user」= 对话轮模型附原话证据（evidence）经规则层机械验真提升，或手改落库；
+    AI 代拟（出处 agent）一律不参与派生，防「因为判业务所以代拟、因为代拟所以有值」循环自证；
+    B1 与 B3 同标准（旧版 B1 有值即判业务属契约漏洞，#50 案例整句灌 B1 蒙对判型）。
+    否则 C 区三件套（角色/场景/痛点）齐全 → 用户需求；已有实质素材但不满足以上两条 → 功能需求；
+    表单仍空 → None（不出判型，H5 归类标签不渲染）。
+    返回 {"level", "basis": {"field", "excerpt"}}，basis 留痕判定依据供受理侧追溯。"""
+    sources = field_sources or {}
+    elements = form.get("elements") or {}
+    b_zone = elements.get("B") or {}
+    c_zone = elements.get("C") or {}
+    d_zone = elements.get("D") or {}
+
+    def excerpt(value) -> str:
+        text = str(value).replace("\n", " ").strip()
+        return text[:30] + ("…" if len(text) > 30 else "")
+
+    if not blank(b_zone.get("businessGoal")) and sources.get("elements.B.businessGoal") == "user":
+        return {"level": "business", "basis": {"field": "businessGoal", "excerpt": excerpt(b_zone["businessGoal"])}}
+    if not blank(b_zone.get("businessValue")) and sources.get("elements.B.businessValue") == "user":
+        return {"level": "business", "basis": {"field": "businessValue", "excerpt": excerpt(b_zone["businessValue"])}}
+    if all(not blank(c_zone.get(key)) for key in C_TRIO_KEYS):
+        return {"level": "user", "basis": {"field": "useScenario", "excerpt": excerpt(c_zone.get("useScenario"))}}
+    # 功能需求兜底：有任何实质素材（功能描述/场景片段/原文底稿）即判；空表单不判
+    substantive = d_zone.get("functionDescription") or c_zone.get("useScenario") or form.get("content") or form.get("title")
+    if not blank(substantive):
+        return {"level": "function", "basis": {"field": "functionDescription", "excerpt": excerpt(substantive)}}
+    return None
+
+
+def merge_recognition(prev_recognition: dict | None, merged: dict, field_sources: dict) -> dict | None:
+    """判型合并（2026-10-26 拍板派生制）：本轮按表单素材派生层级（derive_recognition），
+    与历史生效层级取高（只涨不跌：业务>用户>功能——组织理由一旦确认就不该消失）；
+    人工定稿 confirmed 最高优先、不被派生覆盖；新结构 {level, basis:{field, excerpt}, confirmed}，
+    basis 留痕判定依据（触发字段+原文摘录）；旧票数结构仅在读取端折算（effective_level），
+    写入一律新结构。prev_recognition 传调用方已合并人工 confirmed 的判型字典。"""
+    prev = prev_recognition or {}
+    prev_level = effective_level(prev)
+    derived = derive_recognition(merged, field_sources)
+    new_level = derived["level"] if derived else None
+    candidates = [level for level in (prev_level, new_level) if level]
+    level = max(candidates, key=lambda item: LEVEL_RANK[item]) if candidates else None
+    confirmed = prev.get("confirmed")
+    if level is None:
+        return {"confirmed": confirmed} if confirmed is not None else None
+    result = {"level": level}
+    if derived and derived["level"] == level:
+        result["basis"] = derived["basis"]
+    elif isinstance(prev.get("basis"), dict):
+        result["basis"] = prev["basis"]
+    elif prev_level == "business" and isinstance(prev.get("evidence"), dict) and prev["evidence"].get("business"):
+        # 旧票数结构折算展示：evidence.business 转为 basis 摘录
+        result["basis"] = {"field": "", "excerpt": prev["evidence"]["business"]}
     if confirmed is not None:
-        return confirmed == "business"
-    return float(recognition.get("business") or 0) >= 0.7
-
-
-B1_BUSINESS_FLOOR = 0.7  # B1 落库翻转时 business 票的补足底值（= 业务判线，主句级起点，与 business_confirmed 同档）
-
-
-def promote_business_on_b1(recognition: dict | None, before: dict, after: dict) -> dict | None:
-    """B1 落库即判业务（2026-10-24 拍板）：B1 业务目标「从空变为有值」（用户亲口答出或手填组织理由）——
-    硬证据优先于模型软分数，business 票补足到业务门槛 0.7，依据为空时回填 B1 原文。
-    路径分流（2026-10-26 拍板）：补票升级打 b1Backfill 标记——带标记的业务需求为「升级型」，
-    B2~B4 放行提交、受理侧兜底补录；不带标记的业务判型为「原生型」，B1~B4 动态必填。
-    幂等：business 已 ≥0.7、B1 非「空→有」变化时原样返回；confirmed 人工定稿优先，定稿后不动。"""
-    prev_b1 = ((before.get("elements") or {}).get("B") or {}).get("businessGoal")
-    curr_b1 = ((after.get("elements") or {}).get("B") or {}).get("businessGoal")
-    if str(prev_b1 or "").strip() or not str(curr_b1 or "").strip():
-        return recognition
-    if recognition is not None and recognition.get("confirmed") is not None:
-        return recognition
-    result = dict(recognition) if recognition else {}
-    if float(result.get("business") or 0) >= B1_BUSINESS_FLOOR:
-        return recognition
-    result["business"] = B1_BUSINESS_FLOOR
-    result["b1Backfill"] = True
-    evidence = dict(result.get("evidence") or {})
-    if not evidence.get("business"):
-        evidence["business"] = str(curr_b1).strip()
-    result["evidence"] = evidence
+        result["confirmed"] = confirmed
     return result
 
 
@@ -166,24 +223,18 @@ def demand_mode(form: dict) -> str:
     return "light" if isinstance(mode, dict) and mode.get("level") == "light" else "standard"
 
 
-# B 区必填路径分流（2026-10-26 拍板，修订 10-24「判型与必填全解耦」口径）：
-# 原生业务需求（模型判型票自然涨过 0.7，或人工定稿 business）B1~B4 动态必填、缺了不能提交；
-# 升级业务需求（B1 答出后规则补票过线，带 b1Backfill 标记）放行提交，B2~B4 由受理侧兜底补录。
-# 判型只涨不跌 → 门槛只加不减，无反复；轻量（微需求）链路全程不启用 B 区。
+# B 区统一必填（2026-10-26 拍板，撤销同日早些时候的「原生/升级路径分流」）：判型归业务需求
+# （business 票≥0.7 或人工定稿 business，含 B1 补票升级）且非轻量 → B1~B4 动态必填、缺了不能提交；
+# 不分原生/升级、不看票来源。判型只涨不跌 → 门槛只加不减，无反复；轻量（微需求）链路全程不启用 B 区。
 B_ZONE_DYNAMIC_KEYS = frozenset({"businessGoal", "businessBackground", "businessValue", "stakeholders"})
 
 
-def native_business(form: dict) -> bool:
-    """原生业务需求判定：判型归业务需求（含人工定稿）且非 B1 补票升级路径。"""
-    recognition = (form.get("ext") or {}).get("typeRecognition")
-    if not isinstance(recognition, dict) or recognition.get("b1Backfill"):
-        return False
-    return business_confirmed(recognition)
-
-
 def dynamic_required_keys(standard: Standard | None, form: dict) -> frozenset:
-    """动态必填 key 集：原生业务需求且非轻量时 B1~B4 启用（yaml 仍 required:false，启用归代码层）。"""
-    if standard is None or demand_mode(form) == "light" or not native_business(form):
+    """动态必填 key 集：判型归业务需求且非轻量时 B1~B4 启用（yaml 仍 required:false，启用归代码层）。"""
+    if standard is None or demand_mode(form) == "light":
+        return frozenset()
+    recognition = (form.get("ext") or {}).get("typeRecognition")
+    if not business_confirmed(recognition if isinstance(recognition, dict) else None):
         return frozenset()
     return frozenset(f.key for f in standard.elements if f.key in B_ZONE_DYNAMIC_KEYS)
 
@@ -191,8 +242,8 @@ def dynamic_required_keys(standard: Standard | None, form: dict) -> frozenset:
 def schema_errors(standard: Standard | None, form: dict, *, required: bool = False, active_zones: set[str] | None = None, required_keys: set[str] | None = None) -> list[str]:
     """required=True 时按必填门槛校验；active_zones 限定必填生效的区（None=全部区生效，用于 B 区判型条件必填）；
     required_keys 直接限定必填生效的要素 key（light 最小集口径），优先于 active_zones。
-    动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 与 A/C/D 必填同权校验——
-    与区域/最小集口径正交，always 追加生效；升级型（b1Backfill）与轻量链路天然不命中。"""
+    动态必填（2026-10-26 拍板统一必填）：判型归业务需求的 B1~B4 与 A/C/D 必填同权校验——
+    与区域/最小集口径正交，always 追加生效；非业务判型与轻量链路天然不命中。"""
     if standard is None:
         return ["需求类型未填写"] if required else []
     dyn = dynamic_required_keys(standard, form) if required else frozenset()

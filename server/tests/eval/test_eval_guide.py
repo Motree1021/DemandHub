@@ -1,4 +1,5 @@
 """真实模型评价抽取/判质；全服务延迟另以实际GuideService测量。"""
+import re
 import time
 from pathlib import Path
 
@@ -66,10 +67,26 @@ async def test_real_extraction_and_quality_accuracy_at_least_80_percent(real_ark
                 continue
             status = {item.key: item.status for item in output.elements}
             for key, expected in expected_fields.items():
-                if at(output.structured, key) == expected:
+                actual = at(output.structured, key)
+                # evidence 契约（2026-10-27 拍板）：B1/B3 允许 {"value","evidence"} 对象输出，内容比对取 value
+                if isinstance(actual, dict) and set(actual) <= {"value", "evidence"}:
+                    actual = actual.get("value")
+                if actual == expected:
                     field_hits += 1
                 else:
                     differences.append(f"{case['name']} / turn{turn_index + 1}: {key} 抽取不符")
+            # 原话证据断言（可选，evidence_from_user 清单）：字段须以 {"value","evidence"} 输出，
+            # 且 evidence 归一化后为本轮用户消息连续片段（≥4 字）——与规则层验真同口径
+            for field_path in turn["expect"].get("evidence_from_user", []):
+                field_total += 1
+                raw_field = at(output.structured, field_path)
+                evidence = raw_field.get("evidence") if isinstance(raw_field, dict) else None
+                needle = re.sub(r"[\s，。；、：！？,.;:!?\"'「」『』()（）\-—…·]+", "", str(evidence or ""))
+                haystack = re.sub(r"[\s，。；、：！？,.;:!?\"'「」『』()（）\-—…·]+", "", turn["user"])
+                if len(needle) >= 4 and needle in haystack:
+                    field_hits += 1
+                else:
+                    differences.append(f"{case['name']} / turn{turn_index + 1}: {field_path} 未附有效原话证据")
             for key, expected in expected_quality.items():
                 if status.get(key) == expected:
                     quality_hits += 1

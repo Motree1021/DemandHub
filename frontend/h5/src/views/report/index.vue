@@ -66,7 +66,7 @@ import AppLayout from '@/components/AppLayout.vue'
 import StepsBar from '@/components/StepsBar.vue'
 import AgentChatPanel from '@/components/AgentChatPanel.vue'
 import FieldEditSheet from '@/components/FieldEditSheet.vue'
-import { createDraft, updateDraft, submitDemand, getDemand, getStandard, isReplayablePayload, demandModeOf, changeDemandMode, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
+import { createDraft, updateDraft, submitDemand, getDemand, getStandard, isReplayablePayload, demandModeOf, changeDemandMode, recognitionLevelOf, type DemandEntity, type DemandForm, type Standard, type StandardField as StandardFieldDefinition, type ElementStatus, type DemandDetail, type TypeRecognition } from '@/api/demand'
 import { createAgentSession, type GuidePayload } from '@/api/agent'
 import { ApiError } from '@/api/request'
 import { useUserStore } from '@/store/user'
@@ -99,16 +99,11 @@ async function copyExample() {
   }
   showToast(ok ? '已复制，粘贴到输入框后可随意改' : '复制失败，请长按示例文字手动复制')
 }
-// FR-01/FR-03 判型结果：用户确认（confirmed）优先于模型置信度；判型标签仅作归类展示
-// （2026-10-24 拍板：判型与 B 区解耦不拦提交 + 层级倾斜 business>user>function + 档位对齐——
-// business≥0.7（主句级起点）即业务需求，从句级信号（封顶 0.6）天然不过线；三票是证据强度而非互斥概率，对齐服务端）
+// FR-01/FR-03 判型结果：用户确认（confirmed）优先；判型标签仅作归类展示
+// （2026-10-26 拍板派生制：服务端按表单素材派生 level——B1/B3 用户亲口表述→业务、
+// C 区三件套齐→用户、其余→功能；旧票数结构由 recognitionLevelOf 兼容折算，对齐服务端）
 const typeRecognition = computed(() => form.ext.typeRecognition as TypeRecognition | undefined)
-const businessConfirmed = computed(() => {
-  const recognition = typeRecognition.value
-  if (!recognition) return false
-  if (recognition.confirmed != null) return recognition.confirmed === 'business'
-  return (recognition.business ?? 0) >= 0.7
-})
+const businessConfirmed = computed(() => recognitionLevelOf(typeRecognition.value) === 'business')
 // 微需求快速通道（方案②）：AI 判 mode=light 时提交门槛/拦截文案走轻量口径（对齐服务端 demand_mode）
 const isLight = computed(() => demandModeOf(form) === 'light')
 // 步骤条推导：表达→拆解→追问→提交（方案A：判型由 AI 自动生效，无确认步骤）

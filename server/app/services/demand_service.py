@@ -202,6 +202,13 @@ def write_change_logs(db, demand: Demand, before: dict, after: dict, sources: di
         old = rules.get_value(before, path)
         if old == new:
             continue
+        if path == "ext.typeRecognition":
+            # 判型留痕降噪（2026-10-26 拍板派生制）：仅人工改判（confirmed 变化）记留痕；
+            # 派生 level/basis 随素材刷新属内部记账，留痕会刷噪音（改任意要素都带一条判型行）
+            old_confirmed = old.get("confirmed") if isinstance(old, dict) else None
+            new_confirmed = new.get("confirmed") if isinstance(new, dict) else None
+            if old_confirmed == new_confirmed:
+                continue
         db.add(DemandChangeLog(demand_id=demand.id, field_key=path,
                                old_value=encode(old), new_value=encode(new),
                                source=sources.get(path) or "user", changed_by=user_id))
@@ -333,11 +340,6 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
         merged["ext"]["typeRecognition"] = {**old_recognition, **new_recognition}
     if "elements" in patch:
         merged["elements"] = merge_elements(before["elements"], patch.get("elements"))
-    # B1 落库即判业务（2026-10-24 拍板）：手改补齐 B1 与对话答出同口径翻转（对话链路在 policy.process 内处理）；
-    # 放在 elements 深合并之后——merged 须为完整新表单才能正确判定「空→有」
-    promoted = rules.promote_business_on_b1(merged["ext"].get("typeRecognition"), before, merged)
-    if promoted is not None:
-        merged["ext"]["typeRecognition"] = promoted
     form, std = normalized(merged)
     sources = dict(demand.field_sources or {})
     requested = payload.get("fieldSources") or {}
@@ -347,6 +349,20 @@ async def update_draft(db, user, demand_id: int, payload: dict) -> Demand:
             sources[path] = "user"
         elif path not in sources and not rules.blank(value):
             sources[path] = "user"
+    # 判型派生（2026-10-26 拍板派生制）：手改补齐 B1/B3（来源 user）与对话答出同口径触发派生，
+    # 历史层级取高（只涨不跌）、人工 confirmed 优先；放在来源计算之后——B3 派生业务依赖 user 出处
+    prev_recognition = merged["ext"].get("typeRecognition")
+    if (isinstance(prev_recognition, dict) and isinstance(new_recognition, dict)
+            and "confirmed" in new_recognition
+            and new_recognition.get("confirmed") != (old_recognition or {}).get("confirmed")):
+        # 人工改判/恢复 AI 判断：层级按当前素材重新派生——定稿期间被 confirmed 顶高的历史
+        # level/basis 不随行（只涨不跌只约束 AI 自动判型，不约束人工动作），否则「恢复 AI 判断」
+        # 后定稿时的 business 层级永远跌不回来
+        prev_recognition = {k: v for k, v in prev_recognition.items() if k not in ("level", "basis")}
+    recognition = rules.merge_recognition(prev_recognition, form, sources)
+    if recognition is not None:
+        merged["ext"]["typeRecognition"] = recognition
+        form.setdefault("ext", {})["typeRecognition"] = recognition
     assign(demand, form, sources)
     write_change_logs(db, demand, before, form, sources, user.id)
     notified = False
@@ -511,6 +527,11 @@ async def update_elements(db, user, demand_id: int, payload: dict) -> dict:
     for path, value in paths({"elements": patch_elements}).items():
         if value != rules.get_value(before, path):
             sources[path] = "user"
+    # 判型派生（2026-10-26 拍板派生制）：管理后台手改 B1/B3（来源 user）同样触发派生升级，
+    # 历史层级取高（只涨不跌）、人工 confirmed 优先
+    recognition = rules.merge_recognition(before["ext"].get("typeRecognition"), form, sources)
+    if recognition is not None:
+        form.setdefault("ext", {})["typeRecognition"] = recognition
     assign(demand, form, sources)
     write_change_logs(db, demand, before, form, sources, user.id)
     if std is not None:
@@ -754,9 +775,9 @@ async def submit(db, user, demand_id: int, expected_revision: int) -> Demand:
         # C/D 其余 12 项模板要素对换 logo/调样式这类轻量需求会语义性误伤，不作为提交门槛
         errors = rules.schema_errors(std, form, required=True, required_keys=rules.LIGHT_REQUIRED_KEYS)
     else:
-        # B 区路径分流（2026-10-26 拍板）：提交门槛 = A/C/D 必填 + 原生业务需求的 B1~B4 动态必填
-        # （schema_errors 按 typeRecognition 路径自动加码）；升级型（b1Backfill 补票）B2~B4 放行提交，
-        # 受理侧兜底补录；受理强校验不变：standard 缺 B1 拒绝受理（triage_service.accept）
+        # B 区统一必填（2026-10-26 拍板）：提交门槛 = A/C/D 必填 + 判型归业务需求的 B1~B4 动态必填
+        # （schema_errors 按 typeRecognition 自动加码，不分原生/升级路径）；受理强校验不变：
+        # standard 缺 B1 拒绝受理（triage_service.accept）
         errors = rules.schema_errors(std, form, required=True, active_zones={"A", "C", "D"})
     if errors:
         raise BizError(ErrorCode.PARAM_INVALID, errors[0])

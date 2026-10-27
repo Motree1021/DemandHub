@@ -112,9 +112,8 @@ async def test_sse_structured_carries_type_recognition_and_granularity_hint(clie
                                      "content": "客户经理每天晨会前查看各机构持仓"})).json()["data"]
     session = (await client.post("/demandhub-api/agent/session", headers=auth_headers,
                                  json={"demandId": draft["id"], "scene": "SUBMIT_GUIDE"})).json()["data"]
-    fake = FakeArk({"structured": {"elements": {"A": {"techSubtype": "DATA_RPT"}}}, "elements": [],
-                    "typeSignals": {"business": {"confidence": 0.9, "evidence": "部门年度考核指标"},
-                                    "user": {"confidence": 0.2, "evidence": ""}, "function": {"confidence": 0.1, "evidence": ""}}})
+    fake = FakeArk({"structured": {"elements": {"A": {"techSubtype": "DATA_RPT"},
+                                                "B": {"businessGoal": {"value": "提升部门年度考核指标完成率", "evidence": "提升部门年度考核指标完成率"}}}}, "elements": []})
     client._transport.app.dependency_overrides[get_llm_client] = lambda: fake
     req = {"demandId": draft["id"], "sessionId": session["id"], "requestId": "p3-sse-1",
            "revision": draft["revision"], "message": "提升部门年度考核指标完成率"}
@@ -122,10 +121,11 @@ async def test_sse_structured_carries_type_recognition_and_granularity_hint(clie
     frames = [frame for frame in response.text.strip().split("\n\n") if frame.startswith("event: structured")]
     assert len(frames) == 1
     payload = json.loads(frames[0].split("data:", 1)[1])
-    # SSE structured 载荷：五区结构 + 判型卡片 + 粒度提示（对齐 H5 原型交互）
+    # SSE structured 载荷：五区结构 + 判型卡片（2026-10-26 派生制：level/basis 结构）+ 粒度提示
     assert payload["structured"]["elements"]["A"]["techSubtype"] == "DATA_RPT"
-    assert payload["typeRecognition"]["business"] == 0.9
-    assert payload["typeRecognition"]["evidence"]["business"] == "部门年度考核指标"
+    # B1 附原话证据验真落库（出处升 user）即派生业务需求（2026-10-27 拍板 evidence 机制）
+    assert payload["typeRecognition"]["level"] == "business"
+    assert payload["typeRecognition"]["basis"]["field"] == "businessGoal"
     assert payload["granularityHint"]["level"] == "too_broad"  # "提升"命中且 D 区未填
     assert payload["granularityHint"]["converge"] == "可验证、可追踪、可独立受理"
     assert payload["impactHints"] == []

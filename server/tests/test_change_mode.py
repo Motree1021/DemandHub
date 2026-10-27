@@ -199,9 +199,9 @@ FULL_NO_B = {"A": {"techSubtype": "SYS_DEV"},
 
 
 @pytest.mark.asyncio
-async def test_type_confirm_native_business_gates_zone_b(session_factory, user):
-    """B 区必填路径分流（2026-10-26 拍板，修订 10-24「判型与必填全解耦」口径）：人工定稿 business
-    属原生业务需求（无 b1Backfill 标记）→ typeChange 播报 + 接续快照按 A/C/D + B1~B4 动态必填重算——
+async def test_type_confirm_business_gates_zone_b(session_factory, user):
+    """B 区统一必填（2026-10-26 拍板，撤销同日「路径分流」口径）：人工定稿 business → 判型归业务需求
+    → typeChange 播报 + 接续快照按 A/C/D + B1~B4 动态必填重算——
     B 区缺项拦提交，B1 进必填追问序列（B 区沉底，A/C/D 齐备故首个追问即 B1）；
     恢复 AI 判断回归非业务判型，B 区不再必填，A/C/D 齐备即可提交。"""
     did = await make_draft(session_factory, user, session=True, elements=FULL_NO_B)
@@ -216,7 +216,7 @@ async def test_type_confirm_native_business_gates_zone_b(session_factory, user):
     assert "业务需求" in notice.content
     payload = snapshot.structured_payload
     assert payload.get("kind") is None
-    # 原生业务需求：B1~B4 动态必填拦提交；B 区沉底顺序不变，A/C/D 齐备故 B1 为首个追问目标
+    # 判型归业务需求：B1~B4 动态必填拦提交；B 区沉底顺序不变，A/C/D 齐备故 B1 为首个追问目标
     assert payload["canSubmit"] is False and payload["askedTarget"] == "businessGoal"
     # 恢复 AI 判断：回归非业务判型可提交
     async with session_factory() as db:

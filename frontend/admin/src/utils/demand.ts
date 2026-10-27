@@ -49,11 +49,12 @@ export type RecognitionLevel = 'business' | 'user' | 'function'
 
 export interface TypeRecognition {
   confirmed?: RecognitionLevel | null
+  level?: RecognitionLevel
+  basis?: { field?: string; excerpt?: string }
+  // 旧票数结构（2026-10-26 派生制改造前存量数据），仅兼容读取
   business?: number
   user?: number
   function?: number
-  /** B1 补票升级路径标记（2026-10-26 拍板）：true=升级型业务需求，B2~B4 放行提交由受理侧兜底补录 */
-  b1Backfill?: boolean
 }
 
 export const RECOGNITION_LABELS: Record<RecognitionLevel, string> = {
@@ -64,14 +65,16 @@ export const RECOGNITION_LABELS: Record<RecognitionLevel, string> = {
 
 const LEVELS: RecognitionLevel[] = ['business', 'user', 'function']
 
-/** 生效判型：人工确认（confirmed）优先；否则按层级倾斜 + 档位对齐（2026-10-24 拍板 business>user>function）——
- *  business≥0.7（主句级起点）→ business；否则 user≥0.7 → user；否则 → function
- * （function 不参与比较，从句级信号封顶 0.6 天然不过线，与 status.ts demandLevelOf、H5 FormSnapshotCard 同口径）；
- *  无确认且置信度全零返回 null（置灰兜底：视为无判型不置灰） */
+/** 生效判型（2026-10-26 拍板派生制）：人工确认（confirmed）优先；新结构 level 直读
+ * （服务端按表单素材派生：B1/B3 用户亲口表述→业务、C 区三件套齐→用户、其余→功能）；
+ * 旧票数结构兼容折算——business≥0.7→business，否则 user≥0.7→user，有票即 function
+ * （与 status.ts demandLevelOf、H5 recognitionLevelOf 同口径）；
+ * 无确认且无层级数据返回 null（置灰兜底：视为无判型不置灰） */
 export function recognitionLevel(recognition: unknown): RecognitionLevel | null {
   if (!recognition || typeof recognition !== 'object') return null
   const r = recognition as TypeRecognition
   if (r.confirmed && LEVELS.includes(r.confirmed)) return r.confirmed
+  if (r.level && LEVELS.includes(r.level)) return r.level
   const business = Number(r.business) || 0
   const user = Number(r.user) || 0
   const fn = Number(r.function) || 0
@@ -86,15 +89,6 @@ export function grayZones(recognition: unknown): Set<'B' | 'C'> {
   if (level === 'user') return new Set(['B'])
   if (level === 'function') return new Set(['B', 'C'])
   return new Set()
-}
-
-/** 升级型业务需求（2026-10-26 拍板路径分流）：判型归业务且带 b1Backfill 补票标记——
- *  B2~B4 空缺不拦提交，受理页标「待受理补充」由受理产品经理兜底补齐；
- *  原生型（无标记）B1~B4 在提报侧已动态必填拦截，受理页不命中本判定 */
-export function backfilledBusiness(recognition: unknown): boolean {
-  if (!recognition || typeof recognition !== 'object') return false
-  const r = recognition as TypeRecognition
-  return !!r.b1Backfill && recognitionLevel(r) === 'business'
 }
 
 /** 服务端保留的 ext 键（已有专属展示位：概述/打回原因/预判拆分等），补充信息兜底展示时排除 */

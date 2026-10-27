@@ -50,9 +50,9 @@ export const SOLUTION_STATUS_META: Record<string, { label: string; type: TagType
 }
 
 /** 需求层级四分类（2026-10-22 拍板）：口径优先——轻量提报（ext.mode.level='light'）一律「微需求」；
- *  常规口径再按判型分业务/用户/功能。判型口径与 H5 FormSnapshotCard 完全一致：
- *  confirmed 人工确认优先；否则 business≥0.7→业务需求，user≥0.7→用户需求，其余→功能需求
- * （2026-10-24 拍板层级倾斜 business>user>function + 档位对齐：判线=主句级起点 0.7，从句级封顶 0.6 天然不过线，function 不参与比较）。
+ *  常规口径再按判型分业务/用户/功能。判型口径（2026-10-26 拍板派生制）与 H5 recognitionLevelOf 完全一致：
+ *  confirmed 人工确认优先；新结构 level 直读（服务端按表单素材派生）；旧票数结构兼容折算——
+ *  business≥0.7→业务需求，user≥0.7→用户需求，其余→功能需求。
  *  无判型数据（老数据/未走 AI 流程）返回 null，列表显示「—」。 */
 export type DemandLevel = 'business' | 'user' | 'function' | 'micro'
 
@@ -68,15 +68,16 @@ export function demandLevelOf(ext: Record<string, unknown> | null | undefined): 
   const mode = ext.mode as { level?: string } | undefined
   if (mode?.level === 'light') return 'micro'
   const recognition = ext.typeRecognition as {
-    confirmed?: string | null; business?: number; user?: number; function?: number
+    confirmed?: string | null; level?: string; business?: number; user?: number; function?: number
   } | undefined
   if (!recognition) return null
   const confirmed = recognition.confirmed
   if (confirmed === 'business' || confirmed === 'user' || confirmed === 'function') return confirmed
+  const level = recognition.level
+  if (level === 'business' || level === 'user' || level === 'function') return level
+  // 旧票数结构兼容折算（2026-10-26 派生制改造前存量数据）
   const business = recognition.business ?? 0
   const user = recognition.user ?? 0
-  // 判型层级倾斜 + 档位对齐（2026-10-24 拍板 business>user>function）：business≥0.7（主句级起点）即业务需求（不再要求占优）；
-  // business<0.7 时 user≥0.7 → 用户需求，否则 → 功能需求（function 不参与比较，从句级封顶 0.6 天然不过线）
   if (business >= 0.7) return 'business'
   return user >= 0.7 ? 'user' : 'function'
 }

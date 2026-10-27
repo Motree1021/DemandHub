@@ -97,12 +97,13 @@ elements:
   placeholder: 系统自动记录你说的原话，一般不用改
   ok_when: 用户原始描述完整保留，作为追溯底稿
 # ---- B 区：业务要素（Why——组织层面的投入理由）----
-# B 区必填路径分流（2026-10-26 拍板，修订 10-24 全解耦口径）：yaml 里 B1~B4 保持 required:false，
-# 动态启用归代码层（rules.dynamic_required_keys）——原生业务需求（判型票自然过线、无 b1Backfill 标记）
-# B1~B4 动态必填、缺了不能提交、进追问序列与三段防线；升级业务需求（B1 答出后补票过线）与其余判型
-# 维持解耦：B 区不拦提交，仅保留「B1 白话一问」治理动作（standard 需求 C/D 必填问完后必问一次
-# businessGoal，答不出放行不追问第二次），受理侧兜底：standard 缺 B1 拒绝受理（triage_service.accept），
-# 升级型 B2~B4 空缺在受理页标「待受理补充」。
+# B 区统一必填（2026-10-26 拍板，撤销同日「原生/升级路径分流」）：yaml 里 B1~B4 保持 required:false，
+# 动态启用归代码层（rules.dynamic_required_keys）——判型归业务需求（business 票≥0.7 或人工定稿，
+# 含 B1 补票升级）且非轻量 → B1~B4 动态必填、缺了不能提交、进追问序列与三段防线；B2~B4 由 AI 按
+# C/D 区素材代拟补齐（提示词见 submit_guide.md），B1 组织理由必须用户亲口答出，答不出引导改判
+# 用户需求；非业务判型维持解耦：B 区不拦提交，仅保留「B1 白话一问」治理动作（standard 需求 C/D
+# 必填问完后必问一次 businessGoal，答不出放行不追问第二次），受理强校验不变：standard 缺 B1 拒绝
+# 受理（triage_service.accept）。
 - key: businessGoal
   code: B1
   zone: B

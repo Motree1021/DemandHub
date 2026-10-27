@@ -19,10 +19,10 @@
       <div class="zone-title" :data-zone="group.zone">
         <span class="zone-pill">{{ group.title }}</span>
         <small>{{ group.note }}</small>
-        <!-- B 区空缺标记（2026-10-26 拍板路径分流，修订 10-24 解耦口径）：升级型业务需求（b1Backfill
-             补票）与非业务判型——B 区不拦提交，空缺时灰字提示「先空着，不影响提交」，不挂待办不标红；
-             原生业务需求 B1~B4 动态必填，标星计进度，不再显示该标记 -->
-        <van-tag v-if="group.zone === 'B' && bizGoalEmpty && !nativeBusiness" type="default" plain>先空着，不影响提交</van-tag>
+        <!-- B 区空缺标记（2026-10-26 拍板统一必填）：非业务判型——B 区不拦提交，空缺时灰字提示
+             「先空着，不影响提交」，不挂待办不标红；判型归业务需求 B1~B4 动态必填，标星计进度，
+             不再显示该标记 -->
+        <van-tag v-if="group.zone === 'B' && bizGoalEmpty && !bizZoneRequired" type="default" plain>先空着，不影响提交</van-tag>
       </div>
       <button v-for="field in group.fields" :key="fieldPath(field)" type="button" class="el" :disabled="disabled" @click="emit('edit-field', field)">
         <span class="nm">
@@ -41,7 +41,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { DemandForm, ElementStatus, Standard, StandardField, TypeRecognition } from '@/api/demand'
-import { demandModeOf } from '@/api/demand'
+import { demandModeOf, recognitionLevelOf } from '@/api/demand'
 import { fieldPath, readField } from '@/utils/form'
 import { ZONE_META } from '@/utils/zones'
 const props = withDefaults(defineProps<{
@@ -51,13 +51,13 @@ const emit = defineEmits<{ (event: 'edit-field', field: StandardField): void; (e
 // 默认折叠：要素区与归类行是专业视图，普通用户只看"必填 X/Y"进度，点标题栏展开后改判入口可见
 const collapsed = ref(!props.defaultExpanded)
 // 基础必填分开计数，折叠态头部显示「必填 X/Y」：A/C/D 12 项所有需求都要；
-// 原生业务需求（2026-10-26 拍板路径分流）B1~B4 动态必填一并计入，升级型/非业务不计
+// 判型归业务需求（2026-10-26 拍板统一必填）B1~B4 动态必填一并计入，非业务判型/轻量不计
 const baseRequiredFields = computed(() => groups.value.flatMap(group => group.fields).filter(field => isRequired(field)))
 const baseTotal = computed(() => baseRequiredFields.value.length)
 const baseFilled = computed(() => baseRequiredFields.value.filter(field => filled(field)).length)
-// 原生业务需求判定（对齐服务端 native_business）：判型归业务需求且未带 b1Backfill 补票升级标记；
-// 升级型（B1 答出后补票过线）B2~B4 放行提交、受理侧兜底，维持「先空着」解耦口径
-const nativeBusiness = computed(() => props.businessConfirmed && !recognition.value?.b1Backfill)
+// B 区动态必填判定（对齐服务端 dynamic_required_keys 统一必填口径）：判型归业务需求且非轻量 →
+// B1~B4 必填标星计进度；非业务判型 B 区不拦提交，维持「先空着」解耦口径（isLight 惰性求值，定义在下方）
+const bizZoneRequired = computed(() => props.businessConfirmed && !isLight.value)
 // B 区空缺判定：业务目标（B1）未填即视为 B 区空缺，驱动「先空着，不影响提交」灰字标记
 const bizGoalEmpty = computed(() => {
   const goal = groups.value.flatMap(group => group.fields).find(field => field.key === 'businessGoal')
@@ -74,18 +74,12 @@ const lightFilled = computed(() => LIGHT_FIELD_KEYS.filter(key => {
 }).length)
 // 判型归类标签（方案A：AI 自动判型生效，用户可点开改判）；未产生判型数据时不渲染
 const recognition = computed(() => ((props.form.ext?.typeRecognition as TypeRecognition | undefined) || null))
-// 归类标签三档：confirmed 定稿优先；层级倾斜 + 档位对齐（2026-10-24 拍板 business>user>function，判线=主句级起点 0.7）——
-// business≥0.7 → 业务需求（父组件按层级规则算好 businessConfirmed 传入，不再要求占优）；
-// business<0.7 时 user≥0.7 → 用户需求，否则 → 功能需求（function 不参与比较，从句级信号封顶 0.6 天然不过线）
+// 归类标签（2026-10-26 拍板派生制）：统一走 recognitionLevelOf——confirmed 人工定稿优先，
+// 新结构 level 直读，旧票数结构兼容折算；无生效层级时不渲染标签
+const RECOGNITION_LABELS = { business: '业务需求', user: '用户需求', function: '功能需求' } as const
 const typeLabel = computed(() => {
-  const value = recognition.value
-  if (!value) return ''
-  const confirmed = value.confirmed
-  if (confirmed === 'business') return '业务需求'
-  if (confirmed === 'user') return '用户需求'
-  if (confirmed === 'function') return '功能需求'
-  if (props.businessConfirmed) return '业务需求'
-  return (value.user ?? 0) >= 0.7 ? '用户需求' : '功能需求'
+  const level = recognitionLevelOf(recognition.value)
+  return level ? RECOGNITION_LABELS[level] : ''
 })
 // A/B/C/D 分区（术语+白话注释）；无分区的标准（MATL/TRAIN）退化为单组平铺；system 快照要素不渲染
 const groups = computed(() => {
@@ -98,8 +92,8 @@ const groups = computed(() => {
 })
 const qualityMap = computed(() => new Map(props.quality.map(element => [element.key, element.status])))
 // 红星标记必填项：A/C/D 基础 12 项（标题/类型/子类/紧急程度/原文 + C 区 4 项 + D 区 3 项）始终标星；
-// B 区路径分流（2026-10-26 拍板）：原生业务需求 B1~B4 动态必填标星（与服务端 dynamic_required_keys
-// 同口径），升级型/非业务判型 B 区不标星不拦提交，空缺灰字提示；
+// B 区统一必填（2026-10-26 拍板）：判型归业务需求 B1~B4 动态必填标星（与服务端 dynamic_required_keys
+// 同口径），非业务判型 B 区不标星不拦提交，空缺灰字提示；
 // light 模式只标最小集 4 项（C/D 其余不追问不标星，2026-10-11 方案②拍板）。
 // 胶囊三态同口径（2026-10-11 拍板）：必填未填=「待补充」琥珀时钟（系统在等）；选填未填=「选填」灰铅笔
 // （想填就点，不催促），避免选填项挂假待办、与打回状态「待补充」角标撞词
@@ -107,7 +101,7 @@ const B_ZONE_DYNAMIC_KEYS = ['businessGoal', 'businessBackground', 'businessValu
 function isRequired(field: StandardField): boolean {
   if (field.system) return false
   if (isLight.value) return LIGHT_FIELD_KEYS.includes(field.key)
-  if (field.zone === 'B') return nativeBusiness.value && B_ZONE_DYNAMIC_KEYS.includes(field.key)
+  if (field.zone === 'B') return bizZoneRequired.value && B_ZONE_DYNAMIC_KEYS.includes(field.key)
   return !!field.required
 }
 function filled(field: StandardField): boolean {

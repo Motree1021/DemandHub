@@ -19,7 +19,26 @@ export interface DemandForm {
   expectDeliveryAt: string | null; elements: ZoneElements; ext: Record<string, unknown>; fieldSources: FieldSources
 }
 export interface ChangeLog { id: number; fieldKey: string; oldValue: unknown; newValue: unknown; source: 'default' | 'agent' | 'user'; changedBy: number | null; createdAt: string }
-export interface TypeRecognition { business?: number; user?: number; function?: number; confirmed?: string | null; evidence?: Record<string, string>; b1Backfill?: boolean }
+// 判型（2026-10-26 拍板派生制）：新结构 {level, basis:{field, excerpt}, confirmed}——
+// level 由服务端按表单素材派生（B1/B3 用户亲口表述→业务；C 区三件套齐→用户；其余→功能），
+// confirmed 为人工定稿（最高优先）；旧票数字段（business/user/function/evidence）仅存量数据兼容读取
+export type RecognitionLevel = 'business' | 'user' | 'function'
+export interface TypeRecognition {
+  level?: RecognitionLevel; basis?: { field?: string; excerpt?: string }; confirmed?: string | null
+  business?: number; user?: number; function?: number; evidence?: Record<string, string>
+}
+/** 生效判型层级：人工定稿优先；新结构 level 直读；旧票数结构折算（business/user≥0.7 对应层级，有票即功能兜底） */
+export function recognitionLevelOf(recognition: TypeRecognition | null | undefined): RecognitionLevel | null {
+  if (!recognition) return null
+  const confirmed = recognition.confirmed
+  if (confirmed === 'business' || confirmed === 'user' || confirmed === 'function') return confirmed
+  if (confirmed != null) return null
+  if (recognition.level) return recognition.level
+  if ((recognition.business ?? 0) >= 0.7) return 'business'
+  if ((recognition.user ?? 0) >= 0.7) return 'user'
+  if (recognition.business || recognition.user || recognition.function) return 'function'
+  return null
+}
 // 微需求快速通道（方案②）：AI 轻重判定，light 时表单卡显示「轻量提报 X/4」、红星只标最小集
 export interface DemandMode { level: 'light' | 'standard'; evidence?: string }
 export function demandModeOf(form: DemandForm): 'light' | 'standard' {

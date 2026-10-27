@@ -2,18 +2,18 @@
 import re
 from copy import deepcopy
 
-from app.agent.schemas import ElementStatus, ModelOutput, ModeSignalOutput, TypeSignalsOutput
+from app.agent.schemas import ElementStatus, ModelOutput, ModeSignalOutput
 from app.db.models import now
 from app.standards import loader as standard_loader
 from app.standards.rules import (
     LIGHT_REQUIRED_KEYS,
     assess,
     blank,
+    business_confirmed,
     dynamic_required_keys,
     filter_form,
     get_value,
-    native_business,
-    promote_business_on_b1,
+    merge_recognition,
     schema_errors,
     set_value,
 )
@@ -34,6 +34,15 @@ DESC_INVITE = "请先用一句话描述一下你的需求，比如「报表想�
 # 不是向某用户追来的答案）。话术红线：禁用「提报人/受理」等角色流程术语，受理侧统一称「产品经理」
 B1_RELEASE = "没事，这个先空着，不耽误提交，后面的产品经理会一起考虑。"
 
+# B1 硬堵改判引导（2026-10-26 拍板统一必填）：判型归业务需求时 B1 转必填、答不出不放行——
+# 给用户白话出口：说不上组织好处就点归类标签改判为用户需求，改判后 B 区不再必填（用户拍板：不设轻量出口）
+B1_RECLASSIFY_GUIDE = "如果对部门或行里的好处实在说不上来，可以点表单上方「归类：业务需求」那里改判为用户需求，这项就不用填了。"
+
+# 原话证据字段（2026-10-27 拍板 evidence 机制）：仅 B1（业务目标）/B3（业务价值）允许模型以
+# {"value": 字段值, "evidence": 用户消息原文连续片段} 对象输出；evidence 只登记待验真，不落库不进表单。
+# 其余字段仍只收原始值，输出对象即类型错误走整轮修复
+EVIDENCE_PATHS = {"elements.B.businessGoal", "elements.B.businessValue"}
+
 
 def _numbers(text) -> set:
     """文本中的全部数字（含小数），用于 FR-08 量化事实溯源。"""
@@ -41,8 +50,11 @@ def _numbers(text) -> set:
 
 
 def merge_structured(model_structured: dict, form: dict, field_sources: dict, standard: Standard | None = None, *, standards=None, grounded_text: str | None = None):
+    """合并模型增量到表单。返回 (合并后表单, 字段出处, 选中标准, 原话证据)——evidences 仅含本轮
+    B1/B3 以 {"value","evidence"} 对象输出的 evidence 原文（待 process 验真，此处只解析不判断）。"""
     result = deepcopy(form)
     sources = dict(field_sources)
+    evidences: dict[str, str] = {}
     known = standards["TECH"] if standards else standard_loader.get("TECH")
     kinds = {f.field_path: f.kind for f in known.fields}
     for key, value in model_structured.items():
@@ -65,6 +77,13 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
                     # 误嵌进 elements.A，此处归位到顶层；归位后来源保护与格式校验照常生效
                     if path not in kinds and "." not in k and k in kinds:
                         path = k
+                    # 原话证据解包（2026-10-27 拍板 evidence 机制）：B1/B3 允许 {"value","evidence"} 对象——
+                    # value 照常走合并/校验/数字溯源，evidence 登记后由 process 机械验真决定出处是否升 user
+                    if path in EVIDENCE_PATHS and isinstance(v, dict) and set(v) <= {"value", "evidence"}:
+                        evidence = v.get("evidence")
+                        if isinstance(evidence, str) and evidence.strip():
+                            evidences[path] = evidence
+                        v = v.get("value")
                     items.append((path, v))
         else:
             items = [(key, value)]
@@ -122,27 +141,19 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
         sources["ext.pendingSplits"] = field_sources.get("ext.pendingSplits") if pending_splits == old_pending else "agent"
     if "overview" in (result.get("ext") or {}):
         sources["ext.overview"] = field_sources.get("ext.overview") if overview == old_overview else "agent"
-    return result, sources, selected
+    return result, sources, selected, evidences
 
 
-def merge_type_signals(signals: TypeSignalsOutput | None, form: dict) -> dict | None:
-    """模型判型票与既有 ext.typeRecognition 合并：置信度取历史最高，confirmed（用户定稿）不被模型覆盖。
-    b1Backfill 路径标记（2026-10-26 拍板）随旧值原样保留——标记记录的是「是否经 B1 补票升级」的
-    历史事实，模型每轮重建判型字典时不得丢失，否则升级型会被误判成原生型而突然加码必填。"""
-    prev = (form.get("ext") or {}).get("typeRecognition") or {}
-    if signals is None:
-        return prev or None
-    result = {"confirmed": prev.get("confirmed")}
-    if prev.get("b1Backfill"):
-        result["b1Backfill"] = True
-    evidence = dict(prev.get("evidence") or {})
-    for layer in ("business", "user", "function"):
-        vote = getattr(signals, layer)
-        result[layer] = round(max(float(prev.get(layer) or 0), vote.confidence), 4)
-        if vote.evidence:
-            evidence[layer] = vote.evidence
-    result["evidence"] = evidence
-    return result
+def _evidence_user_voiced(evidence, text: str) -> bool:
+    """原话证据验真（2026-10-27 拍板 evidence 机制，取代旧 _user_voiced 整值/分句模糊匹配）：
+    归一化（去空白/标点）后 evidence 须为本轮用户消息原文的连续子串、且不少于 4 字——
+    纯机械子串校验，不做语义判断（语义归槽是模型的职责，规则层只认「用户是否亲口说过」）。
+    短于 4 字的泛词片段（如「可以」「提升」）在原文偶然命中不足为证，一律驳回。
+    未附 evidence 或验真失败 → 出处保持 agent，保守判型（宁漏判业务需求不错判），受理侧人工兜底。"""
+    def normalize(s) -> str:
+        return re.sub(r"[\s，。；、：！？,.;:!?\"'「」『』()（）\-—…·]+", "", str(s or ""))
+    needle = normalize(evidence)
+    return len(needle) >= 4 and needle in normalize(text)
 
 
 def merge_mode_signal(signal: ModeSignalOutput | None, form: dict) -> dict | None:
@@ -230,7 +241,7 @@ def schema_errors_for_key(standard, form, key):
 def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_form, form, count_keys=None):
     previous = {e.key: e for e in prev}
     fields = {e.key: e for e in standard.elements}
-    # 动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 与 A/C/D 必填同权——
+    # 动态必填（2026-10-26 拍板统一必填）：判型归业务需求的 B1~B4 与 A/C/D 必填同权——
     # 「答不出 SKIP 放行」只适用于真选填项，动态必填项答不出按未答好计数，不破提交门槛
     dyn = dynamic_required_keys(standard, form)
     output = []
@@ -258,7 +269,7 @@ def inherit_and_count(prev, curr, prev_target, said_skip, *, standard, previous_
 def compute_missing(standard, form):
     # auto_fill（2026-10-20 拍板）：系统兜底提取项不算用户侧缺口——指令回复列缺项/缺失清单
     # 不把标题算进去（提交前系统重拟兜底，让用户补标题违背「系统提取」定位）
-    # 动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 缺口同样算缺失
+    # 动态必填（2026-10-26 拍板统一必填）：判型归业务需求的 B1~B4 缺口同样算缺失
     dyn = dynamic_required_keys(standard, form)
     return [e.key for e in standard.elements if (e.required or e.key in dyn) and not e.system and not e.auto_fill and blank(get_value(form, e.field_path))]
 
@@ -304,10 +315,10 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
     （粘贴/图片解析/模型联动改写等多字段同变时不算，不当场挑刺，遗留项交合并一问兜底）；
     占 attempts 计数，问满（max_attempts 次）放过；只覆盖必填交互项。
 
-    B 区路径分流（2026-10-26 拍板，修订 10-24 全解耦口径）：原生业务需求（判型票自然过线、
-    无 b1Backfill 标记）的 B1~B4 转为动态必填——进追问序列（仍按 B 区沉底排序）、占提交门槛、
-    趁热打铁/合并一问同权覆盖，B1 不再走「只问一次」白话通道（答不出不放行，按常规必填计次）；
-    升级型业务需求（带 b1Backfill 标记）与其余判型维持 10-24 口径：仅 B1 白话一问，B2~B4 不问。
+    B 区统一必填（2026-10-26 拍板，撤销同日「路径分流」口径）：判型归业务需求（自然过线、
+    B1 补票升级或人工定稿）的 B1~B4 转为动态必填——进追问序列（仍按 B 区沉底排序）、占提交门槛、
+    趁热打铁/合并一问同权覆盖，B1 不再走「只问一次」白话通道（答不出不放行、话术引导改判用户需求）；
+    非业务判型维持 10-24 口径：仅 B1 白话一问，B2~B4 不问。
     """
     by_key = {element.key: element for element in elements}
     field_of = {element.key: element for element in standard.elements}
@@ -343,7 +354,7 @@ def pick_follow_up(standard, elements, *, light: bool = False, form: dict | None
         # B1 白话一问（2026-10-24 拍板）：businessGoal 是唯一保留在追问序列的 B 区要素——
         # 仅真空着（MISSING）且从未问过才选中，问一次即终结（答出落库 / 答不出 SKIP 放行）；
         # 非必填不占提交门槛，can_submit 后仍必问这一次（治理型追问，与急单门控同性质）。
-        # 路径分流（2026-10-26 拍板）：原生业务需求下 B1 已转动态必填（在 dyn 内），
+        # 统一必填（2026-10-26 拍板）：判型归业务需求时 B1 已转动态必填（在 dyn 内），
         # 不再走「只问一次」通道，落到下方常规必填逻辑（答不出不放行、计次同 A/C/D）
         if key == "businessGoal" and key not in dyn:
             element = by_key.get(key)
@@ -396,7 +407,7 @@ def vague_batch_fields(standard: Standard, elements: list, form: dict, *, light:
     if ext.get("qualityBatchDone") or _return_reason_of(form):
         return None
     by_key = {element.key: element for element in elements}
-    # 动态必填（2026-10-26 拍板路径分流）：原生业务需求的 B1~B4 与 A/C/D 必填同权参与合并一问
+    # 动态必填（2026-10-26 拍板统一必填）：判型归业务需求的 B1~B4 与 A/C/D 必填同权参与合并一问
     dyn = dynamic_required_keys(standard, form)
     hits = [field for field in standard.elements
             if (field.required or field.key in dyn) and not field.system and not field.auto_fill and field.key != "content"
@@ -445,7 +456,7 @@ def quick_replies(standard, target, form: dict | None = None):
         return []
     field = next(e for e in standard.elements if e.key == target.key)
     result = list(field.options.values()) if field.kind == "enum" else []
-    # 动态必填项（2026-10-26 拍板路径分流）与真必填同权：不提供「后续补充」逃逸出口
+    # 动态必填项（2026-10-26 拍板统一必填）与真必填同权：不提供「后续补充」逃逸出口
     if target.attempts >= 1 and not field.required and target.key not in dynamic_required_keys(standard, form or {}):
         result.append("后续补充")
     return result
@@ -545,8 +556,8 @@ def return_quote_seen(texts) -> bool:
 
 def reply_for(standard, target, form, *, light: bool = False, trigger: str = "dialog"):
     if target is None:
-        # B 区路径分流（2026-10-26 拍板）：完成判定 = A/C/D 必填 + 原生业务需求的 B1~B4
-        # 动态必填（schema_errors 内自动加码）；升级型/其余判型维持 A/C/D 门槛
+        # B 区统一必填（2026-10-26 拍板）：完成判定 = A/C/D 必填 + 判型归业务需求的 B1~B4
+        # 动态必填（schema_errors 内自动加码）；非业务判型维持 A/C/D 门槛
         active_zones = {"A", "C", "D"}
         return_reason = _return_reason_of(form)
         if light:
@@ -571,13 +582,17 @@ def reply_for(standard, target, form, *, light: bool = False, trigger: str = "di
         if title:
             return f"标题我先记为「{title}」，不合适直接告诉我改什么。这个需求期望的效果是什么？做完后能看见什么变化？比如「首页顶部 logo 换成新设计的蓝色版本」。"
         return "这个需求期望的效果是什么？做完后能看见什么变化？比如「首页顶部 logo 换成新设计的蓝色版本」。"
+    # B1 统一必填（2026-10-26 拍板）：判型归业务需求时 B1 是硬门槛——问句不带「不清楚也没关系」
+    # 放行尾巴（答不出由系统接续改判引导 B1_RECLASSIFY_GUIDE），避免问句承诺与拦截自相矛盾
+    if field.key == "businessGoal" and field.key in dynamic_required_keys(standard, form):
+        return "这个需求归类为业务需求，「对部门或行里的好处」这项得填了才能提交。它做出来，除了你自己省事，对部门或行里还有啥好处不？说个大概就行。"
     if target.attempts >= 1:
         template = field.ask_l2 or field.ask_l1 or field.ask_missing
     else:
         template = anchored_template(standard, field, form) or (field.ask_missing or field.ask_l1 if target.status == "MISSING" else field.ask_l1 or field.ask_missing)
     template = template or f"请补充{field.label}，以便把需求记录清楚。"
     reply = template.replace("{snippet}", snippet)
-    # 动态必填项（2026-10-26 拍板路径分流）与真必填同权：追问不附「后续补充」话术出口
+    # 动态必填项（2026-10-26 拍板统一必填）与真必填同权：追问不附「后续补充」话术出口
     if target.attempts >= 1 and not field.required and field.key not in dynamic_required_keys(standard, form):
         reply += " 也可以说“后续补充”。"
     return reply
@@ -655,7 +670,7 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
     if light:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
-        # B 区路径分流（2026-10-26 拍板）：提交门槛恒为 A/C/D 三区 + 原生业务需求 B1~B4 动态必填
+        # B 区统一必填（2026-10-26 拍板）：提交门槛恒为 A/C/D 三区 + 判型归业务需求的 B1~B4 动态必填
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
     if not prev:
         # 首轮闲聊：只引导不追问（单问题原则）——此前连发引导+标题确认两个问题，用户不知答哪个
@@ -686,18 +701,25 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
     kind = output.intent.kind if output.intent else "answer"
     if kind == "chitchat":
         return _process_chitchat(form, sources, prev, previous_form, text, standards=standards)
-    merged, field_sources, selected = merge_structured(output.structured, form, sources, standards=standards, grounded_text=text)
+    merged, field_sources, selected, evidences = merge_structured(output.structured, form, sources, standards=standards, grounded_text=text)
     # 误回填清理推广（2026-10-20 拍板，问题②）：提问/指令与闲聊同口径——纯提问（「什么是需求标题？」）
     # 或流程指令（「提交吧」）并非需求内容，prepare 预填的底稿连来源一起清掉
     if kind in ("question", "command"):
         _clear_echo_backfill(merged, field_sources, text)
     # 未定类型仍使用共用三个质量字段，不暴露 TECH 扩展要素。
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
-    # FR-01/FR-03 判型合并：confirmed（用户定稿）不被模型覆盖，模型票只更新置信度与依据
-    recognition = merge_type_signals(output.type_signals, form)
-    # B1 落库即判业务（2026-10-24 拍板）：B1 业务目标本轮「空→有」（用户亲口答出组织理由）——
-    # 硬证据优先于模型软分数，business 票补足到业务门槛 0.7（主句级起点，档位对齐），层级判定下即翻转为业务需求
-    recognition = promote_business_on_b1(recognition, form, merged)
+    # FR-01/FR-03 判型（2026-10-27 拍板 evidence 机制）：B1/B3 本轮新写入且随值附了原话证据的，
+    # 机械验真（evidence 归一化后为本轮消息原文连续子串、≥4 字）通过 → 出处提升 user，参与业务派生；
+    # 未附/验真失败保持 agent（AI 代拟或来源存疑），保守判型不判业务，受理侧人工兜底。
+    # B1 与 B3 同标准——旧版 B1 无出处检查（「契约必须用户答出」约束不了模型，#50 案例整句灌 B1
+    # 蒙对判型），B3 用整值/分句模糊匹配（#49 案例代拟改写打碎子串蒙错出处），统一收编为证据验真
+    if kind in ("answer", "supplement"):
+        for b_path in EVIDENCE_PATHS:
+            if (field_sources.get(b_path) == "agent" and not blank(get_value(merged, b_path))
+                    and _evidence_user_voiced(evidences.get(b_path), text)):
+                field_sources[b_path] = "user"
+    # 派生+合并：本轮素材派生与历史生效层级取高（只涨不跌），confirmed 人工定稿最高优先
+    recognition = merge_recognition((form.get("ext") or {}).get("typeRecognition"), merged, field_sources)
     if recognition:
         merged.setdefault("ext", {})["typeRecognition"] = recognition
         prev_confirmed = ((form.get("ext") or {}).get("typeRecognition") or {}).get("confirmed")
@@ -724,25 +746,37 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
                              said_skip,
                              standard=standard, previous_form=previous_form, form=merged,
                              count_keys=manual_keys)
-    # B1 答不出放行（2026-10-24 拍板）：B1 白话一问答「不清楚/说不好」类 → SKIP 终结该问题，
-    # 回复带固定放行书（不追问第二次、不标质量问题、不拦提交、不承诺"后续找谁补"）。
-    # 路径分流（2026-10-26 拍板）：原生业务需求下 B1 已转动态必填，答不出不放行、不播固定放行书
+    # B1 答不出（2026-10-24/10-26 拍板）：非业务判型——白话一问答「不清楚/说不好」类 → SKIP 终结该问题，
+    # 回复带固定放行书（不追问第二次、不标质量问题、不拦提交、不承诺"后续找谁补"）；
+    # 判型归业务需求（B1 已转动态必填）——答不出不放行不打 SKIP（上方已按未答好计次），
+    # 回复带改判引导：说不上组织好处可点归类标签改判为用户需求（用户拍板：不设轻量出口）
     dyn = dynamic_required_keys(standard, merged)
     b1_released = said_skip and prev_target == "businessGoal" and "businessGoal" not in dyn
-    # B 区路径分流（2026-10-26 拍板）：提交门槛 = A/C/D 必填 + 原生业务需求的 B1~B4 动态必填
-    # （schema_errors 内按 typeRecognition 路径自动加码）；升级型（b1Backfill）与其余判型维持 A/C/D 门槛
+    b1_blocked = said_skip and prev_target == "businessGoal" and "businessGoal" in dyn
+    # B 区统一必填（2026-10-26 拍板）：提交门槛 = A/C/D 必填 + 判型归业务需求的 B1~B4 动态必填
+    # （schema_errors 内按 typeRecognition 自动加码，不分原生/升级路径）；非业务判型维持 A/C/D 门槛
     if light:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
-    # 原生业务升级当轮播报（2026-10-26 拍板）：判型票本轮自然涨过线（非 B1 补票）时当场告知——
-    # B 区四要素转为必填，与 10-25「改归类立即重算质量卡并接续追问」先例同构；升级型补票翻转不播
-    # （B1 答案本身已被引述确认，且不加新门槛）；缺 0 项（大段粘贴已填满）时不播
+    # 判型归业务当轮播报（2026-10-26 拍板统一必填 + B2~B4 代拟）：本轮新判为业务需求（自然过线
+    # 或 B1 补票升级）时当场告知——B 区四要素转必填；本轮由 AI 按 C/D 区素材代拟补齐的 B2~B4 一并
+    # 说明（点表单可改），仍缺的点名接续追问；与 10-25「改归类立即重算质量卡并接续追问」先例同构
     business_notice = ""
-    if dyn and not native_business(form):
-        n_missing = sum(1 for e in standard.elements if e.key in dyn and blank(get_value(merged, e.field_path)))
-        if n_missing:
-            business_notice = f"这条需求现在识别为业务需求，还需补充 {n_missing} 项业务要素。"
+    if dyn:
+        prev_recognition = (form.get("ext") or {}).get("typeRecognition")
+        was_business = business_confirmed(prev_recognition if isinstance(prev_recognition, dict) else None)
+        if not was_business:
+            drafted = [f.label for f in standard.elements
+                       if f.key in dyn and f.key != "businessGoal"
+                       and blank(get_value(form, f.field_path)) and not blank(get_value(merged, f.field_path))]
+            missing_labels = [f.label for f in standard.elements if f.key in dyn and blank(get_value(merged, f.field_path))]
+            parts = []
+            if drafted:
+                parts.append("、".join(drafted) + "我根据你前面说的帮你填好了，点表单可改")
+            if missing_labels:
+                parts.append("还差" + "、".join(missing_labels))
+            business_notice = "这条需求识别为业务需求" + ("，" + "；".join(parts) if parts else "") + "。"
     # 追问顺序与提交门槛同口径（2026-10-24 拍板）：A/C/D 必填先问完，再必问一次 B1 白话问题；
     # light 模式只按最小集追问（每项一次）并按最小集放行提交，B 区不问
     target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit, previous_form=previous_form)
@@ -818,8 +852,11 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         if b1_released:
             # B1 答不出放行书（2026-10-24 拍板）：对用户回答的直接回应，跟在播报类之后、行动项之前
             paragraphs.append(B1_RELEASE)
+        if b1_blocked:
+            # B1 硬堵改判引导（2026-10-26 拍板统一必填）：业务需求答不出 B1 不放行，给改判用户需求出口
+            paragraphs.append(B1_RECLASSIFY_GUIDE)
         if business_notice:
-            # 原生业务升级播报（2026-10-26 拍板）：播报考量与放行书同位（播报类之后、行动项之前）
+            # 判型归业务播报（2026-10-26 拍板）：播报考量与放行书同位（播报类之后、行动项之前）
             paragraphs.append(business_notice)
         paragraphs.append(reply)  # 追问（含意图桥接/模式播报）始终末段，离输入框最近
         reply = "\n\n".join(paragraphs)
@@ -871,7 +908,7 @@ def resume_follow_up(standard: Standard, form: dict, previous: dict | None, *, c
     if light:
         can_submit = not schema_errors(standard, form, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
-        # B 区路径分流（2026-10-26 拍板）：提交门槛恒为 A/C/D 三区 + 原生业务需求 B1~B4 动态必填
+        # B 区统一必填（2026-10-26 拍板）：提交门槛恒为 A/C/D 三区 + 判型归业务需求的 B1~B4 动态必填
         can_submit = not schema_errors(standard, form, required=True, active_zones={"A", "C", "D"})
     # 无描述白话邀请（2026-10-19 拍板）：底稿为空且未达门槛时，先请用户一句话描述需求——
     # 一句话同时喂饱底稿回填、要素抽取与轻重判定。仅非必填 content（科技标准）适用；
