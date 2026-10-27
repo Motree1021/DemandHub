@@ -68,14 +68,14 @@ async def test_real_extraction_and_quality_accuracy_at_least_80_percent(real_ark
             status = {item.key: item.status for item in output.elements}
             for key, expected in expected_fields.items():
                 actual = at(output.structured, key)
-                # evidence 契约（2026-10-27 拍板）：B1/B3 允许 {"value","evidence"} 对象输出，内容比对取 value
+                # evidence 契约（2026-10-27 拍板，第二轮扩至 B2）：B1/B2/B3 允许 {"value","evidence"} 对象输出，内容比对取 value
                 if isinstance(actual, dict) and set(actual) <= {"value", "evidence"}:
                     actual = actual.get("value")
                 if actual == expected:
                     field_hits += 1
                 else:
                     differences.append(f"{case['name']} / turn{turn_index + 1}: {key} 抽取不符")
-            # 原话证据断言（可选，evidence_from_user 清单）：字段须以 {"value","evidence"} 输出，
+            # 原话证据断言（可选，evidence_from_user 清单）：B1/B2/B3 字段须以 {"value","evidence"} 输出，
             # 且 evidence 归一化后为本轮用户消息连续片段（≥4 字）——与规则层验真同口径
             for field_path in turn["expect"].get("evidence_from_user", []):
                 field_total += 1

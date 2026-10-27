@@ -464,6 +464,30 @@ def test_evidence_must_cite_current_turn_message():
     assert result["typeRecognition"]["level"] == "user"
 
 
+def test_b2_evidence_derives_business():
+    # B2 入场判型（2026-10-27 第二轮拍板，判型触发扩至 B2）：用户本轮亲口说出组织层面现状——
+    # 模型抽入 B2 并附原话证据（验真通过 → 出处升 user）→ 派生业务需求，basis 留痕 businessBackground
+    base = acd_filled_form()
+    output = ModelOutput(structured={"elements": {"B": {"businessBackground": {
+        "value": "部门目前靠专职岗手工汇总，旺季人力紧张", "evidence": "旺季人力紧张"}}}}, elements=[])
+    result = process(output, base, {}, [], None, base, "我们部门旺季人力紧张")
+    assert result["fieldSources"]["elements.B.businessBackground"] == "user"
+    recognition = result["typeRecognition"]
+    assert recognition["level"] == "business" and recognition["basis"]["field"] == "businessBackground"
+    # B2 无 evidence（纯字符串，AI 代拟）→ 出处保持 agent、不派生业务，值照常落库
+    drafted = process(ModelOutput(structured={"elements": {"B": {"businessBackground": "部门层面手工活多"}}}, elements=[]),
+                      acd_filled_form(), {}, [], None, {}, "继续")
+    assert drafted["structured"]["elements"]["B"]["businessBackground"] == "部门层面手工活多"
+    assert drafted["fieldSources"]["elements.B.businessBackground"] == "agent"
+    assert drafted["typeRecognition"]["level"] == "user"
+    # B2 编造 evidence（不在本轮消息原文）→ 验真驳回、出处不升、不判业务
+    fabricated = process(ModelOutput(structured={"elements": {"B": {"businessBackground": {
+        "value": "全行数字化转型要求压降手工操作", "evidence": "全行数字化转型要求压降手工操作"}}}}, elements=[]),
+        acd_filled_form(), {}, [], None, {}, "报表每天都要手工做")
+    assert fabricated["fieldSources"]["elements.B.businessBackground"] == "agent"
+    assert fabricated["typeRecognition"]["level"] == "user"
+
+
 def test_anchor_falls_back_to_normal_ask_when_reference_empty():
     # 关联要素未填（如追问次数耗尽跳过）时回落普通追问模板，不引用空锚点
     standard = get("TECH")

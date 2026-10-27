@@ -38,10 +38,10 @@ B1_RELEASE = "没事，这个先空着，不耽误提交，后面的产品经理
 # 给用户白话出口：说不上组织好处就点归类标签改判为用户需求，改判后 B 区不再必填（用户拍板：不设轻量出口）
 B1_RECLASSIFY_GUIDE = "如果对部门或行里的好处实在说不上来，可以点表单上方「归类：业务需求」那里改判为用户需求，这项就不用填了。"
 
-# 原话证据字段（2026-10-27 拍板 evidence 机制）：仅 B1（业务目标）/B3（业务价值）允许模型以
-# {"value": 字段值, "evidence": 用户消息原文连续片段} 对象输出；evidence 只登记待验真，不落库不进表单。
+# 原话证据字段（2026-10-27 拍板 evidence 机制；2026-10-27 第二轮扩至 B2）：仅 B1（业务目标）/B2（业务背景）/B3（业务价值）
+# 允许模型以 {"value": 字段值, "evidence": 用户消息原文连续片段} 对象输出；evidence 只登记待验真，不落库不进表单。
 # 其余字段仍只收原始值，输出对象即类型错误走整轮修复
-EVIDENCE_PATHS = {"elements.B.businessGoal", "elements.B.businessValue"}
+EVIDENCE_PATHS = {"elements.B.businessGoal", "elements.B.businessBackground", "elements.B.businessValue"}
 
 
 def _numbers(text) -> set:
@@ -51,7 +51,7 @@ def _numbers(text) -> set:
 
 def merge_structured(model_structured: dict, form: dict, field_sources: dict, standard: Standard | None = None, *, standards=None, grounded_text: str | None = None):
     """合并模型增量到表单。返回 (合并后表单, 字段出处, 选中标准, 原话证据)——evidences 仅含本轮
-    B1/B3 以 {"value","evidence"} 对象输出的 evidence 原文（待 process 验真，此处只解析不判断）。"""
+    B1/B2/B3 以 {"value","evidence"} 对象输出的 evidence 原文（待 process 验真，此处只解析不判断）。"""
     result = deepcopy(form)
     sources = dict(field_sources)
     evidences: dict[str, str] = {}
@@ -77,8 +77,8 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
                     # 误嵌进 elements.A，此处归位到顶层；归位后来源保护与格式校验照常生效
                     if path not in kinds and "." not in k and k in kinds:
                         path = k
-                    # 原话证据解包（2026-10-27 拍板 evidence 机制）：B1/B3 允许 {"value","evidence"} 对象——
-                    # value 照常走合并/校验/数字溯源，evidence 登记后由 process 机械验真决定出处是否升 user
+                    # 原话证据解包（2026-10-27 拍板 evidence 机制，第二轮扩至 B2）：B1/B2/B3 允许
+                    # {"value","evidence"} 对象——value 照常走合并/校验/数字溯源，evidence 登记后由 process 机械验真决定出处是否升 user
                     if path in EVIDENCE_PATHS and isinstance(v, dict) and set(v) <= {"value", "evidence"}:
                         evidence = v.get("evidence")
                         if isinstance(evidence, str) and evidence.strip():
@@ -708,10 +708,10 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         _clear_echo_backfill(merged, field_sources, text)
     # 未定类型仍使用共用三个质量字段，不暴露 TECH 扩展要素。
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
-    # FR-01/FR-03 判型（2026-10-27 拍板 evidence 机制）：B1/B3 本轮新写入且随值附了原话证据的，
-    # 机械验真（evidence 归一化后为本轮消息原文连续子串、≥4 字）通过 → 出处提升 user，参与业务派生；
-    # 未附/验真失败保持 agent（AI 代拟或来源存疑），保守判型不判业务，受理侧人工兜底。
-    # B1 与 B3 同标准——旧版 B1 无出处检查（「契约必须用户答出」约束不了模型，#50 案例整句灌 B1
+    # FR-01/FR-03 判型（2026-10-27 拍板 evidence 机制；第二轮扩至 B2）：B1/B2/B3 本轮新写入且随值附了
+    # 原话证据的，机械验真（evidence 归一化后为本轮消息原文连续子串、≥4 字）通过 → 出处提升 user，
+    # 参与业务派生；未附/验真失败保持 agent（AI 代拟或来源存疑），保守判型不判业务，受理侧人工兜底。
+    # B1/B2/B3 同标准——旧版 B1 无出处检查（「契约必须用户答出」约束不了模型，#50 案例整句灌 B1
     # 蒙对判型），B3 用整值/分句模糊匹配（#49 案例代拟改写打碎子串蒙错出处），统一收编为证据验真
     if kind in ("answer", "supplement"):
         for b_path in EVIDENCE_PATHS:

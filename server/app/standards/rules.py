@@ -151,11 +151,11 @@ C_TRIO_KEYS = ("userRole", "useScenario", "painPoint")
 
 
 def derive_recognition(form: dict, field_sources: dict | None = None) -> dict | None:
-    """判型派生（2026-10-26 拍板派生制；2026-10-27 拍板 evidence 机制修订）：从表单素材直接推导层级，
-    不再让模型打分——B1（业务目标）非空且出处为 user → 业务需求；或 B3（业务价值）非空且出处为 user
+    """判型派生（2026-10-26 拍板派生制；2026-10-27 拍板 evidence 机制修订，第二轮扩至 B2）：从表单素材
+    直接推导层级，不再让模型打分——B1（业务目标）/B3（业务价值）/B2（业务背景）任一非空且出处为 user
     → 业务需求。「出处为 user」= 对话轮模型附原话证据（evidence）经规则层机械验真提升，或手改落库；
     AI 代拟（出处 agent）一律不参与派生，防「因为判业务所以代拟、因为代拟所以有值」循环自证；
-    B1 与 B3 同标准（旧版 B1 有值即判业务属契约漏洞，#50 案例整句灌 B1 蒙对判型）。
+    三项同标准（旧版 B1 有值即判业务属契约漏洞，#50 案例整句灌 B1 蒙对判型）。
     否则 C 区三件套（角色/场景/痛点）齐全 → 用户需求；已有实质素材但不满足以上两条 → 功能需求；
     表单仍空 → None（不出判型，H5 归类标签不渲染）。
     返回 {"level", "basis": {"field", "excerpt"}}，basis 留痕判定依据供受理侧追溯。"""
@@ -173,6 +173,10 @@ def derive_recognition(form: dict, field_sources: dict | None = None) -> dict | 
         return {"level": "business", "basis": {"field": "businessGoal", "excerpt": excerpt(b_zone["businessGoal"])}}
     if not blank(b_zone.get("businessValue")) and sources.get("elements.B.businessValue") == "user":
         return {"level": "business", "basis": {"field": "businessValue", "excerpt": excerpt(b_zone["businessValue"])}}
+    # B2 业务背景（2026-10-27 第二轮拍板）：用户亲口组织层面现状（evidence 验真或手改）同样触发判型；
+    # 顺序追加在 B1/B3 之后，basis.field 留痕 businessBackground
+    if not blank(b_zone.get("businessBackground")) and sources.get("elements.B.businessBackground") == "user":
+        return {"level": "business", "basis": {"field": "businessBackground", "excerpt": excerpt(b_zone["businessBackground"])}}
     if all(not blank(c_zone.get(key)) for key in C_TRIO_KEYS):
         return {"level": "user", "basis": {"field": "useScenario", "excerpt": excerpt(c_zone.get("useScenario"))}}
     # 功能需求兜底：有任何实质素材（功能描述/场景片段/原文底稿）即判；空表单不判

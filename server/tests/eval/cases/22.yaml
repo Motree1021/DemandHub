@@ -1,0 +1,17 @@
+name: B2 入场判型（组织层面现状亲口表述 → 抽入 B2 并附原话证据，参与业务派生）
+type: TECH
+turns:
+- user: 我们部门现在靠专职整理岗手工汇总晨会数据，旺季人力紧张，管理层要求压降手工活。想做个自动汇总报表替代手工。
+  form_before:
+    title: null
+    demandTypeCode: TECH
+    content: null
+    urgency: NORMAL
+    ext: {}
+  expect:
+    structured_contains:
+      elements.B.businessBackground: 部门现在靠专职整理岗手工汇总晨会数据，旺季人力紧张，管理层要求压降手工活
+    evidence_from_user:
+    - elements.B.businessBackground
+    elements_status:
+      businessBackground: OK

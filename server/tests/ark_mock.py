@@ -132,10 +132,10 @@ class Handler(BaseHTTPRequestHandler):
         # FR-06 对话修改契约：用户明确说「目标…改…」时输出 B1 变更补丁（数字须可在原文溯源）
         if "改" in text and "目标" in text:
             output["structured"].setdefault("elements", {}).setdefault("B", {})["businessGoal"] = "把晨会准备时间从40分钟降到5分钟"
-        # 原话证据契约（2026-10-27 拍板 evidence 机制）：B1/B3 值若能在用户原文找到连续片段，
-        # 按新契约包装 {"value","evidence"}；找不到保持纯字符串（对应 AI 代拟，不参与判型派生）
+        # 原话证据契约（2026-10-27 拍板 evidence 机制，第二轮扩至 B2）：B1/B2/B3 值若能在用户原文
+        # 找到连续片段，按新契约包装 {"value","evidence"}；找不到保持纯字符串（对应 AI 代拟，不参与判型派生）
         b_zone = (output.get("structured") or {}).get("elements", {}).get("B") or {}
-        for evidence_key in ("businessGoal", "businessValue"):
+        for evidence_key in ("businessGoal", "businessBackground", "businessValue"):
             b_value = b_zone.get(evidence_key)
             if isinstance(b_value, str) and b_value and b_value in text:
                 b_zone[evidence_key] = {"value": b_value, "evidence": b_value}
