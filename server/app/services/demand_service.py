@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.mysql import insert
 
-from app.agent.policy import process, resume_follow_up, return_quote_seen
+from app.agent.policy import FIELD_LABEL_PLAIN, process, resume_follow_up, return_quote_seen
 from app.config import get_settings
 from app.core.errors import BizError, ErrorCode
 from app.core.result import encode
@@ -246,7 +246,8 @@ def change_items(std: Standard | None, before: dict, after: dict) -> list[dict]:
         if old == new:
             continue
         element = elements.get(path)
-        label = element.label if element else TOP_LABELS.get(path, path.rsplit(".", 1)[-1])
+        # 提报侧播报用白话标签（2026-10-27 第三轮拍板）：B 区四要素术语→白话，其余沿用表单标签
+        label = FIELD_LABEL_PLAIN.get(element.key, element.label) if element else TOP_LABELS.get(path, path.rsplit(".", 1)[-1])
         key = element.key if element else path
         old_text, new_text = _clip_text(_display_value(element, old)), _clip_text(_display_value(element, new))
         if rules.blank(new):

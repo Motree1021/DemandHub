@@ -43,9 +43,6 @@
         <strong>{{ latest.granularityHint.level === 'too_broad' ? '需求有点大，先聚焦' : '需求有点细，补上下文' }}</strong>
         <small>收敛标准：{{ latest.granularityHint.converge }}</small>
       </div>
-      <div v-if="latest?.impactHints?.length" class="hint-banner impact">
-        <small v-for="hint in latest.impactHints" :key="hint">{{ hint }}</small>
-      </div>
       <form-snapshot-card v-if="showSnapshot" :standard="standard" :form="form!" :quality="quality" :business-confirmed="businessConfirmed" :disabled="sending" @edit-field="emit('edit-field', $event)" @edit-type="emit('edit-type')" />
     </div>
     <div v-if="latest?.canSubmit && !sending" class="chips">
@@ -408,5 +405,4 @@ defineExpose({ scrollToBottom: scroll, refreshHistory: loadHistory })
 .attach-parsed { display: inline-flex; align-self: flex-start; margin-top: 2px; padding: 1px 6px; border-radius: 4px; background: #ecfdf3; color: #067647 !important; font-size: 11px; }
 .attach-bubble.mine .attach-parsed { background: rgba(255, 255, 255, 0.18); color: #d1fae5 !important; }
 .hint-banner { background: #fdf6ec; border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-size: 12px; line-height: 1.7; color: #9a3412; display: flex; flex-direction: column; gap: 2px; }
-.hint-banner.impact { background: #eef3fb; color: #1f3a8a; }
 </style>

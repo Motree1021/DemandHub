@@ -35,7 +35,7 @@ describe('FR-01 判型自动生效（方案A）', () => {
   })
 })
 
-describe('BR-T13 粒度提示与受影响要素提示', () => {
+describe('BR-T13 粒度提示', () => {
   it('too_broad 提示先聚焦并展示收敛标准', async () => {
     const wrapper = createWrapper(); await flushPromises()
     await sendAndResolve(wrapper, { granularityHint: { level: 'too_broad', hint: 'scope', converge: '先聚焦到一个部门的一类报表' } })
@@ -52,11 +52,5 @@ describe('BR-T13 粒度提示与受影响要素提示', () => {
     const wrapper = createWrapper(); await flushPromises()
     await sendAndResolve(wrapper)
     expect(wrapper.text()).not.toContain('需求有点大'); expect(wrapper.text()).not.toContain('需求有点细')
-  })
-  it('impactHints 逐条展示', async () => {
-    const wrapper = createWrapper(); await flushPromises()
-    await sendAndResolve(wrapper, { impactHints: ['「业务目标」会被改写', '「验收标准」新增内容'] })
-    expect(wrapper.text()).toContain('「业务目标」会被改写')
-    expect(wrapper.text()).toContain('「验收标准」新增内容')
   })
 })

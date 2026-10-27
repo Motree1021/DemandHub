@@ -9,7 +9,6 @@ from app.standards.rules import (
     LIGHT_REQUIRED_KEYS,
     assess,
     blank,
-    business_confirmed,
     dynamic_required_keys,
     filter_form,
     get_value,
@@ -35,13 +34,29 @@ DESC_INVITE = "请先用一句话描述一下你的需求，比如「报表想�
 B1_RELEASE = "没事，这个先空着，不耽误提交，后面的产品经理会一起考虑。"
 
 # B1 硬堵改判引导（2026-10-26 拍板统一必填）：判型归业务需求时 B1 转必填、答不出不放行——
-# 给用户白话出口：说不上组织好处就点归类标签改判为用户需求，改判后 B 区不再必填（用户拍板：不设轻量出口）
-B1_RECLASSIFY_GUIDE = "如果对部门或行里的好处实在说不上来，可以点表单上方「归类：业务需求」那里改判为用户需求，这项就不用填了。"
+# 给用户白话出口：说不上组织好处就点归类标签改判为用户需求，改判后 B 区不再必填（用户拍板：不设轻量出口）。
+# 2026-10-27 第四轮拍板：解释句与改判出口后置——只在用户答「不清楚/说不好」时出现，首问不携带
+B1_RECLASSIFY_GUIDE = "这个需求归类为业务需求，「对组织的好处」这项得填了才能提交。实在说不上来的话，可以点表单上方「归类：业务需求」那里改判为用户需求，这项就不用填了。"
 
-# 原话证据字段（2026-10-27 拍板 evidence 机制；2026-10-27 第二轮扩至 B2）：仅 B1（业务目标）/B2（业务背景）/B3（业务价值）
+# 原话证据字段（2026-10-27 拍板 evidence 机制；2026-10-27 第二轮扩至 B2；第三轮出处三档化）：仅 B1（业务目标）/B2（业务背景）/B3（业务价值）
 # 允许模型以 {"value": 字段值, "evidence": 用户消息原文连续片段} 对象输出；evidence 只登记待验真，不落库不进表单。
-# 其余字段仍只收原始值，输出对象即类型错误走整轮修复
+# 验真通过出处升 user_evidence（视同用户亲口、参与判型派生，但模型可随用户后续作答修订——修订须附新证据重验）；
+# 手改落库才是 user（硬保护、模型禁改）。其余字段仍只收原始值，输出对象即类型错误走整轮修复
 EVIDENCE_PATHS = {"elements.B.businessGoal", "elements.B.businessBackground", "elements.B.businessValue"}
+
+# 提报侧白话标签（2026-10-27 第三轮拍板，话术红线从提示词扩到系统模板层）：B 区四要素术语在面向提报人的
+# 系统硬编码话术里一律换白话；受理侧 PC 与表单字段标签仍用术语。H5 表单副标题用同口径（前端本地副本同步维护）
+FIELD_LABEL_PLAIN = {
+    "businessGoal": "对组织的好处",
+    "businessBackground": "现状和起因",
+    "businessValue": "做成后的好处",
+    "stakeholders": "相关的人和部门",
+}
+
+
+def _plain_label(field) -> str:
+    """面向提报人的要素称呼：B 区四要素用白话，其余沿用表单标签。"""
+    return FIELD_LABEL_PLAIN.get(field.key, field.label)
 
 
 def _numbers(text) -> set:
@@ -78,7 +93,7 @@ def merge_structured(model_structured: dict, form: dict, field_sources: dict, st
                     if path not in kinds and "." not in k and k in kinds:
                         path = k
                     # 原话证据解包（2026-10-27 拍板 evidence 机制，第二轮扩至 B2）：B1/B2/B3 允许
-                    # {"value","evidence"} 对象——value 照常走合并/校验/数字溯源，evidence 登记后由 process 机械验真决定出处是否升 user
+                    # {"value","evidence"} 对象——value 照常走合并/校验/数字溯源，evidence 登记后由 process 机械验真决定出处是否升 user_evidence
                     if path in EVIDENCE_PATHS and isinstance(v, dict) and set(v) <= {"value", "evidence"}:
                         evidence = v.get("evidence")
                         if isinstance(evidence, str) and evidence.strip():
@@ -186,28 +201,6 @@ def detect_granularity(standard: Standard, form: dict, message: str) -> dict | N
     if any(keyword in text for keyword in granularity.too_broad.keywords) and not d_filled:
         return {"level": "too_broad", "hint": granularity.too_broad.hint, "converge": granularity.converge}
     return None
-
-
-def impact_hints(previous_form: dict, merged: dict) -> list[str]:
-    """FR-06 影响分析：已填的 B 区业务要素被修改时，提示 C/D 区可能需联动调整。
-    豁免（2026-10-25 拍板）：本轮 C/D 区任一要素已被同步更新（AI 联动已完成）时不再提示——
-    改名类机械联动改完再问「请确认一下」属自相矛盾的噪音；只改 B 区、C/D 原封不动才提示。"""
-    b_changed = False
-    for key in ("businessGoal", "businessBackground", "businessValue"):
-        path = f"elements.B.{key}"
-        old, new = get_value(previous_form, path), get_value(merged, path)
-        if not blank(old) and old != new:
-            b_changed = True
-            break
-    if not b_changed:
-        return []
-    for zone in ("C", "D"):
-        old_zone = ((previous_form.get("elements") or {}).get(zone)) or {}
-        new_zone = ((merged.get("elements") or {}).get(zone)) or {}
-        for key, new_v in new_zone.items():
-            if not blank(new_v) and old_zone.get(key) != new_v:
-                return []
-    return ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
 
 
 def complete_elements(standard: Standard, form: dict, model_elements: list[ElementStatus], *, light: bool = False):
@@ -431,15 +424,15 @@ def _vague_batch_reply(fields, form, elements) -> str:
     if len(fields) == 1:
         field = fields[0]
         template = field.ask_l1 or field.ask_missing or f"请补充{field.label}，以便把需求记录清楚。"
-        return f"还有 1 处写得比较笼统——「{field.label}」：{template.replace('{snippet}', snippet_of(field))}不补也能提交。"
+        return f"还有 1 处写得比较笼统——「{_plain_label(field)}」：{template.replace('{snippet}', snippet_of(field))}不补也能提交。"
     items = []
     for field in fields[:2]:
         element = by_key.get(field.key)
         gap = (element.note if element and element.note else "") or field.vague_hint or "还不够具体"
-        items.append(f"「{field.label}」：你写的是『{snippet_of(field)}』，{gap}")
+        items.append(f"「{_plain_label(field)}」：你写的是『{snippet_of(field)}』，{gap}")
     body = "；\n".join(items) + "。"
     if len(fields) > 2:
-        rest = "、".join(f"「{field.label}」" for field in fields[2:])
+        rest = "、".join(f"「{_plain_label(field)}」" for field in fields[2:])
         body += f"\n另还有{rest}也偏笼统。"
     return (f"还有 {len(fields)} 处写得比较笼统：\n{body}\n"
             "能各补一句吗？不补也能提交；不好具象化的话，回复「不清楚」就行。")
@@ -554,6 +547,13 @@ def return_quote_seen(texts) -> bool:
     return any(RETURN_QUOTE_MARK in (text or "") for text in texts)
 
 
+def _b1_beneficiary(form: dict) -> str:
+    """B1 白话一问的受益主语（2026-10-27 测评修订）：C1 已抽出用户角色时用角色名——
+    代提场景（提报人替他人提需求）问「除了你自己省事」对象错位读不通；未抽出角色时维持「你自己」。"""
+    role = str(get_value(form, "elements.C.userRole") or "").strip()
+    return f"{role}自己" if role else "你自己"
+
+
 def reply_for(standard, target, form, *, light: bool = False, trigger: str = "dialog"):
     if target is None:
         # B 区统一必填（2026-10-26 拍板）：完成判定 = A/C/D 必填 + 判型归业务需求的 B1~B4
@@ -583,15 +583,16 @@ def reply_for(standard, target, form, *, light: bool = False, trigger: str = "di
             return f"标题我先记为「{title}」，不合适直接告诉我改什么。这个需求期望的效果是什么？做完后能看见什么变化？比如「首页顶部 logo 换成新设计的蓝色版本」。"
         return "这个需求期望的效果是什么？做完后能看见什么变化？比如「首页顶部 logo 换成新设计的蓝色版本」。"
     # B1 统一必填（2026-10-26 拍板）：判型归业务需求时 B1 是硬门槛——问句不带「不清楚也没关系」
-    # 放行尾巴（答不出由系统接续改判引导 B1_RECLASSIFY_GUIDE），避免问句承诺与拦截自相矛盾
+    # 放行尾巴（答不出由系统接续改判引导 B1_RECLASSIFY_GUIDE），避免问句承诺与拦截自相矛盾。
+    # 2026-10-27 第四轮拍板：首问瘦身——只留问题本体，解释句与改判出口移到答不出时才出现
     if field.key == "businessGoal" and field.key in dynamic_required_keys(standard, form):
-        return "这个需求归类为业务需求，「对部门或行里的好处」这项得填了才能提交。它做出来，除了你自己省事，对部门或行里还有啥好处不？说个大概就行。"
+        return f"它做出来，除了{_b1_beneficiary(form)}省事，对组织还有啥好处不？"
     if target.attempts >= 1:
         template = field.ask_l2 or field.ask_l1 or field.ask_missing
     else:
         template = anchored_template(standard, field, form) or (field.ask_missing or field.ask_l1 if target.status == "MISSING" else field.ask_l1 or field.ask_missing)
     template = template or f"请补充{field.label}，以便把需求记录清楚。"
-    reply = template.replace("{snippet}", snippet)
+    reply = template.replace("{snippet}", snippet).replace("{who}", _b1_beneficiary(form))
     # 动态必填项（2026-10-26 拍板统一必填）与真必填同权：追问不附「后续补充」话术出口
     if target.attempts >= 1 and not field.required and field.key not in dynamic_required_keys(standard, form):
         reply += " 也可以说“后续补充”。"
@@ -605,6 +606,7 @@ def _quoted_reask(standard: Standard, target: ElementStatus, form: dict) -> str:
     value = str(get_value(form, field.field_path) or "").replace("\n", " ").strip()
     snippet = value[:20] + ("…" if len(value) > 20 else "")
     template = field.ask_l2 or field.ask_l1 or field.ask_missing or f"请补充{field.label}，以便把需求记录清楚。"
+    template = template.replace("{who}", _b1_beneficiary(form))
     hint = target.note or field.vague_hint or "还不够具体"
     return f"你填的「{field.label}」『{snippet}』我记下了，不过{hint}——" + template
 
@@ -633,7 +635,7 @@ def _supplement_confirm(standard: Standard, previous_form: dict, merged: dict, p
         if not blank(new_v) and old_v != new_v:
             text = _display_text(new_v)
             snippet = text if len(text) <= 20 else text[:20] + "…"
-            parts.append((field.label, snippet))
+            parts.append((_plain_label(field), snippet))
     if not parts:
         return "好的，补充的我记下了。"
     if len(parts) >= 3:
@@ -687,7 +689,7 @@ def _process_chitchat(form: dict, sources: dict, prev: list[ElementStatus], prev
         "askedTarget": target.key if target else None, "canSubmit": can_submit, "ready": can_submit,
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
         "quickReplies": quick_replies(standard, target, merged), "reply": reply,
-        "typeRecognition": recognition, "mode": mode, "granularityHint": None, "impactHints": [],
+        "typeRecognition": recognition, "mode": mode, "granularityHint": None,
         "intent": "chitchat",
     }
 
@@ -708,16 +710,18 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         _clear_echo_backfill(merged, field_sources, text)
     # 未定类型仍使用共用三个质量字段，不暴露 TECH 扩展要素。
     standard = selected or (standards["MATL"] if standards else standard_loader.get("MATL"))
-    # FR-01/FR-03 判型（2026-10-27 拍板 evidence 机制；第二轮扩至 B2）：B1/B2/B3 本轮新写入且随值附了
-    # 原话证据的，机械验真（evidence 归一化后为本轮消息原文连续子串、≥4 字）通过 → 出处提升 user，
+    # FR-01/FR-03 判型（2026-10-27 拍板 evidence 机制；第二轮扩至 B2；第三轮出处三档化）：B1/B2/B3 本轮新写入且随值附了
+    # 原话证据的，机械验真（evidence 归一化后为本轮消息原文连续子串、≥4 字）通过 → 出处提升 user_evidence，
     # 参与业务派生；未附/验真失败保持 agent（AI 代拟或来源存疑），保守判型不判业务，受理侧人工兜底。
     # B1/B2/B3 同标准——旧版 B1 无出处检查（「契约必须用户答出」约束不了模型，#50 案例整句灌 B1
-    # 蒙对判型），B3 用整值/分句模糊匹配（#49 案例代拟改写打碎子串蒙错出处），统一收编为证据验真
+    # 蒙对判型），B3 用整值/分句模糊匹配（#49 案例代拟改写打碎子串蒙错出处），统一收编为证据验真。
+    # 三档化（修 #60 问题⑤）：验真升档不再等同手改 user 硬保护——用户后续针对该字段作答时模型可并入
+    # 新事实修订，附新证据重验保持 user_evidence；不附/验不上则值照常落库、出处降回 agent
     if kind in ("answer", "supplement"):
         for b_path in EVIDENCE_PATHS:
-            if (field_sources.get(b_path) == "agent" and not blank(get_value(merged, b_path))
+            if (field_sources.get(b_path) in ("agent", "user_evidence") and not blank(get_value(merged, b_path))
                     and _evidence_user_voiced(evidences.get(b_path), text)):
-                field_sources[b_path] = "user"
+                field_sources[b_path] = "user_evidence"
     # 派生+合并：本轮素材派生与历史生效层级取高（只涨不跌），confirmed 人工定稿最高优先
     recognition = merge_recognition((form.get("ext") or {}).get("typeRecognition"), merged, field_sources)
     if recognition:
@@ -759,24 +763,8 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, required_keys=LIGHT_REQUIRED_KEYS)
     else:
         can_submit = selected is not None and not schema_errors(selected, merged, required=True, active_zones={"A", "C", "D"})
-    # 判型归业务当轮播报（2026-10-26 拍板统一必填 + B2~B4 代拟）：本轮新判为业务需求（自然过线
-    # 或 B1 补票升级）时当场告知——B 区四要素转必填；本轮由 AI 按 C/D 区素材代拟补齐的 B2~B4 一并
-    # 说明（点表单可改），仍缺的点名接续追问；与 10-25「改归类立即重算质量卡并接续追问」先例同构
-    business_notice = ""
-    if dyn:
-        prev_recognition = (form.get("ext") or {}).get("typeRecognition")
-        was_business = business_confirmed(prev_recognition if isinstance(prev_recognition, dict) else None)
-        if not was_business:
-            drafted = [f.label for f in standard.elements
-                       if f.key in dyn and f.key != "businessGoal"
-                       and blank(get_value(form, f.field_path)) and not blank(get_value(merged, f.field_path))]
-            missing_labels = [f.label for f in standard.elements if f.key in dyn and blank(get_value(merged, f.field_path))]
-            parts = []
-            if drafted:
-                parts.append("、".join(drafted) + "我根据你前面说的帮你填好了，点表单可改")
-            if missing_labels:
-                parts.append("还差" + "、".join(missing_labels))
-            business_notice = "这条需求识别为业务需求" + ("，" + "；".join(parts) if parts else "") + "。"
+    # 判型播报句整句删除（2026-10-27 第四轮拍板）：「这条需求关系到组织的好处…我帮你填好了」播报
+    # 干扰提报人注意力——判型派生/归类标签/白话副标题已承担透明度，不再拼文字播报进回复
     # 追问顺序与提交门槛同口径（2026-10-24 拍板）：A/C/D 必填先问完，再必问一次 B1 白话问题；
     # light 模式只按最小集追问（每项一次）并按最小集放行提交，B 区不问
     target = pick_follow_up(standard, curr, light=light, form=merged, can_submit=can_submit, previous_form=previous_form)
@@ -787,7 +775,6 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         merged.setdefault("ext", {})["qualityBatchDone"] = now().isoformat(timespec="seconds")
         field_sources["ext.qualityBatchDone"] = "agent"
     granularity = detect_granularity(standard, merged, text)
-    impacts = impact_hints(previous_form, merged)
     # D9 建议方案首次抽取播报（2026-10-12 拍板）：用户设想的候选方案/实现路径此前被五区白名单
     # 静默丢弃，AI 还回「都记好了」构成误导；现在落库后由模板层告知"已记入、供评估、非定案"（模型自述不可靠）。
     # 2026-10-15 调整：播报改引述式（截取原文片段，误归类时用户能认出是哪句、可纠正），并后置到追问之后——
@@ -807,7 +794,7 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
             reply = ("好的，信息都齐了，点下方「确认提交」就能重新提交。" if is_return
                      else "好的，信息都齐了，点下方「提交」按钮就能提报。")
         else:
-            missing_labels = [f.label for f in standard.elements if f.key in compute_missing(standard, merged)]
+            missing_labels = [_plain_label(f) for f in standard.elements if f.key in compute_missing(standard, merged)]
             reply = "还差几项必填信息才能提交：" + "、".join(f"「{label}」" for label in missing_labels) + "。"
             if target is not None:
                 reply += " " + reply_for(standard, target, merged, light=light, trigger=trigger)
@@ -845,19 +832,15 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         paragraphs = []
         if granularity:
             paragraphs.append(granularity["hint"])
-        if impacts:
-            paragraphs.append(" ".join(impacts))
         if solution_notice:
             paragraphs.append(solution_notice)
         if b1_released:
             # B1 答不出放行书（2026-10-24 拍板）：对用户回答的直接回应，跟在播报类之后、行动项之前
             paragraphs.append(B1_RELEASE)
         if b1_blocked:
-            # B1 硬堵改判引导（2026-10-26 拍板统一必填）：业务需求答不出 B1 不放行，给改判用户需求出口
+            # B1 硬堵改判引导（2026-10-26 拍板统一必填；10-27 第四轮拍板解释与改判出口后置）：
+            # 业务需求答不出 B1 不放行，解释必填缘由并给改判用户需求出口
             paragraphs.append(B1_RECLASSIFY_GUIDE)
-        if business_notice:
-            # 判型归业务播报（2026-10-26 拍板）：播报考量与放行书同位（播报类之后、行动项之前）
-            paragraphs.append(business_notice)
         paragraphs.append(reply)  # 追问（含意图桥接/模式播报）始终末段，离输入框最近
         reply = "\n\n".join(paragraphs)
         # 打回原因引述（2026-10-20 拍板）：补充会话只引述一次——调用方按历史消息判定是否首次；
@@ -878,7 +861,7 @@ def process(output: ModelOutput, form: dict, sources: dict, prev: list[ElementSt
         "askedTarget": target.key if target else None, "canSubmit": can_submit, "ready": can_submit,
         "guidanceComplete": target is None, "qualityComplete": all(e.status == "OK" for e in curr),
         "quickReplies": quick_replies(standard, target, merged), "reply": reply,
-        "typeRecognition": recognition, "mode": mode, "granularityHint": granularity, "impactHints": impacts,
+        "typeRecognition": recognition, "mode": mode, "granularityHint": granularity,
         # intent 落库（2026-10-20 拍板）：随 ASSISTANT 消息 payload 存档，提交时按 request_id 配对
         # 识别并排除闲聊/提问/指令轮的用户消息，保证底稿只拼接有效对话
         "intent": kind,

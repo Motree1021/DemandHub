@@ -94,7 +94,6 @@ class GuideResult(AgentModel):
     type_recognition: dict[str, Any] | None = None
     mode: dict[str, Any] | None = None
     granularity_hint: dict[str, str] | None = None
-    impact_hints: list[str] = Field(default_factory=list)
     # 本轮意图（2026-10-20 拍板）：随 ASSISTANT 消息 payload 落库，提交时按 request_id 配对
     # 排除闲聊/提问/指令轮的用户消息，底稿只拼接有效对话；存量消息无此字段视为有效（保守保留）
     intent: str | None = None

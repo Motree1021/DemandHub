@@ -5,7 +5,7 @@ export interface GuidePayload {
   demandId: number; sessionId: number; requestId: string; revision: number
   structured: Omit<DemandForm, 'fieldSources'>; fieldSources: FieldSources; missing: string[]; elements: ElementStatus[]
   askedTarget: string | null; canSubmit: boolean; guidanceComplete: boolean; qualityComplete: boolean; ready: boolean; quickReplies: string[]
-  typeRecognition?: TypeRecognition | null; mode?: DemandMode | null; granularityHint?: GranularityHint | null; impactHints?: string[]
+  typeRecognition?: TypeRecognition | null; mode?: DemandMode | null; granularityHint?: GranularityHint | null
 }
 export class StreamError extends Error {
   constructor(public code: number, message: string) { super(message); this.name = 'StreamError' }
@@ -30,7 +30,7 @@ function validatePayload(data: Record<string, unknown>, request: GuideRequest): 
       ![null, 'NORMAL', 'URGENT', 'CRITICAL'].includes(structured.urgency as string | null) ||
       !(structured.expectDeliveryAt === null || (typeof structured.expectDeliveryAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(structured.expectDeliveryAt))) ||
       !data.fieldSources || typeof data.fieldSources !== 'object' || Array.isArray(data.fieldSources) ||
-      !Object.values(data.fieldSources).every(source => ['default', 'agent', 'user'].includes(String(source))) ||
+      !Object.values(data.fieldSources).every(source => ['default', 'agent', 'user', 'user_evidence'].includes(String(source))) ||
       !Array.isArray(data.elements) || !data.elements.every(element => element && typeof element.key === 'string' && ['OK', 'VAGUE', 'MISSING', 'SKIP'].includes(element.status)) ||
       !Array.isArray(data.missing) || !data.missing.every(value => typeof value === 'string') ||
       !Array.isArray(data.quickReplies) || !data.quickReplies.every(value => typeof value === 'string') ||

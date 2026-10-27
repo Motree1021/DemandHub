@@ -128,4 +128,5 @@ async def test_sse_structured_carries_type_recognition_and_granularity_hint(clie
     assert payload["typeRecognition"]["basis"]["field"] == "businessGoal"
     assert payload["granularityHint"]["level"] == "too_broad"  # "提升"命中且 D 区未填
     assert payload["granularityHint"]["converge"] == "可验证、可追踪、可独立受理"
-    assert payload["impactHints"] == []
+    # 联动确认提示退役（2026-10-27 第四轮拍板）：SSE 契约不再带 impactHints 字段
+    assert "impactHints" not in payload

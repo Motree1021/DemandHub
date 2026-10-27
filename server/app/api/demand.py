@@ -29,7 +29,7 @@ class FormPayload(ApiModel):
     expect_delivery_at: str | None = None
     ext: dict[str, Any] | None = None
     elements: dict[str, dict[str, Any]] | None = None
-    field_sources: dict[str, Literal["default", "agent", "user"]] = Field(default_factory=dict)
+    field_sources: dict[str, Literal["default", "agent", "user", "user_evidence"]] = Field(default_factory=dict)
 
     @field_validator("urgency", "demand_type_code", mode="before")
     @classmethod

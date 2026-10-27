@@ -3,7 +3,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agent.guide import GuideService
-from app.agent.policy import impact_hints, process
+from app.agent.policy import process
 from app.agent.schemas import GuideChatRequest, ModelOutput, parse_model_output
 from app.db.models import Demand, DemandChangeLog
 from app.services import demand_service, session_service
@@ -43,9 +43,9 @@ async def make_draft(factory, user, *, content=None, request="p2-create", elemen
 # ---- FR-01/FR-03 判型（2026-10-26 拍板派生制：层级由表单素材位置派生，模型不再打分）----
 
 @pytest.mark.parametrize("structured,text,expected_level,expected_basis", [
-    # B1（业务目标）附原话证据验真通过（出处升 user）→ 业务需求
+    # B1（业务目标）附原话证据验真通过（出处升 user_evidence）→ 业务需求
     ({"elements": {"B": {"businessGoal": {"value": "达成部门年度考核指标", "evidence": "达成部门年度考核指标"}}}}, "要达成部门年度考核指标", "business", "businessGoal"),
-    # B3（业务价值）附原话证据验真通过（出处升 user）→ 业务需求
+    # B3（业务价值）附原话证据验真通过（出处升 user_evidence）→ 业务需求
     ({"elements": {"B": {"businessValue": {"value": "其他银行渠道可复用", "evidence": "其他银行渠道可复用"}}}}, "其他银行渠道可复用", "business", "businessValue"),
     # C 区三件套（角色/场景/痛点）齐全 → 用户需求
     ({"elements": {"C": {"userRole": "客户经理", "useScenario": "客户经理每天晨会前查看各机构持仓",
@@ -134,7 +134,7 @@ async def test_user_override_type_clears_recognition_and_marks_user(session_fact
 
 def test_channel_reuse_value_lands_b3_not_d9_and_derives_business():
     # 张征案例回归（2026-10-27 拍板 evidence 机制）：「其他银行渠道可复用，添加我司渠道赋能新能力」
-    # 是受益方为组织的表述 → 归 B3 并附原话证据（验真通过、出处升 user）→ 派生业务需求、B 区必填当场生效；
+    # 是受益方为组织的表述 → 归 B3 并附原话证据（验真通过、出处升 user_evidence）→ 派生业务需求、B 区必填当场生效；
     # 一事实一槽位：不占 D9 候选方案槽位
     text = "希望支持企业微信扫码登录，其他银行渠道可复用，添加我司渠道赋能新能力"
     output = ModelOutput(structured={"elements": {
@@ -152,7 +152,7 @@ def test_channel_reuse_value_lands_b3_not_d9_and_derives_business():
     merged = result["structured"]["elements"]
     assert merged["B"]["businessValue"] == "其他银行渠道可复用，添加我司渠道赋能新能力"
     assert "proposedSolution" not in merged.get("D", {})
-    assert result["fieldSources"]["elements.B.businessValue"] == "user"
+    assert result["fieldSources"]["elements.B.businessValue"] == "user_evidence"
     recognition = result["typeRecognition"]
     assert recognition["level"] == "business" and business_confirmed(recognition)
     assert recognition["basis"]["field"] == "businessValue"
@@ -301,29 +301,6 @@ async def test_agent_patch_change_log_marks_agent_source(session_factory, user):
         rows = (await db.execute(select(DemandChangeLog).where(DemandChangeLog.demand_id == did))).scalars().all()
         assert [row.field_key for row in rows] == ["elements.A.techSubtype"]
         assert rows[0].old_value is None and rows[0].new_value == "DATA_RPT" and rows[0].source == "agent"
-
-
-def test_impact_hint_only_on_filled_b_zone_change():
-    previous = {"elements": {"B": {"businessGoal": "把客户回访覆盖率从60%提升到80%"}}}
-    changed = {"elements": {"B": {"businessGoal": "把客户回访覆盖率从60%提升到90%"}}}
-    assert impact_hints(previous, changed) == ["你前面说的目标/背景/价值有调整，后面「给谁用、做什么」这些内容可能也要跟着改，请确认一下。"]
-    assert impact_hints({}, changed) == []  # 首轮填写不算修改
-    assert impact_hints(previous, previous) == []
-
-
-def test_impact_hint_exempted_when_cd_zone_linked():
-    """豁免（2026-10-25 拍板）：B 区变化伴随 C/D 区同步联动（AI 已改完，如改名波及多字段）时不再提示——
-    联动已完成再问「请确认一下」属自相矛盾的噪音；只改 B 区、C/D 原封不动才提示。"""
-    previous = {"elements": {"B": {"businessBackground": "张征一个人运营自媒体账号"}, "C": {"userRole": "产品经理张征"}}}
-    # 改名联动：C 区已同步更新 → 豁免
-    linked = {"elements": {"B": {"businessBackground": "张铮一个人运营自媒体账号"}, "C": {"userRole": "产品经理张铮"}}}
-    assert impact_hints(previous, linked) == []
-    # D 区同步联动同样豁免
-    linked_d = {"elements": {"B": {"businessBackground": "张铮一个人运营自媒体账号"}, "D": {"functionDescription": "数字人口播平台"}}}
-    assert impact_hints(previous, linked_d) == []
-    # 只改 B 区、C/D 原封不动 → 仍提示（真正需要用户确认的场景）
-    only_b = {"elements": {"B": {"businessBackground": "为满足监管报送要求改造"}, "C": {"userRole": "产品经理张征"}}}
-    assert impact_hints(previous, only_b) != []
 
 
 # ---- 微需求快速通道（2026-10-11 方案②）：modeSignal 判定与最小集提交 ----

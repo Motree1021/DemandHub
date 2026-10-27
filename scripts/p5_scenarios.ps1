@@ -79,7 +79,7 @@ Check 'S4 聚焦子需求提交成功' ($s4.code -eq 0 -and $s4.data.status -eq 
 $d4b = New-Draft $u4 '其余子需求：回访任务自动分配、回访结果看板（待拆解，暂存草稿）'
 Check 'S4 其余子需求留存草稿' ($d4b.status -eq 'DRAFT') "id=$($d4b.id)"
 
-# ===== 场景5：对话中修改 B1 → 影响提示 → changeLog 可查 =====
+# ===== 场景5：对话中修改 B1 → changeLog 可查（联动确认提示已于 2026-10-27 第四轮拍板退役） =====
 $u5 = Login("p5s5-$([guid]::NewGuid().ToString('N').Substring(0,8))")
 $d5 = New-Draft $u5 ''
 $ss5 = New-Session $u5 $d5.id
@@ -88,7 +88,6 @@ $b1Before = $c5a.structured.elements.B.businessGoal
 $c5b = Chat $u5 $d5.id $ss5.id $c5a.revision 'B1 业务目标改一下：目标是把晨会准备时间从40分钟降到5分钟'
 $b1After = $c5b.structured.elements.B.businessGoal
 Check 'S5 对话修改定位B1并生效' ($b1After -ne $b1Before -and $b1After -match '5分钟') "B1: $b1Before -> $b1After"
-Check 'S5 影响提示(联动确认)' ($c5b.impactHints.Count -gt 0) "hints=$($c5b.impactHints.Count)"
 $det5 = Send-Api Get "$base/demand/$($d5.id)" $u5
 $log5 = @($det5.data.demand.changeLogs | Where-Object { $_.fieldKey -eq 'elements.B.businessGoal' })
 $log5mod = $log5[-1]

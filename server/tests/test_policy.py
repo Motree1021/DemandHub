@@ -6,6 +6,7 @@ from app.agent.policy import (
     CHITCHAT_GREET_FIRST,
     CHITCHAT_GUIDE,
     DESC_INVITE,
+    _b1_beneficiary,
     anchored_template,
     complete_elements,
     inherit_and_count,
@@ -256,7 +257,7 @@ def test_b1_plain_ask_once_after_acd_complete_regardless_of_type():
     result = process(ModelOutput(structured={}, elements=[]), acd_filled_form(), {}, [], None, {}, "报表")
     assert result["askedTarget"] == "businessGoal"
     assert result["canSubmit"] is True
-    assert "对部门或行里还有啥好处" in result["reply"] and "不清楚也没关系" in result["reply"]
+    assert "对组织还有啥好处不" in result["reply"] and "不清楚也没关系" in result["reply"]
     # 统一必填（2026-10-26 拍板）：判型归业务需求即 B1~B4 动态必填拦提交（canSubmit=False），
     # B1 进必填追问序列（B 区沉底，仍先问 B1）；存量草稿残留的 b1Backfill 标记无读取方，同样拦截
     value = acd_filled_form()
@@ -270,6 +271,24 @@ def test_b1_plain_ask_once_after_acd_complete_regardless_of_type():
     assert result_c["askedTarget"] == "businessGoal" and result_c["canSubmit"] is False
 
 
+def test_b1_plain_ask_role_aware_in_proxy_submission():
+    """代提场景 B1 白话一问主语随 C1 角色（2026-10-27 测评修订，#60 案例）：替他人提需求时
+    「除了你自己省事」对象错位——已抽出用户角色就改用角色名，未抽出维持「你自己」。"""
+    # 非业务判型路径（ask_missing 模板 {who} 占位替换）
+    result = process(ModelOutput(structured={}, elements=[]), acd_filled_form(), {}, [], None, {}, "报表")
+    assert result["askedTarget"] == "businessGoal"
+    assert "除了机构业务部客户经理自己省事" in result["reply"] and "除了你自己省事" not in result["reply"]
+    # 判型归业务需求的硬门槛问句同样随角色
+    value = acd_filled_form()
+    value["ext"] = {"typeRecognition": {"business": 0.9, "confirmed": None}}
+    result_b = process(ModelOutput(structured={"ext": {"typeRecognition": {"business": 0.9}}}, elements=[]), value, {}, [], None, {}, "报表")
+    assert result_b["askedTarget"] == "businessGoal"
+    assert "除了机构业务部客户经理自己省事" in result_b["reply"]
+    # 未抽出角色时回落「你自己」
+    assert _b1_beneficiary({}) == "你自己"
+    assert _b1_beneficiary({"elements": {"C": {"userRole": "产品经理张征"}}}) == "产品经理张征自己"
+
+
 def test_business_dynamic_required_full_gate():
     # B 区统一必填（2026-10-26 拍板，不分原生/升级路径）：B1~B4 与 A/C/D 必填同权——
     # 缺口进 missing 清单/拦提交；B1 答「不清楚」不 SKIP 不放行、播改判用户需求引导；
@@ -279,15 +298,18 @@ def test_business_dynamic_required_full_gate():
     first = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "报表")
     assert first["canSubmit"] is False
     assert {"businessGoal", "businessBackground", "businessValue", "stakeholders"} <= set(first["missing"])
-    # B1 业务必填问句不带「不清楚也没关系」放行尾巴（与硬门槛口径一致）
-    assert "这个需求归类为业务需求" in first["reply"] and "不清楚也没关系" not in first["reply"]
+    # B1 业务必填首问瘦身（2026-10-27 第四轮拍板）：只留问题本体——不带「不清楚也没关系」放行尾巴，
+    # 也不带「归类为业务需求/得填了才能提交」解释句与「说个大概」（解释与改判出口后置到答不出时）
+    assert "对组织还有啥好处不" in first["reply"]
+    assert "这个需求归类为业务需求" not in first["reply"] and "说个大概" not in first["reply"] and "不清楚也没关系" not in first["reply"]
     # B1 答不出：不播固定放行书、不打 SKIP，按常规必填记 1 次且继续拦提交，播改判引导
     prev = [ElementStatus.model_validate(e) for e in first["elements"]]
     second = process(ModelOutput(structured={}, elements=[]),
                      first["structured"], first["fieldSources"], prev, "businessGoal",
                      value, "不清楚")
     assert "没事，这个先空着" not in second["reply"]
-    assert "改判为用户需求" in second["reply"]
+    # 解释与改判出口后置（2026-10-27 第四轮拍板）：答不出时才说明必填缘由并给改判用户需求出口
+    assert "这个需求归类为业务需求" in second["reply"] and "改判为用户需求" in second["reply"]
     b1 = next(e for e in second["elements"] if e["key"] == "businessGoal")
     assert b1["status"] == "MISSING" and b1["attempts"] == 1
     assert second["canSubmit"] is False
@@ -304,23 +326,24 @@ def test_business_dynamic_required_full_gate():
     assert third["canSubmit"] is True and third["askedTarget"] is None
 
 
-def test_business_flip_broadcast_mid_conversation():
-    # 对话中段升级为业务需求（2026-10-27 拍板 evidence 机制）：用户本轮亲口说出组织层面价值——
-    # 模型抽入 B3 并附原话证据（evidence 验真通过 → 出处升 user）→ 派生业务需求，当场播报「识别为业务需求」
-    # + 缺口点名并接续追问（B 区沉底序列自动接上 B1）
+def test_business_flip_mid_conversation():
+    # 对话中段升级为业务需求（2026-10-27 拍板 evidence 机制；第三轮出处三档化）：用户本轮亲口说出组织层面价值——
+    # 模型抽入 B3 并附原话证据（evidence 验真通过 → 出处升 user_evidence）→ 派生业务需求、B 区必填当场生效，
+    # 接续追问 B1（B 区沉底序列自动接上）。判型播报句已于 2026-10-27 第四轮拍板删除——
+    # 透明度由判型派生/归类标签/白话副标题承担，回复不再播「关系到组织的好处/帮你填好了」文字
     base = acd_filled_form()
     output = ModelOutput(structured={"elements": {"B": {"businessValue": {"value": "部门年度考核指标要求", "evidence": "部门年度考核指标要求"}}}}, elements=[])
     result = process(output, base, {}, [], None, base, "这是部门年度考核指标要求的")
     assert result["typeRecognition"]["level"] == "business"
-    assert result["fieldSources"]["elements.B.businessValue"] == "user"
-    assert "这条需求识别为业务需求" in result["reply"] and "还差业务目标" in result["reply"]
+    assert result["fieldSources"]["elements.B.businessValue"] == "user_evidence"
+    assert "关系到组织的好处" not in result["reply"] and "帮你填好了" not in result["reply"]
     assert result["askedTarget"] == "businessGoal" and result["canSubmit"] is False
     # AI 代拟的 B3（未附 evidence、出处 agent）不参与派生——防「判业务所以代拟、代拟所以判业务」循环自证
     drafted = process(ModelOutput(structured={"elements": {"B": {"businessValue": "释放部门人力"}}}, elements=[]),
                       acd_filled_form(), {}, [], None, {}, "继续")
     assert drafted["typeRecognition"]["level"] == "user"
     assert drafted["fieldSources"]["elements.B.businessValue"] == "agent"
-    # B1 答出落库同权判业务（附原话证据验真）：模型同轮按 C/D 素材代拟 B2~B4 → 播「帮你填好了」并直接放行
+    # B1 答出落库同权判业务（附原话证据验真）：模型同轮按 C/D 素材代拟 B2~B4 后直接放行
     base2 = acd_filled_form()
     base2["ext"] = {"typeRecognition": {"level": "user", "basis": {"field": "useScenario", "excerpt": "客户经理每个交易日晨会前查各渠道持仓"}, "confirmed": None}}
     output2 = ModelOutput(structured={"elements": {"B": {
@@ -331,7 +354,7 @@ def test_business_flip_broadcast_mid_conversation():
     result2 = process(output2, base2, {}, [], "businessGoal", base2, "能省下一个人力")
     assert result2["typeRecognition"]["level"] == "business" and "b1Backfill" not in result2["typeRecognition"]
     assert result2["typeRecognition"]["basis"]["field"] == "businessGoal"
-    assert "这条需求识别为业务需求" in result2["reply"] and "帮你填好了" in result2["reply"]
+    assert "关系到组织的好处" not in result2["reply"] and "帮你填好了" not in result2["reply"]
     assert result2["canSubmit"] is True
     # 下一轮无新素材：历史层级取高（只涨不跌）保留业务判型，不回落
     result3 = process(ModelOutput(structured={}, elements=[]),
@@ -365,7 +388,7 @@ def test_b1_unanswerable_releases_with_fixed_wording():
 def test_b1_answered_lands_and_not_reasked():
     # 答出组织理由 → 如实落 B1（口径放宽：「释放产能」类非量化表述也算合格）；问过一次即终结。
     # 统一必填（2026-10-26 拍板）：答出即升级为业务需求、B 区必填当场生效——模型同轮按 C/D 素材
-    # 代拟 B2~B4 后直接放行（代拟播报告知），不留硬缺口
+    # 代拟 B2~B4 后直接放行，不留硬缺口。判型播报句已于 2026-10-27 第四轮拍板删除，回复不播文字
     base = acd_filled_form()
     first = process(ModelOutput(structured={}, elements=[]), base, {}, [], None, {}, "报表")
     prev = [ElementStatus.model_validate(e) for e in first["elements"]]
@@ -380,11 +403,11 @@ def test_b1_answered_lands_and_not_reasked():
     b1 = next(e for e in second["elements"] if e["key"] == "businessGoal")
     assert b1["status"] == "OK"
     assert second["askedTarget"] is None and second["canSubmit"] is True
-    assert "这条需求识别为业务需求" in second["reply"] and "帮你填好了" in second["reply"]
+    assert "关系到组织的好处" not in second["reply"] and "帮你填好了" not in second["reply"]
 
 
 def test_b1_landing_promotes_business_recognition():
-    # B1 落库即判业务（2026-10-27 拍板 evidence 机制）：B1 从空答出落库（附原话证据验真升 user）→
+    # B1 落库即判业务（2026-10-27 拍板 evidence 机制）：B1 从空答出落库（附原话证据验真升 user_evidence）→
     # 层级派生为业务需求，basis 留痕指向 businessGoal——#27 草稿类场景（user 0.85 天花板翻不动）的根治
     base = acd_filled_form()
     base["ext"] = {"typeRecognition": {"business": 0.3, "user": 0.85, "function": 0.6, "confirmed": None,
@@ -416,7 +439,7 @@ def test_b1_skip_or_reedit_state_semantics():
     skipped = process(ModelOutput(structured={}, elements=[]), base, {}, [], "businessGoal", base, "不清楚")
     recognition = skipped["structured"]["ext"]["typeRecognition"]
     assert not business_confirmed(recognition)  # 旧票 user 0.85 折算用户需求，不升业务
-    # B1 已有值 → 再改内容：重改仍附原话证据、验真升 user → 派生业务（状态制）
+    # B1 已有值 → 再改内容：重改仍附原话证据、验真升 user_evidence → 派生业务（状态制）
     base2 = b1_filled(acd_filled_form())
     base2["ext"] = {"typeRecognition": {"confirmed": None}}
     output = ModelOutput(structured={"elements": {"B": {"businessGoal": {"value": "改成另一个组织理由，覆盖旧值", "evidence": "改成另一个组织理由，覆盖旧值"}}}}, elements=[])
@@ -466,12 +489,12 @@ def test_evidence_must_cite_current_turn_message():
 
 def test_b2_evidence_derives_business():
     # B2 入场判型（2026-10-27 第二轮拍板，判型触发扩至 B2）：用户本轮亲口说出组织层面现状——
-    # 模型抽入 B2 并附原话证据（验真通过 → 出处升 user）→ 派生业务需求，basis 留痕 businessBackground
+    # 模型抽入 B2 并附原话证据（验真通过 → 出处升 user_evidence）→ 派生业务需求，basis 留痕 businessBackground
     base = acd_filled_form()
     output = ModelOutput(structured={"elements": {"B": {"businessBackground": {
         "value": "部门目前靠专职岗手工汇总，旺季人力紧张", "evidence": "旺季人力紧张"}}}}, elements=[])
     result = process(output, base, {}, [], None, base, "我们部门旺季人力紧张")
-    assert result["fieldSources"]["elements.B.businessBackground"] == "user"
+    assert result["fieldSources"]["elements.B.businessBackground"] == "user_evidence"
     recognition = result["typeRecognition"]
     assert recognition["level"] == "business" and recognition["basis"]["field"] == "businessBackground"
     # B2 无 evidence（纯字符串，AI 代拟）→ 出处保持 agent、不派生业务，值照常落库
@@ -486,6 +509,54 @@ def test_b2_evidence_derives_business():
         acd_filled_form(), {}, [], None, {}, "报表每天都要手工做")
     assert fabricated["fieldSources"]["elements.B.businessBackground"] == "agent"
     assert fabricated["typeRecognition"]["level"] == "user"
+
+
+def test_user_evidence_revision_keeps_tier_with_new_evidence():
+    # 出处三档化（2026-10-27 第三轮拍板，修 #60 问题⑤）：user_evidence 非锁死——用户后续针对该字段作答，
+    # 模型并入新事实修订并附新证据、验真通过 → 值更新、出处保持 user_evidence，判型不回落
+    base = acd_filled_form()
+    first = process(ModelOutput(structured={"elements": {"B": {"businessValue": {
+        "value": "其他银行渠道可复用", "evidence": "其他银行渠道可复用"}}}}, elements=[]),
+        base, {}, [], None, base, "其他银行渠道可复用")
+    assert first["fieldSources"]["elements.B.businessValue"] == "user_evidence"
+    assert first["typeRecognition"]["level"] == "business"
+    # 第二轮：用户补充量化事实，模型修订 B3 并附新证据（#60 案例：合并一问后答「每年有5家渠道使用」）
+    second = process(ModelOutput(structured={"elements": {"B": {"businessValue": {
+        "value": "其他银行渠道可复用，每年有5家渠道使用", "evidence": "每年有5家渠道使用"}}}}, elements=[]),
+        first["structured"], first["fieldSources"], [], None, first["structured"], "每年有5家渠道使用")
+    assert second["structured"]["elements"]["B"]["businessValue"] == "其他银行渠道可复用，每年有5家渠道使用"
+    assert second["fieldSources"]["elements.B.businessValue"] == "user_evidence"
+    assert second["typeRecognition"]["level"] == "business"
+
+
+def test_user_evidence_revision_without_evidence_drops_to_agent():
+    # 出处三档化安全侧：user_evidence 字段被模型修订但未附新证据（或验不上）→ 值照常落库、
+    # 出处降回 agent（不再视同用户亲口）；历史判型只涨不跌不回退，但该字段此后不再参与派生
+    base = acd_filled_form()
+    first = process(ModelOutput(structured={"elements": {"B": {"businessValue": {
+        "value": "其他银行渠道可复用", "evidence": "其他银行渠道可复用"}}}}, elements=[]),
+        base, {}, [], None, base, "其他银行渠道可复用")
+    assert first["fieldSources"]["elements.B.businessValue"] == "user_evidence"
+    # 第二轮：模型擅自改写 B3（无 evidence）→ 值落库、出处降 agent
+    second = process(ModelOutput(structured={"elements": {"B": {"businessValue": "释放全行人力"}}}, elements=[]),
+                     first["structured"], first["fieldSources"], [], None, first["structured"], "继续")
+    assert second["structured"]["elements"]["B"]["businessValue"] == "释放全行人力"
+    assert second["fieldSources"]["elements.B.businessValue"] == "agent"
+    # 判型只涨不跌：历史 business 取高保留，不随出处降档回落
+    assert second["typeRecognition"]["level"] == "business"
+
+
+def test_manual_user_source_still_locked():
+    # 出处三档化硬保护侧：手改落库的 user 档仍是最高权威——模型输出（即便附证据）一律不覆盖、不升降
+    base = acd_filled_form()
+    base["elements"]["B"] = {"businessGoal": "帮部门省下专职整理岗"}
+    sources = {"elements.B.businessGoal": "user"}
+    output = ModelOutput(structured={"elements": {"B": {"businessGoal": {
+        "value": "模型想改成别的理由", "evidence": "模型想改成别的理由"}}}}, elements=[])
+    result = process(output, base, sources, [], None, base, "模型想改成别的理由")
+    assert result["structured"]["elements"]["B"]["businessGoal"] == "帮部门省下专职整理岗"
+    assert result["fieldSources"]["elements.B.businessGoal"] == "user"
+    assert result["typeRecognition"]["level"] == "business"  # 手改 user 档同样参与派生
 
 
 def test_anchor_falls_back_to_normal_ask_when_reference_empty():
@@ -860,7 +931,7 @@ def test_supplement_many_changes_merged_into_summary():
         elements=[], intent=Intent(kind="supplement", target_key="stakeholders"))
     result = process(output, base, {}, first, "urgency", base, "名字不是张征，而是张铮")
     reply = result["reply"]
-    assert "好的，已按你说的同步更新了 4 处：业务背景、干系人、目标用户角色、使用场景。" in reply
+    assert "好的，已按你说的同步更新了 4 处：现状和起因、相关的人和部门、目标用户角色、使用场景。" in reply
     assert "已更新：" not in reply and "['" not in reply
 
 
@@ -1276,7 +1347,7 @@ def test_vague_batch_skipped_when_returned():
     """打回补充场景不触发合并一问：质量指引由打回说明承担（防线③），不叠加追问噪音。"""
     value = b1_filled(acd_filled_form())
     value["elements"]["D"]["acceptanceCriteria"] = "好用就行"
-    # 进轮前已是业务判型（派生制：B 区四项齐备 → level business），非本轮升级不播「识别为业务需求」
+    # 进轮前已是业务判型（派生制：B 区四项齐备 → level business），非本轮升级不播判型播报
     value["ext"] = {"returnReason": {"reason": "验收标准再写具体点", "returnedBy": "产品经理", "returnedAt": "2026-10-25T10:00:00"},
                     "typeRecognition": {"level": "business", "confirmed": None}}
     result = process(ModelOutput(structured={}, elements=[]), value, {}, [], None, {}, "好的", return_quoted=False)

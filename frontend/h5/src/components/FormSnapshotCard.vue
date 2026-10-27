@@ -10,6 +10,8 @@
     </div>
     <button v-if="recognition && !collapsed" type="button" class="type-row" :disabled="disabled" @click="emit('edit-type')">
       <van-tag :type="typeLabel === '业务需求' ? 'danger' : 'primary'" plain>归类：{{ typeLabel }}</van-tag>
+      <!-- 白话副标题（2026-10-27 第三轮拍板）：三级术语标签保留（受理侧口径一致），旁边一句白话说清含义 -->
+      <small>{{ typePlainLabel }}</small>
       <!-- 方案④口径显性化：归类与口径两把尺子并排可见，用户不再困惑「同为功能需求待遇为何不同」 -->
       <van-tag :type="isLight ? 'warning' : 'default'" plain>{{ isLight ? '轻量提报' : '常规提报' }}</van-tag>
       <small>{{ recognition.confirmed ? '已确认' : 'AI 判断' }} · 点我可改</small>
@@ -27,7 +29,7 @@
       <button v-for="field in group.fields" :key="fieldPath(field)" type="button" class="el" :disabled="disabled" @click="emit('edit-field', field)">
         <span class="nm">
           <van-icon :name="filled(field) ? 'checked' : isRequired(field) ? 'clock-o' : 'edit'" :color="filled(field) ? '#16a34a' : isRequired(field) ? '#d97706' : '#94a3b8'" size="14" />
-          <span class="label">{{ field.label }}<i v-if="isRequired(field)" class="req">*</i></span>
+          <span class="label">{{ field.label }}<small v-if="field.key === 'businessGoal'" class="plain">对组织的好处</small><i v-if="isRequired(field)" class="req">*</i></span>
         </span>
         <span class="side">
           <span v-if="summary(field)" class="val">{{ summary(field) }}</span>
@@ -80,6 +82,13 @@ const RECOGNITION_LABELS = { business: '业务需求', user: '用户需求', fun
 const typeLabel = computed(() => {
   const level = recognitionLevelOf(recognition.value)
   return level ? RECOGNITION_LABELS[level] : ''
+})
+// 归类白话副标题（2026-10-27 第三轮拍板）：纯业务提报人看不懂三级术语——标签保留（受理侧口径一致），
+// 副标题用大白话解释这一级是什么意思；与服务端 FIELD_LABEL_PLAIN 同口径的前端本地副本
+const RECOGNITION_PLAIN = { business: '对组织有好处', user: '具体做事的人受益', function: '系统功能改动' } as const
+const typePlainLabel = computed(() => {
+  const level = recognitionLevelOf(recognition.value)
+  return level ? RECOGNITION_PLAIN[level] : ''
 })
 // A/B/C/D 分区（术语+白话注释）；无分区的标准（MATL/TRAIN）退化为单组平铺；system 快照要素不渲染
 const groups = computed(() => {
@@ -143,6 +152,8 @@ function summary(field: StandardField): string {
 .el:last-child { border-bottom: none; }
 .el:disabled { cursor: default; }
 .nm { display: flex; align-items: center; gap: 5px; min-width: 0; flex-shrink: 0; }
+/* businessGoal 白话副标题（2026-10-27 第三轮拍板）：与 .type-row/.zone-title 的 small 同色系 */
+.label .plain { color: #94a3b8; font-size: 11px; font-weight: 400; margin-left: 4px; }
 .req { color: #dc2626; font-style: normal; font-weight: 700; }
 .side { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .val { color: #94a3b8; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }

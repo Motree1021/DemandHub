@@ -151,9 +151,10 @@ C_TRIO_KEYS = ("userRole", "useScenario", "painPoint")
 
 
 def derive_recognition(form: dict, field_sources: dict | None = None) -> dict | None:
-    """判型派生（2026-10-26 拍板派生制；2026-10-27 拍板 evidence 机制修订，第二轮扩至 B2）：从表单素材
-    直接推导层级，不再让模型打分——B1（业务目标）/B3（业务价值）/B2（业务背景）任一非空且出处为 user
-    → 业务需求。「出处为 user」= 对话轮模型附原话证据（evidence）经规则层机械验真提升，或手改落库；
+    """判型派生（2026-10-26 拍板派生制；2026-10-27 拍板 evidence 机制修订，第二轮扩至 B2；第三轮出处三档化）：从表单素材
+    直接推导层级，不再让模型打分——B1（业务目标）/B3（业务价值）/B2（业务背景）任一非空且出处为 user/user_evidence
+    → 业务需求。「user」=手改落库（硬保护）；「user_evidence」=对话轮模型附原话证据（evidence）经规则层机械验真提升
+    （可随用户后续作答修订，验不上降回 agent）；两档均算「用户亲口」参与派生；
     AI 代拟（出处 agent）一律不参与派生，防「因为判业务所以代拟、因为代拟所以有值」循环自证；
     三项同标准（旧版 B1 有值即判业务属契约漏洞，#50 案例整句灌 B1 蒙对判型）。
     否则 C 区三件套（角色/场景/痛点）齐全 → 用户需求；已有实质素材但不满足以上两条 → 功能需求；
@@ -169,13 +170,13 @@ def derive_recognition(form: dict, field_sources: dict | None = None) -> dict | 
         text = str(value).replace("\n", " ").strip()
         return text[:30] + ("…" if len(text) > 30 else "")
 
-    if not blank(b_zone.get("businessGoal")) and sources.get("elements.B.businessGoal") == "user":
+    if not blank(b_zone.get("businessGoal")) and sources.get("elements.B.businessGoal") in ("user", "user_evidence"):
         return {"level": "business", "basis": {"field": "businessGoal", "excerpt": excerpt(b_zone["businessGoal"])}}
-    if not blank(b_zone.get("businessValue")) and sources.get("elements.B.businessValue") == "user":
+    if not blank(b_zone.get("businessValue")) and sources.get("elements.B.businessValue") in ("user", "user_evidence"):
         return {"level": "business", "basis": {"field": "businessValue", "excerpt": excerpt(b_zone["businessValue"])}}
     # B2 业务背景（2026-10-27 第二轮拍板）：用户亲口组织层面现状（evidence 验真或手改）同样触发判型；
     # 顺序追加在 B1/B3 之后，basis.field 留痕 businessBackground
-    if not blank(b_zone.get("businessBackground")) and sources.get("elements.B.businessBackground") == "user":
+    if not blank(b_zone.get("businessBackground")) and sources.get("elements.B.businessBackground") in ("user", "user_evidence"):
         return {"level": "business", "basis": {"field": "businessBackground", "excerpt": excerpt(b_zone["businessBackground"])}}
     if all(not blank(c_zone.get(key)) for key in C_TRIO_KEYS):
         return {"level": "user", "basis": {"field": "useScenario", "excerpt": excerpt(c_zone.get("useScenario"))}}
